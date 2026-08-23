@@ -3,9 +3,9 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { createImportJob, createProduct, getProductWithVariants, listImportJobs, listProducts, updateVariantInventory } from "../products/db";
+import { createImportJob, createProduct, getProductWithVariants, listImportJobs, listProducts, listPublicProducts, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
 const productStatus = z.enum(["draft", "needs_review", "ready", "active", "archived"]);
@@ -16,6 +16,7 @@ async function viewerFinancialAccess(user: { id: number; role: "admin" | "user" 
 }
 
 export const productsRouter = router({
+  publicList: publicProcedure.query(async () => listPublicProducts()),
   list: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     const canViewFinancials = await viewerFinancialAccess(ctx.user);

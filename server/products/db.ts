@@ -9,6 +9,26 @@ export async function listProducts() {
   return db.select().from(products).orderBy(desc(products.updatedAt));
 }
 
+export function isPublicProductStatus(status: string) {
+  return status === "active";
+}
+
+export async function listPublicProducts() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      productCode: products.productCode,
+      name: products.name,
+      category: products.category,
+      description: products.description,
+      sellingPrice: products.sellingPrice,
+    })
+    .from(products)
+    .where(eq(products.status, "active"))
+    .orderBy(desc(products.updatedAt));
+}
+
 export async function getProductWithVariants(productId: number) {
   const db = await getDb();
   if (!db) return null;
