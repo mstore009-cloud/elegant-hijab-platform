@@ -3,14 +3,19 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import DashboardLayout from "./components/DashboardLayout";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import Home from "./pages/Home";
+import AccessControl from "./pages/AccessControl";
+import OperationsOverview from "./pages/OperationsOverview";
+import Products from "./pages/Products";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
-      <Route path={"/"} component={Home} />
+      <Route path={"/"} component={OperationsOverview} />
+      <Route path={"/permissions"} component={AccessControl} />
+      <Route path={"/products"} component={Products} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />
@@ -32,7 +37,9 @@ function App() {
       >
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <DashboardLayout>
+            <Router />
+          </DashboardLayout>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

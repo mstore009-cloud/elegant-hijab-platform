@@ -7,4 +7,7 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  oneDriveClientId: process.env.MICROSOFT_ONEDRIVE_CLIENT_ID ?? "",
+  oneDriveClientSecret: process.env.MICROSOFT_ONEDRIVE_CLIENT_SECRET ?? "",
+  oneDriveRedirectUri: process.env.MICROSOFT_ONEDRIVE_REDIRECT_URI ?? "",
 };

@@ -1,0 +1,24 @@
+import { describe, expect, it } from "vitest";
+import { createOneDriveAuthorizationUrl, createPkcePair, oneDriveAppFolderBootstrapUrl } from "./oauth";
+
+describe("OAuth الخاص بـ OneDrive", () => {
+  it("ينشئ PKCE verifier وchallenge مختلفين وصالحين للاستخدام", () => {
+    const pair = createPkcePair();
+    expect(pair.verifier).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(pair.challenge).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(pair.verifier).not.toBe(pair.challenge);
+  });
+
+  it("يستخدم رابط العودة المسجل في Azure داخل رابط التفويض", () => {
+    const authorizationUrl = new URL(createOneDriveAuthorizationUrl({ state: "test-state", codeChallenge: "test-challenge" }));
+    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe(process.env.MICROSOFT_ONEDRIVE_REDIRECT_URI);
+    expect(authorizationUrl.searchParams.get("scope")).toContain("Files.ReadWrite.AppFolder");
+    expect(authorizationUrl.pathname).toContain("/consumers/");
+  });
+
+  it("يهيئ مجلد التطبيق عبر مسار كتابة محدود قبل قراءته", () => {
+    expect(oneDriveAppFolderBootstrapUrl()).toBe(
+      "https://graph.microsoft.com/v1.0/me/drive/special/approot/children/.ehp-connection.json:/content",
+    );
+  });
+});
