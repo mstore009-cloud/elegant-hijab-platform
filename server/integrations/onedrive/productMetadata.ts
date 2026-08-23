@@ -40,3 +40,12 @@ export function parseCatalogProductMetadata(content: string): CatalogProductMeta
     .filter(Boolean);
   return { name, sellingPrice, description, sizes, status: "draft" };
 }
+
+export function normalizeApprovedColorNames(colorNames: string[]): string[] {
+  const normalized = colorNames.map(color => color.trim()).filter(Boolean);
+  if (normalized.length === 0) throw new Error("اختر لونًا واحدًا معتمدًا على الأقل.");
+  if (normalized.some(color => color.startsWith("..."))) throw new Error("لا يجوز أن يبدأ اسم اللون ببقايا المثال (...).");
+  const unique = new Map<string, string>();
+  for (const color of normalized) unique.set(color.toLocaleLowerCase("ar"), color);
+  return Array.from(unique.values());
+}

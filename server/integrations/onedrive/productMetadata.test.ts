@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCatalogProductMetadata } from "./productMetadata";
+import { normalizeApprovedColorNames, parseCatalogProductMetadata } from "./productMetadata";
 
 describe("parseCatalogProductMetadata", () => {
   it("يقبل SIZES الفارغ للمنتج غير المقيّس", () => {
@@ -34,5 +34,10 @@ PRODUCT_STATUS: draft`)).toThrow("بقايا المثال");
 SELLING_PRICE_IQD: 12000
 DESCRIPTION_AR: وصف
 PRODUCT_STATUS: draft`)).toThrow("SIZES");
+  });
+
+  it("يوحد أسماء الألوان المعتمدة ويرفض بقايا المثال", () => {
+    expect(normalizeApprovedColorNames([" عنابي ", "زيتي", "عنابي"])).toEqual(["عنابي", "زيتي"]);
+    expect(() => normalizeApprovedColorNames(["...زيتي"])).toThrow("بقايا المثال");
   });
 });

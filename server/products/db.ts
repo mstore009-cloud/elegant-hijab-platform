@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { productImportJobs, productVariants, products } from "../../drizzle/schema";
+import { normalizeApprovedColorNames } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 
 export async function listProducts() {
@@ -89,6 +90,40 @@ export async function createCatalogDraftProduct(input: {
     createdByUserId: input.createdByUserId,
   });
   return { productId, jobId: Number(job[0].insertId), created: true };
+}
+
+export async function createApprovedCatalogColorVariants(input: {
+  productCode: string;
+  colorNames: string[];
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const product = await db.select().from(products).where(eq(products.productCode, input.productCode)).limit(1);
+  if (!product[0]) throw new Error("مسودة المنتج غير موجودة.");
+  if (product[0].status !== "draft") throw new Error("لا يمكن إضافة ألوان بهذه التجربة إلا إلى منتج في حالة مسودة.");
+
+  const approvedColors = normalizeApprovedColorNames(input.colorNames);
+  const existingVariants = await db.select().from(productVariants).where(eq(productVariants.productId, product[0].id));
+  const existingColorKeys = new Set(existingVariants.map(variant => variant.colorName.toLocaleLowerCase("ar")));
+  const newColors = approvedColors.filter(color => !existingColorKeys.has(color.toLocaleLowerCase("ar")));
+  if (newColors.length > 0) {
+    await db.insert(productVariants).values(newColors.map((colorName, index) => ({
+      productId: product[0].id,
+      colorName,
+      sizeLabel: "",
+      inventoryQuantity: 0,
+      availability: "out_of_stock" as const,
+      sortOrder: existingVariants.length + index,
+    })));
+  }
+  return {
+    productId: product[0].id,
+    productCode: product[0].productCode,
+    createdColorNames: newColors,
+    existingColorNames: approvedColors.filter(color => !newColors.includes(color)),
+    inventoryQuantity: 0,
+    mediaCount: 0,
+  };
 }
 
 export async function updateVariantInventory(variantId: number, inventoryQuantity: number) {

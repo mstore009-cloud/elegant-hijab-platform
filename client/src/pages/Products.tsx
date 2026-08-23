@@ -44,12 +44,20 @@ export default function Products() {
   const canCreate = profile.data?.permissions.includes("products.create") ?? false;
   const canManageInventory = profile.data?.permissions.includes("products.inventory.update") ?? false;
   const oneDriveStatus = trpc.integrations.oneDriveStatus.useQuery(undefined, { enabled: profile.isSuccess && canCreate });
-  const catalogStatus = trpc.integrations.catalogSelectionStatus.useQuery(undefined, { enabled: profile.isSuccess && canCreate });
+  const catalogStatus = trpc.integrations.catalogSelectionStatus.useQuery(undefined, {
+    enabled: profile.isSuccess && canCreate,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
   const catalogFolders = trpc.integrations.catalogRootFolders.useQuery(undefined, {
     enabled: profile.isSuccess && canCreate && catalogStatus.data?.connected === true && catalogStatus.data.status === "connected",
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const catalogGroups = trpc.integrations.catalogGroups.useQuery(undefined, {
     enabled: profile.isSuccess && canCreate && catalogStatus.data?.status === "catalog_selected",
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const catalogProductInput = useMemo(
     () => selectedCatalogGroupId ? { groupId: selectedCatalogGroupId } : skipToken,
@@ -57,6 +65,8 @@ export default function Products() {
   );
   const catalogProducts = trpc.integrations.catalogProductFolders.useQuery(catalogProductInput, {
     enabled: profile.isSuccess && canCreate && catalogProductInput !== skipToken,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const catalogPreviewInput = useMemo(
     () => selectedCatalogGroupId && selectedCatalogProductId
@@ -66,6 +76,8 @@ export default function Products() {
   );
   const catalogPreview = trpc.integrations.previewCatalogProduct.useQuery(catalogPreviewInput, {
     enabled: profile.isSuccess && canCreate && catalogPreviewInput !== skipToken,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const directPreviewInput = useMemo(
     () => directProductPreviewId ? { productFolderId: directProductPreviewId } : skipToken,
@@ -73,6 +85,8 @@ export default function Products() {
   );
   const directCatalogPreview = trpc.integrations.previewDirectCatalogProduct.useQuery(directPreviewInput, {
     enabled: profile.isSuccess && canCreate && directPreviewInput !== skipToken,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const validVariants = useMemo(
     () => variants.filter(variant => variant.colorName.trim().length > 0),
@@ -112,6 +126,11 @@ export default function Products() {
     },
   });
   const analyzeCatalogColors = trpc.integrations.analyzeCatalogProductColors.useMutation();
+  const createApprovedCatalogColors = trpc.integrations.createApprovedCatalogColorVariants.useMutation({
+    onSuccess: async () => {
+      await Promise.all([utils.products.list.invalidate(), utils.products.importJobs.list.invalidate()]);
+    },
+  });
 
   const updateVariant = (index: number, patch: Partial<VariantDraft>) => {
     setVariants(current => current.map((variant, itemIndex) => (
@@ -252,7 +271,7 @@ export default function Products() {
             {catalogStatus.data?.status === "catalog_selected" ? (
               <div className="mt-3 space-y-3 rounded-lg bg-white p-3">
                 <p className="text-xs font-bold text-[#2d5a4d]">تم حفظ {catalogStatus.data.selectedFolderName} كمرجع. اختر الآن منتجًا واحدًا للمعاينة فقط.</p>
-                {catalogGroups.isLoading && <p className="text-xs text-[#5a766b]">جارٍ عرض مجموعات Catalog...</p>}
+                {catalogGroups.isLoading && <p className="text-xs text-[#5a766b]">جارٍ عرض مجموعات Catalog من OneDrive. قد تستغرق القراءة حتى 20 ثانية؛ لا تعيد تحميل الصفحة.</p>}
                 {catalogGroups.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogGroups.error.message}</p>}
                 {catalogGroups.data && (
                   <div className="flex flex-wrap gap-2">
@@ -261,12 +280,12 @@ export default function Products() {
                 )}
                 {selectedCatalogGroupId && <div className="space-y-2 border-t border-[#e5eee8] pt-3">
                   <p className="text-xs text-[#5a766b]">مجلدات المنتجات في المجموعة:</p>
-                  {catalogProducts.isLoading && <p className="text-xs text-[#5a766b]">جارٍ عرض مجلدات المنتجات...</p>}
+                  {catalogProducts.isLoading && <p className="text-xs text-[#5a766b]">جارٍ عرض مجلدات المنتجات من OneDrive. انتظر حتى 20 ثانية؛ لا تعيد تحميل الصفحة.</p>}
                   {catalogProducts.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogProducts.error.message}</p>}
                   {catalogProducts.data?.products.map(product => <Button key={product.id} size="sm" variant={selectedCatalogProductId === product.id ? "default" : "outline"} onClick={() => setSelectedCatalogProductId(product.id)} className={selectedCatalogProductId === product.id ? "bg-[#72551d] hover:bg-[#5c4417]" : "border-[#d9c490] text-[#72551d]"}>{product.name}</Button>)}
                   {catalogProducts.data && catalogProducts.data.products.length === 0 && <Button size="sm" variant="outline" onClick={() => setDirectProductPreviewId(catalogProducts.data!.group.id)} className="border-[#d9b17a] text-[#8b552b] hover:bg-[#fff7ed]">معاينة {catalogProducts.data.group.name} كمجلد منتج مباشر — اختبار فقط</Button>}
                 </div>}
-                {catalogPreview.isLoading && <p className="text-xs text-[#5a766b]">جارٍ قراءة المسودة دون حفظ...</p>}
+                {catalogPreview.isLoading && <p className="text-xs text-[#5a766b]">جارٍ قراءة product.txt والصور الوصفية دون حفظ. تنتهي المحاولة بخطأ واضح خلال 20 ثانية إذا لم يستجب OneDrive.</p>}
                 {catalogPreview.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogPreview.error.message}</p>}
                 {catalogPreview.data && <div className="space-y-2 rounded-lg border border-[#d7e2dc] bg-[#f9fcfa] p-3 text-xs text-[#405c50]">
                   <p><b>المجموعة:</b> {catalogPreview.data.group.name} · <b>الكود:</b> {catalogPreview.data.product.productCode}</p>
@@ -277,8 +296,9 @@ export default function Products() {
                     <Button size="sm" variant="outline" onClick={() => selectedCatalogGroupId && selectedCatalogProductId && analyzeCatalogColors.mutate({ groupId: selectedCatalogGroupId, productFolderId: selectedCatalogProductId })} disabled={analyzeCatalogColors.isPending} className="w-full border-[#9dc2b2] text-[#2d5a4d] hover:bg-[#edf7f1] sm:w-auto">{analyzeCatalogColors.isPending ? "جارٍ تحليل الألوان للمراجعة..." : "اقتراح ألوان الصور للمراجعة"}</Button>
                     <Button size="sm" onClick={() => selectedCatalogGroupId && selectedCatalogProductId && createCatalogDraft.mutate({ groupId: selectedCatalogGroupId, productFolderId: selectedCatalogProductId })} disabled={createCatalogDraft.isPending} className="w-full bg-[#1f5b4f] hover:bg-[#153d35] sm:w-auto">{createCatalogDraft.isPending ? "جارٍ إنشاء المسودة..." : "إنشاء مسودة داخلية للمراجعة"}</Button>
                   </div>
+                  {analyzeCatalogColors.isPending && <p className="rounded-md bg-[#f1f8f4] p-2 text-[#315549]">يجري جلب مصغرات الصور وتحليلها. لا تنشئ العملية ألوانًا أو مخزونًا أو وسائط، ولا تحتاج إلى إعادة تحميل الصفحة.</p>}
                   {analyzeCatalogColors.error && <p className="rounded-md bg-[#fff4ed] p-2 text-[#9c4b25]">{analyzeCatalogColors.error.message}</p>}
-                  {analyzeCatalogColors.data && <div className="space-y-2 rounded-md border border-[#d8e7df] bg-[#f1f8f4] p-3 text-[#315549]"><p className="font-bold">اقتراحات الألوان — تحتاج اعتمادك</p>{analyzeCatalogColors.data.colorGroups.map((group, index) => <p key={`${group.colorNameArabic}-${index}`}><b>{group.colorNameArabic}</b> · ثقة {Math.round(group.confidence * 100)}٪ · الصور: {group.imageFileNames.join("، ")}<br />{group.reviewNote}</p>)}{analyzeCatalogColors.data.uncertainImageFileNames.length > 0 && <p className="text-[#8a6327]">صور تحتاج حسمًا: {analyzeCatalogColors.data.uncertainImageFileNames.join("، ")}</p>}<p className="font-bold text-[#72551d]">{analyzeCatalogColors.data.overallReviewNote} لا تُحفظ هذه الاقتراحات ولا تنشئ مخزونًا قبل مراجعتك.</p></div>}
+                  {analyzeCatalogColors.data && <div className="space-y-2 rounded-md border border-[#d8e7df] bg-[#f1f8f4] p-3 text-[#315549]"><p className="font-bold">اقتراحات الألوان — تحتاج اعتمادك</p>{analyzeCatalogColors.data.colorGroups.map((group, index) => <p key={`${group.colorNameArabic}-${index}`}><b>{group.colorNameArabic}</b> · ثقة {Math.round(group.confidence * 100)}٪ · الصور: {group.imageFileNames.join("، ")}<br />{group.reviewNote}</p>)}{analyzeCatalogColors.data.uncertainImageFileNames.length > 0 && <p className="text-[#8a6327]">صور تحتاج حسمًا: {analyzeCatalogColors.data.uncertainImageFileNames.join("، ")}</p>}<p className="font-bold text-[#72551d]">{analyzeCatalogColors.data.overallReviewNote} لا تُحفظ هذه الاقتراحات ولا تنشئ مخزونًا قبل مراجعتك.</p><Button size="sm" onClick={() => selectedCatalogGroupId && selectedCatalogProductId && createApprovedCatalogColors.mutate({ groupId: selectedCatalogGroupId, productFolderId: selectedCatalogProductId, colorNames: analyzeCatalogColors.data.colorGroups.map(group => group.colorNameArabic) })} disabled={createApprovedCatalogColors.isPending} className="w-full bg-[#72551d] hover:bg-[#5c4417]">{createApprovedCatalogColors.isPending ? "جارٍ إنشاء متغيرات اللون..." : "إنشاء متغيرات الألوان المعتمدة"}</Button>{createApprovedCatalogColors.error && <p className="rounded-md bg-[#fff4ed] p-2 text-[#9c4b25]">{createApprovedCatalogColors.error.message}</p>}{createApprovedCatalogColors.data && <p className="rounded-md bg-[#edf7f1] p-2 font-bold text-[#1f5b4f]">تمت إضافة الألوان: {createApprovedCatalogColors.data.createdColorNames.join("، ") || "لا شيء جديد"}. المخزون الابتدائي صفر، ولم تُنشأ وسائط.</p>}</div>}
                   {createCatalogDraft.error && <p className="rounded-md bg-[#fff4ed] p-2 text-[#9c4b25]">{createCatalogDraft.error.message}</p>}
                   {createCatalogDraft.data && <p className="rounded-md bg-[#edf7f1] p-2 font-bold text-[#1f5b4f]">{createCatalogDraft.data.created ? `تم إنشاء مسودة ${createCatalogDraft.data.productCode}.` : `المسودة ${createCatalogDraft.data.productCode} موجودة مسبقًا؛ لم يُنشأ تكرار.`} لم تُنشأ ألوان أو مخزون أو وسائط.</p>}
                 </div>}

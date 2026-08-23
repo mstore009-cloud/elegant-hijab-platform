@@ -12,7 +12,7 @@ import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth
 import { listCatalogChildren, listCatalogRootFolders, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
 import { createOneDriveAuthorizationUrl, createPkcePair } from "../integrations/onedrive/oauth";
 import { parseCatalogProductMetadata } from "../integrations/onedrive/productMetadata";
-import { createCatalogDraftProduct } from "../products/db";
+import { createApprovedCatalogColorVariants, createCatalogDraftProduct } from "../products/db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM, listLLMModels } from "../_core/llm";
 
@@ -209,6 +209,18 @@ export const integrationsRouter = router({
       mediaCount: 0,
       status: "draft" as const,
     };
+  }),
+  createApprovedCatalogColorVariants: protectedProcedure.input(z.object({
+    groupId: z.string().min(1),
+    productFolderId: z.string().min(1),
+    colorNames: z.array(z.string().trim().min(1).max(80)).min(1).max(20),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const { productFolder } = await readSelectedCatalogProduct(ctx.user.id, input);
+    return createApprovedCatalogColorVariants({
+      productCode: productFolder.name,
+      colorNames: input.colorNames,
+    });
   }),
   analyzeCatalogProductColors: protectedProcedure.input(z.object({
     groupId: z.string().min(1),
