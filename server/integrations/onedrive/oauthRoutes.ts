@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { consumeOAuthState, upsertOneDriveConnection } from "./db";
+import { consumeOAuthState, upsertCatalogConnection, upsertOneDriveConnection } from "./db";
 import { exchangeOneDriveCode, getOneDriveAppFolder } from "./oauth";
 import { encryptOneDriveToken } from "./tokenCipher";
 
@@ -28,6 +28,17 @@ export function registerOneDriveOAuthRoutes(app: Express) {
         return;
       }
       const token = await exchangeOneDriveCode({ code, codeVerifier: oauthState.codeVerifier });
+      if (oauthState.flow === "catalog_read") {
+        await upsertCatalogConnection({
+          userId: oauthState.userId,
+          encryptedAccessToken: encryptOneDriveToken(token.accessToken),
+          encryptedRefreshToken: encryptOneDriveToken(token.refreshToken),
+          accessTokenExpiresAt: new Date(Date.now() + token.expiresIn * 1000),
+          scope: token.scope,
+        });
+        res.status(200).send("تم تفويض قراءة OneDrive لتجربة اختيار Catalog. لم تُستورد أي ملفات ولم تُحفظ كلمة المرور. أغلق هذه الصفحة وعد إلى شاشة المنتجات لاختيار الجذر.");
+        return;
+      }
       const appFolder = await getOneDriveAppFolder(token.accessToken);
       await upsertOneDriveConnection({
         userId: oauthState.userId,

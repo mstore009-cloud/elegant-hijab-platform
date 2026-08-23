@@ -16,6 +16,17 @@ describe("OAuth الخاص بـ OneDrive", () => {
     expect(authorizationUrl.pathname).toContain("/consumers/");
   });
 
+  it("يعزل تجربة Catalog في صلاحية Files.Read ولا يطلب App Folder", () => {
+    const authorizationUrl = new URL(createOneDriveAuthorizationUrl({
+      state: "catalog-state",
+      codeChallenge: "catalog-challenge",
+      flow: "catalog_read",
+    }));
+    const scope = authorizationUrl.searchParams.get("scope") ?? "";
+    expect(scope).toContain("Files.Read");
+    expect(scope).not.toContain("Files.ReadWrite.AppFolder");
+  });
+
   it("يطلب مجلد التطبيق عبر المسار الرسمي الذي ينشئه Graph عند الحاجة", () => {
     expect(oneDriveAppFolderUrl()).toBe("https://graph.microsoft.com/v1.0/me/drive/special/approot");
   });

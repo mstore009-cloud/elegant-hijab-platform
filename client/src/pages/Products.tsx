@@ -8,6 +8,7 @@ import {
   FolderInput,
   Layers3,
   Plus,
+  RefreshCw,
   ShieldAlert,
   Trash2,
 } from "lucide-react";
@@ -39,6 +40,10 @@ export default function Products() {
   const canCreate = profile.data?.permissions.includes("products.create") ?? false;
   const canManageInventory = profile.data?.permissions.includes("products.inventory.update") ?? false;
   const oneDriveStatus = trpc.integrations.oneDriveStatus.useQuery(undefined, { enabled: profile.isSuccess && canCreate });
+  const catalogStatus = trpc.integrations.catalogSelectionStatus.useQuery(undefined, { enabled: profile.isSuccess && canCreate });
+  const catalogFolders = trpc.integrations.catalogRootFolders.useQuery(undefined, {
+    enabled: profile.isSuccess && canCreate && catalogStatus.data?.connected === true && catalogStatus.data.status === "connected",
+  });
   const validVariants = useMemo(
     () => variants.filter(variant => variant.colorName.trim().length > 0),
     [variants],
@@ -49,6 +54,15 @@ export default function Products() {
   });
   const beginOneDriveConnect = trpc.integrations.beginOneDriveConnect.useMutation({
     onSuccess: ({ authorizationUrl }) => window.location.assign(authorizationUrl),
+  });
+  const beginCatalogSelection = trpc.integrations.beginCatalogSelection.useMutation({
+    onSuccess: ({ authorizationUrl }) => window.location.assign(authorizationUrl),
+  });
+  const selectCatalogRoot = trpc.integrations.selectCatalogRoot.useMutation({
+    onSuccess: async () => {
+      await catalogStatus.refetch();
+      await catalogFolders.refetch();
+    },
   });
   const createProduct = trpc.products.create.useMutation({
     onSuccess: async () => {
@@ -196,6 +210,40 @@ export default function Products() {
           <div className="mt-4 space-y-2 text-sm text-[#625c4e]"><p>1. تفويض الحساب وقراءة مجلد فعلي.</p><p>2. فحص الملفات والكود والنواقص دون نشر.</p><p>3. اعتماد النتيجة أو تسجيل فشل واضح.</p></div>
           {!oneDriveStatus.data?.configured && <Button onClick={() => beginOneDriveConnect.mutate()} disabled={!canCreate || beginOneDriveConnect.isPending} className="mt-5 w-full bg-[#1f5b4f] hover:bg-[#153d35]"><CloudCog className="ml-2 h-4 w-4" />{beginOneDriveConnect.isPending ? "جارٍ تجهيز الموافقة..." : "ربط مجلد OneDrive الخاص بالمنصة"}</Button>}
           {beginOneDriveConnect.error && <p className="mt-3 rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{beginOneDriveConnect.error.message}</p>}
+          <div className="mt-5 rounded-xl border border-[#d7e2dc] bg-[#f4faf6] p-4">
+            <p className="text-sm font-bold text-[#2d5a4d]">اختيار جذر Catalog — تجربة قراءة محدودة</p>
+            <p className="mt-2 text-xs leading-6 text-[#5a766b]">بعد دخول Microsoft، تعرض المنصة مجلدات الجذر لاختيار مجلد باسم <bdi>Catalog</bdi> فقط. لا تحفظ كلمة المرور ولا تستورد أي منتج في هذه المرحلة.</p>
+            {catalogStatus.data?.status === "catalog_selected" ? (
+              <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-[#2d5a4d]">تم حفظ {catalogStatus.data.selectedFolderName} كمرجع كتالوج. ما زال الاستيراد نفسه يحتاج مراجعة منفصلة.</p>
+            ) : catalogStatus.data?.connected ? (
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-[#5a766b]">اختر مجلد <bdi>Catalog</bdi> الظاهر أدناه فقط:</p>
+                  <Button variant="ghost" size="sm" onClick={() => catalogFolders.refetch()} disabled={catalogFolders.isFetching} className="h-7 text-xs text-[#2d5a4d]"><RefreshCw className="ml-1 h-3.5 w-3.5" />تحديث</Button>
+                </div>
+                {catalogFolders.isLoading && <p className="text-xs text-[#5a766b]">جارٍ عرض مجلدات الجذر...</p>}
+                {catalogFolders.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogFolders.error.message}</p>}
+                {catalogFolders.data?.filter(folder => folder.name === "Catalog").map(folder => (
+                  <Button key={folder.id} variant="outline" onClick={() => selectCatalogRoot.mutate({ folderId: folder.id })} disabled={selectCatalogRoot.isPending} className="w-full border-[#9dc2b2] bg-white text-[#2d5a4d] hover:bg-[#edf7f1]">
+                    <FolderInput className="ml-2 h-4 w-4" />{selectCatalogRoot.isPending ? "جارٍ حفظ المرجع..." : "اعتماد Catalog كمرجع"}
+                  </Button>
+                ))}
+                {catalogFolders.data && !catalogFolders.data.some(folder => folder.name === "Catalog") && (
+                  <div className="rounded-lg bg-[#fff8e8] p-3 text-xs text-[#8a6327]">
+                    <p>لم يظهر مجلد جذر باسم Catalog. لم يُحفظ أي مرجع.</p>
+                    {catalogFolders.data.length > 0 && <p className="mt-2 text-[#6e6244]">المجلدات الظاهرة حاليًا: {catalogFolders.data.map(folder => folder.name).join("، ")}</p>}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Button onClick={() => beginCatalogSelection.mutate()} disabled={!canCreate || beginCatalogSelection.isPending} className="mt-3 w-full bg-[#2d5a4d] hover:bg-[#21453a]">
+                <FolderInput className="ml-2 h-4 w-4" />{beginCatalogSelection.isPending ? "جارٍ تجهيز دخول Microsoft..." : "تسجيل الدخول لاختيار Catalog"}
+              </Button>
+            )}
+            {catalogStatus.data?.lastError && <p className="mt-3 rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogStatus.data.lastError}</p>}
+            {beginCatalogSelection.error && <p className="mt-3 rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{beginCatalogSelection.error.message}</p>}
+            {selectCatalogRoot.error && <p className="mt-3 rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{selectCatalogRoot.error.message}</p>}
+          </div>
           <Button variant="outline" onClick={() => importFallback.mutate({ sourceReference: "manual-fallback" })} disabled={!canCreate || importFallback.isPending} className="mt-3 w-full border-[#cdbf9f] bg-white text-[#6e5628] hover:bg-[#fffdf8]"><FolderInput className="ml-2 h-4 w-4" />{importFallback.isPending ? "جارٍ تسجيل البديل..." : "تسجيل إدخال يدوي بديل"}</Button>
           {imports.data?.length ? <div className="mt-4 space-y-2"><p className="text-xs font-bold text-[#746a55]">مهام الإدخال الأخيرة</p>{imports.data.slice(0, 3).map(job => <div key={job.id} className="rounded-lg bg-white/70 px-3 py-2 text-xs text-[#625c4e]"><span className="font-bold">{job.source === "manual" ? "يدوي" : "OneDrive"}</span> · {job.status}</div>)}</div> : null}
         </article>

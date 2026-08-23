@@ -146,6 +146,7 @@ export const oneDriveOAuthStates = mysqlTable(
     state: varchar("state", { length: 160 }).notNull().unique(),
     userId: int("userId").notNull().references(() => users.id),
     codeVerifier: varchar("codeVerifier", { length: 160 }).notNull(),
+    flow: mysqlEnum("flow", ["app_folder", "catalog_read"]).default("app_folder").notNull(),
     expiresAt: timestamp("expiresAt").notNull(),
     usedAt: timestamp("usedAt"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -168,4 +169,29 @@ export const oneDriveConnections = mysqlTable(
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   table => [index("onedrive_connection_folder_idx").on(table.appFolderId)],
+);
+
+/**
+ * Separate delegated connection for the owner-approved Catalog selection test.
+ * Tokens are encrypted; the selected reference is stored independently from the
+ * least-privilege App Folder connection so one flow cannot be mistaken for the other.
+ */
+export const oneDriveCatalogConnections = mysqlTable(
+  "onedrive_catalog_connections",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("userId").notNull().unique().references(() => users.id),
+    encryptedAccessToken: text("encryptedAccessToken").notNull(),
+    encryptedRefreshToken: text("encryptedRefreshToken").notNull(),
+    accessTokenExpiresAt: timestamp("accessTokenExpiresAt").notNull(),
+    scope: text("scope").notNull(),
+    status: mysqlEnum("status", ["connected", "failed", "catalog_selected"]).default("connected").notNull(),
+    lastError: text("lastError"),
+    selectedDriveId: varchar("selectedDriveId", { length: 255 }),
+    selectedFolderId: varchar("selectedFolderId", { length: 255 }),
+    selectedFolderName: varchar("selectedFolderName", { length: 255 }),
+    connectedAt: timestamp("connectedAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("onedrive_catalog_connection_status_idx").on(table.status)],
 );
