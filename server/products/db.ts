@@ -9,6 +9,21 @@ export async function listProducts() {
   return db.select().from(products).orderBy(desc(products.updatedAt));
 }
 
+export async function listProductsWithPrimaryOperationalMedia() {
+  const db = await getDb();
+  if (!db) return [];
+  const [productList, mediaList] = await Promise.all([
+    db.select().from(products).orderBy(desc(products.updatedAt)),
+    db.select().from(productMedia).orderBy(productMedia.sortOrder),
+  ]);
+  const primaryMediaByProductId = new Map<number, typeof mediaList[number]>();
+  for (const media of mediaList) {
+    if (!media.storageKey || primaryMediaByProductId.has(media.productId)) continue;
+    primaryMediaByProductId.set(media.productId, media);
+  }
+  return productList.map(product => ({ product, primaryMedia: primaryMediaByProductId.get(product.id) ?? null }));
+}
+
 export function isPublicProductStatus(status: string) {
   return status === "active";
 }

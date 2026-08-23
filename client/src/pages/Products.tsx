@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProductMediaPreview } from "@/components/ProductMediaPreview";
+import { ProductListThumbnail } from "@/components/ProductListThumbnail";
 import { trpc } from "@/lib/trpc";
 import { skipToken } from "@tanstack/react-query";
 import {
@@ -273,7 +274,7 @@ export default function Products() {
                 <tbody>
                   {products.data?.map(product => (
                     <tr key={product.id} onClick={() => setSelectedProductId(product.id)} className="cursor-pointer border-b border-[#f0ece4] transition-colors hover:bg-[#f7fbf8] last:border-0">
-                      <td className="py-4"><p className="font-bold text-[#35483f]">{product.name}</p><p className="mt-1 text-xs text-[#7a837d]">{product.productCode}{product.category ? ` · ${product.category}` : ""}</p></td>
+                      <td className="py-4"><div className="flex items-center gap-3"><ProductListThumbnail imageUrl={product.primaryImageUrl} alt={product.primaryImageAlt ?? `صورة ${product.name}`} /><div><p className="font-bold text-[#35483f]">{product.name}</p><p className="mt-1 text-xs text-[#7a837d]">{product.productCode}{product.category ? ` · ${product.category}` : ""}</p></div></div></td>
                       <td className="py-4"><Badge className="bg-[#edf5f1] text-[#1f5b4f] hover:bg-[#edf5f1]">{product.status === "draft" ? "مسودة" : product.status}</Badge></td>
                       <td className="py-4 font-semibold text-[#35483f]">{product.sellingPrice}</td>
                       {canViewFinancials && <td className="py-4 font-semibold text-[#35483f]">{"costPrice" in product ? product.costPrice ?? "—" : "—"}</td>}

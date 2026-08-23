@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { createImportJob, createProduct, getProductMedia, getProductWithVariants, listImportJobs, listProducts, listPublicProducts, updateVariantInventory } from "../products/db";
+import { createImportJob, createProduct, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -24,8 +24,12 @@ export const productsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
-    const productList = await listProducts();
-    return productList.map(product => presentProductForViewer(product, canViewFinancials));
+    const productList = await listProductsWithPrimaryOperationalMedia();
+    return Promise.all(productList.map(async ({ product, primaryMedia }) => ({
+      ...presentProductForViewer(product, canViewFinancials),
+      primaryImageUrl: primaryMedia?.storageKey ? (await storageGet(primaryMedia.storageKey)).url : null,
+      primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
+    })));
   }),
   byId: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
