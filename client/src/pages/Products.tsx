@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ProductMediaPreview } from "@/components/ProductMediaPreview";
 import { trpc } from "@/lib/trpc";
 import { skipToken } from "@tanstack/react-query";
 import {
@@ -13,7 +14,7 @@ import {
   ShieldAlert,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type VariantDraft = {
   colorName: string;
@@ -39,13 +40,18 @@ export default function Products() {
   const [selectedCatalogGroupId, setSelectedCatalogGroupId] = useState<string | null>(null);
   const [selectedCatalogProductId, setSelectedCatalogProductId] = useState<string | null>(null);
   const [directProductPreviewId, setDirectProductPreviewId] = useState<string | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
+  const [integrationsReady, setIntegrationsReady] = useState(false);
 
   const canViewFinancials = profile.data?.canViewSensitiveFinancialData ?? false;
   const canCreate = profile.data?.permissions.includes("products.create") ?? false;
   const canManageInventory = profile.data?.permissions.includes("products.inventory.update") ?? false;
-  const oneDriveStatus = trpc.integrations.oneDriveStatus.useQuery(undefined, { enabled: profile.isSuccess && canCreate });
+  useEffect(() => {
+    if (products.isSuccess || products.isError) setIntegrationsReady(true);
+  }, [products.isError, products.isSuccess]);
+  const oneDriveStatus = trpc.integrations.oneDriveStatus.useQuery(undefined, { enabled: profile.isSuccess && canCreate && integrationsReady });
   const catalogStatus = trpc.integrations.catalogSelectionStatus.useQuery(undefined, {
-    enabled: profile.isSuccess && canCreate,
+    enabled: profile.isSuccess && canCreate && integrationsReady,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
@@ -85,6 +91,15 @@ export default function Products() {
   );
   const directCatalogPreview = trpc.integrations.previewDirectCatalogProduct.useQuery(directPreviewInput, {
     enabled: profile.isSuccess && canCreate && directPreviewInput !== skipToken,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const productDetailInput = useMemo(() => selectedProductId ? { productId: selectedProductId } : skipToken, [selectedProductId]);
+  const selectedProduct = trpc.products.byId.useQuery(productDetailInput, {
+    enabled: profile.isSuccess && canManageInventory && productDetailInput !== skipToken,
+  });
+  const selectedProductMedia = trpc.products.mediaPreviews.useQuery(productDetailInput, {
+    enabled: profile.isSuccess && canManageInventory && productDetailInput !== skipToken && selectedProduct.isSuccess && (selectedProduct.data?.media.length ?? 0) > 0,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   });
@@ -234,10 +249,10 @@ export default function Products() {
               <h2 className="font-bold text-[#243a34]">كتالوج المنتجات</h2>
               <p className="mt-1 text-xs text-[#74817a]">سعر البيع متاح تشغيليًا؛ التكلفة والهامش لا يظهران إلا عند وجود التصريح.</p>
             </div>
-            <Badge variant="outline">{products.data?.length ?? 0} منتج</Badge>
+            <Badge variant="outline">{products.isLoading ? "جارٍ تحميل الكتالوج..." : `${products.data?.length ?? 0} منتج`}</Badge>
           </div>
 
-          {products.isLoading && <div className="mt-5 h-44 animate-pulse rounded-xl bg-[#f6f5f0]" />}
+          {products.isLoading && <div className="mt-5 rounded-xl bg-[#f6f5f0] p-5"><div className="h-5 w-40 animate-pulse rounded bg-[#e9e7df]" /><div className="mt-3 h-16 animate-pulse rounded bg-[#eeece5]" /><p className="mt-4 text-xs text-[#74817a]">جارٍ تحميل قائمة المنتجات؛ لا تحتاج إلى انتظار OneDrive لعرض المسودات.</p></div>}
           {products.error && <div className="mt-5 flex gap-3 rounded-xl bg-[#fff4ed] p-4 text-sm text-[#9c4b25]"><AlertCircle className="h-5 w-5 shrink-0" />{products.error.message}</div>}
           {!products.isLoading && !products.error && products.data?.length === 0 && (
             <div className="mt-5 rounded-2xl border border-dashed border-[#d9d1c1] bg-[#fcfbf8] px-5 py-10 text-center">
@@ -252,7 +267,7 @@ export default function Products() {
                 <thead className="border-b border-[#ebe4d7] text-xs text-[#7b837c]"><tr><th className="pb-3 font-medium">المنتج</th><th className="pb-3 font-medium">الحالة</th><th className="pb-3 font-medium">سعر البيع</th>{canViewFinancials && <th className="pb-3 font-medium">سعر التكلفة</th>}</tr></thead>
                 <tbody>
                   {products.data?.map(product => (
-                    <tr key={product.id} className="border-b border-[#f0ece4] last:border-0">
+                    <tr key={product.id} onClick={() => setSelectedProductId(product.id)} className="cursor-pointer border-b border-[#f0ece4] transition-colors hover:bg-[#f7fbf8] last:border-0">
                       <td className="py-4"><p className="font-bold text-[#35483f]">{product.name}</p><p className="mt-1 text-xs text-[#7a837d]">{product.productCode}{product.category ? ` · ${product.category}` : ""}</p></td>
                       <td className="py-4"><Badge className="bg-[#edf5f1] text-[#1f5b4f] hover:bg-[#edf5f1]">{product.status === "draft" ? "مسودة" : product.status}</Badge></td>
                       <td className="py-4 font-semibold text-[#35483f]">{product.sellingPrice}</td>
@@ -263,6 +278,19 @@ export default function Products() {
               </table>
             </div>
           )}
+          {selectedProduct.isLoading && <div className="mt-5 rounded-xl bg-[#f7fbf8] p-4 text-sm text-[#315549]">جارٍ فتح تفاصيل المنتج...</div>}
+          {selectedProduct.error && <div className="mt-5 rounded-xl bg-[#fff4ed] p-4 text-sm text-[#9c4b25]">{selectedProduct.error.message}</div>}
+          {selectedProduct.data && <section className="mt-5 space-y-4 rounded-2xl border border-[#cfe1d7] bg-[#f7fbf8] p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><p className="text-xs text-[#63766d]">تفاصيل داخلية — لا تعني النشر</p><h3 className="mt-1 text-lg font-bold text-[#243a34]">{selectedProduct.data.product.name}</h3><p className="mt-1 text-sm text-[#63766d]">{selectedProduct.data.product.productCode} · {selectedProduct.data.product.category ?? "غير مصنف"} · {selectedProduct.data.product.status === "draft" ? "مسودة للمراجعة" : selectedProduct.data.product.status}</p></div>
+              <Button size="sm" variant="outline" onClick={() => setSelectedProductId(null)}>إغلاق التفاصيل</Button>
+            </div>
+            <p className="text-sm leading-6 text-[#405c50]">{selectedProduct.data.product.description || "لا يوجد وصف."}</p>
+            <div className="grid gap-3 sm:grid-cols-2">{selectedProduct.data.variants.map(variant => <div key={variant.id} className="rounded-xl border border-[#d8e7df] bg-white p-3"><p className="font-bold text-[#2d5a4d]">{variant.colorName}{variant.sizeLabel ? ` / ${variant.sizeLabel}` : ""}</p><p className="mt-1 text-sm text-[#526158]">المخزون: {variant.inventoryQuantity} · {variant.availability === "available" ? "متاح" : variant.availability === "low_stock" ? "منخفض" : "نفد"}</p></div>)}</div>
+            {selectedProductMedia.isLoading && <p className="rounded-xl bg-white p-3 text-sm text-[#315549]">جارٍ جلب مصغرات الصور الخفيفة من OneDrive؛ الأصل العالي لا يُعدّل.</p>}
+            {selectedProductMedia.error && <p className="rounded-xl bg-[#fff4ed] p-3 text-sm text-[#9c4b25]">{selectedProductMedia.error.message}</p>}
+            {selectedProductMedia.data && <ProductMediaPreview media={selectedProductMedia.data} />}
+          </section>}
         </article>
 
         <article className="rounded-2xl bg-[#f7f3ea] p-6">

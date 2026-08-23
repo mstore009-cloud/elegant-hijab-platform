@@ -38,6 +38,12 @@ export async function getProductWithVariants(productId: number) {
   return { product: result[0], variants };
 }
 
+export async function getProductMedia(productId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(productMedia).where(eq(productMedia.productId, productId)).orderBy(productMedia.sortOrder);
+}
+
 export async function createProduct(input: {
   productCode: string;
   name: string;

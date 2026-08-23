@@ -3,6 +3,7 @@ export type ProductWithFinancials = {
   productCode: string;
   name: string;
   category: string | null;
+  description: string | null;
   status: string;
   sellingPrice: string;
   costPrice: string | null;

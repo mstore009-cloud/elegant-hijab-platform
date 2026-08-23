@@ -3,9 +3,11 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { createImportJob, createProduct, getProductWithVariants, listImportJobs, listProducts, listPublicProducts, updateVariantInventory } from "../products/db";
+import { createImportJob, createProduct, getProductMedia, getProductWithVariants, listImportJobs, listProducts, listPublicProducts, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
+import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
+import { listCatalogChildren, readCatalogImageDataUrl } from "../integrations/onedrive/catalog";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
 const productStatus = z.enum(["draft", "needs_review", "ready", "active", "archived"]);
@@ -28,7 +30,38 @@ export const productsRouter = router({
     const item = await getProductWithVariants(input.productId);
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
-    return { product: presentProductForViewer(item.product, canViewFinancials), variants: item.variants };
+    const media = await getProductMedia(input.productId);
+    return { product: presentProductForViewer(item.product, canViewFinancials), variants: item.variants, media };
+  }),
+  mediaPreviews: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.inventory.update");
+    const item = await getProductWithVariants(input.productId);
+    if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
+    const media = await getProductMedia(input.productId);
+    const oneDriveMedia = media.filter(entry => entry.source === "onedrive" && entry.originalFileName);
+    if (oneDriveMedia.length === 0) return [];
+    const connection = await getUsableCatalogConnection(ctx.user.id);
+    if (!connection?.selectedDriveId || !connection.selectedFolderId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مرجع Catalog غير متاح لمعاينة الصور." });
+    const driveId = connection.selectedDriveId;
+    const groups = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId, folderId: connection.selectedFolderId });
+    const group = groups.find(entry => entry.kind === "folder" && entry.name === item.product.category);
+    if (!group) throw new TRPCError({ code: "NOT_FOUND", message: "لم توجد مجموعة المنتج في Catalog." });
+    const folders = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId, folderId: group.id });
+    const productFolder = folders.find(entry => entry.kind === "folder" && entry.name === item.product.productCode);
+    if (!productFolder) throw new TRPCError({ code: "NOT_FOUND", message: "لم يوجد مجلد المنتج في Catalog." });
+    const sourceFiles = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId, folderId: productFolder.id });
+    const byName = new Map(sourceFiles.map(file => [file.name, file]));
+    return Promise.all(oneDriveMedia.slice(0, 12).map(async entry => {
+      const sourceFile = byName.get(entry.originalFileName!);
+      const sourceFileId = sourceFile?.id;
+      if (!sourceFile || sourceFile.kind !== "file" || !sourceFileId) throw new TRPCError({ code: "NOT_FOUND", message: `لم توجد الصورة ${entry.originalFileName} في Catalog.` });
+      return {
+        mediaId: entry.id,
+        colorName: item.variants.find(variant => variant.id === entry.variantId)?.colorName ?? "",
+        originalFileName: entry.originalFileName!,
+        dataUrl: await readCatalogImageDataUrl({ encryptedAccessToken: connection.encryptedAccessToken, driveId, fileId: sourceFileId }),
+      };
+    }));
   }),
   create: protectedProcedure.input(z.object({
     productCode: z.string().trim().min(2).max(80),
