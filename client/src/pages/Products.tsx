@@ -287,7 +287,10 @@ export default function Products() {
           {selectedProduct.error && <div className="mt-5 rounded-xl bg-[#fff4ed] p-4 text-sm text-[#9c4b25]">{selectedProduct.error.message}</div>}
           {selectedProduct.data && <section className="mt-5 space-y-4 rounded-2xl border border-[#cfe1d7] bg-[#f7fbf8] p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><p className="text-xs text-[#63766d]">تفاصيل داخلية — لا تعني النشر</p><h3 className="mt-1 text-lg font-bold text-[#243a34]">{selectedProduct.data.product.name}</h3><p className="mt-1 text-sm text-[#63766d]">{selectedProduct.data.product.productCode} · {selectedProduct.data.product.category ?? "غير مصنف"} · {selectedProduct.data.product.status === "draft" ? "مسودة للمراجعة" : selectedProduct.data.product.status}</p></div>
+              <div className="flex items-start gap-3">
+                {selectedProductMedia.data?.[0] && <img src={selectedProductMedia.data[0].dataUrl} alt={`صورة ${selectedProductMedia.data[0].colorName}`} className="h-16 w-12 rounded-lg border border-[#d8e7df] object-cover" />}
+                <div><p className="text-xs text-[#63766d]">تفاصيل داخلية — لا تعني النشر</p><h3 className="mt-1 text-lg font-bold text-[#243a34]">{selectedProduct.data.product.name}</h3><p className="mt-1 text-sm text-[#63766d]">{selectedProduct.data.product.productCode} · {selectedProduct.data.product.category ?? "غير مصنف"} · {selectedProduct.data.product.status === "draft" ? "مسودة للمراجعة" : selectedProduct.data.product.status}</p></div>
+              </div>
               <Button size="sm" variant="outline" onClick={() => setSelectedProductId(null)}>إغلاق التفاصيل</Button>
             </div>
             <p className="text-sm leading-6 text-[#405c50]">{selectedProduct.data.product.description || "لا يوجد وصف."}</p>

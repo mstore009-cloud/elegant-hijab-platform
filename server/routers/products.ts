@@ -48,6 +48,7 @@ export const productsRouter = router({
       .map(async entry => ({
         mediaId: entry.id,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
+        inventoryQuantity: variantById.get(entry.variantId ?? -1)?.inventoryQuantity ?? 0,
         originalFileName: entry.originalFileName!,
         dataUrl: (await storageGet(entry.storageKey!)).url,
         rendition: "operational_webp" as const,
@@ -72,6 +73,7 @@ export const productsRouter = router({
       return {
         mediaId: entry.id,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
+        inventoryQuantity: variantById.get(entry.variantId ?? -1)?.inventoryQuantity ?? 0,
         originalFileName: entry.originalFileName!,
         dataUrl: await readCatalogImageDataUrl({ encryptedAccessToken: connection.encryptedAccessToken, driveId, fileId: sourceFileId }),
         rendition: "onedrive_thumbnail_c300x400" as const,
