@@ -3,8 +3,8 @@ PRODUCT_NAME_AR: شال ساتان ناعم
 SELLING_PRICE_IQD: 15000
 DESCRIPTION_AR: شال ساتان خفيف وناعم مناسب للاستخدام اليومي والمناسبات.
 
-# OPTIONAL — اترك السطر فارغًا إذا لم يتوفر
-SIZES: M, L, XL, XXL
+# REQUIRED — اترك القيمة فارغة إذا لم توجد قياسات. عند وجودها اكتبها مفصولة بفواصل، مثل: Medium, Large.
+SIZES:
 # يكتب فقط عند وجود عرض حقيقي؛ اتركه فارغًا في غير ذلك.
 PREVIOUS_PRICE_IQD:
 PRODUCT_STATUS: draft

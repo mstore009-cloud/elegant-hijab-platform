@@ -56,6 +56,41 @@ export async function createProduct(input: {
   return productId;
 }
 
+export async function createCatalogDraftProduct(input: {
+  productCode: string;
+  name: string;
+  category: string;
+  description: string;
+  sellingPrice: string;
+  sourceReference: string;
+  createdByUserId: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const existing = await db.select({ id: products.id }).from(products).where(eq(products.productCode, input.productCode)).limit(1);
+  if (existing[0]) return { productId: existing[0].id, jobId: null, created: false };
+
+  const productId = await createProduct({
+    productCode: input.productCode,
+    name: input.name,
+    category: input.category,
+    description: input.description,
+    status: "draft",
+    sellingPrice: input.sellingPrice,
+    createdByUserId: input.createdByUserId,
+    variants: [],
+  });
+  const job = await db.insert(productImportJobs).values({
+    source: "onedrive",
+    sourceReference: input.sourceReference,
+    status: "needs_review",
+    linkedProductId: productId,
+    missingFields: "الألوان والمخزون والوسائط لم تُنشأ بعد؛ يلزم مراجعة المسودة.",
+    createdByUserId: input.createdByUserId,
+  });
+  return { productId, jobId: Number(job[0].insertId), created: true };
+}
+
 export async function updateVariantInventory(variantId: number, inventoryQuantity: number) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");

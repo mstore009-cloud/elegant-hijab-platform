@@ -8,9 +8,53 @@ import {
   getOneDriveConnection,
   selectCatalogRoot,
 } from "../integrations/onedrive/db";
-import { listCatalogRootFolders } from "../integrations/onedrive/catalog";
+import { listCatalogChildren, listCatalogRootFolders, readCatalogTextFile } from "../integrations/onedrive/catalog";
 import { createOneDriveAuthorizationUrl, createPkcePair } from "../integrations/onedrive/oauth";
+import { parseCatalogProductMetadata } from "../integrations/onedrive/productMetadata";
+import { createCatalogDraftProduct } from "../products/db";
 import { protectedProcedure, router } from "../_core/trpc";
+
+async function requireSelectedCatalog(userId: number) {
+  const connection = await getCatalogConnection(userId);
+  if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يُعتمد جذر Catalog بعد." });
+  }
+  return connection;
+}
+
+async function readSelectedCatalogProduct(userId: number, input: { groupId: string; productFolderId: string }) {
+  const connection = await requireSelectedCatalog(userId);
+  const groups = await listCatalogChildren({
+    encryptedAccessToken: connection.encryptedAccessToken,
+    driveId: connection.selectedDriveId!,
+    folderId: connection.selectedFolderId!,
+  });
+  const group = groups.find(item => item.id === input.groupId && item.kind === "folder");
+  if (!group) throw new TRPCError({ code: "BAD_REQUEST", message: "المجموعة المختارة ليست ضمن جذر Catalog المعتمد." });
+  const products = await listCatalogChildren({
+    encryptedAccessToken: connection.encryptedAccessToken,
+    driveId: connection.selectedDriveId!,
+    folderId: group.id,
+  });
+  const productFolder = products.find(item => item.id === input.productFolderId && item.kind === "folder");
+  if (!productFolder) throw new TRPCError({ code: "BAD_REQUEST", message: "مجلد المنتج المختار ليس ضمن المجموعة المحددة." });
+  const contents = await listCatalogChildren({
+    encryptedAccessToken: connection.encryptedAccessToken,
+    driveId: connection.selectedDriveId!,
+    folderId: productFolder.id,
+  });
+  const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
+  const metadataText = metadataFile
+    ? await readCatalogTextFile({
+      encryptedAccessToken: connection.encryptedAccessToken,
+      driveId: connection.selectedDriveId!,
+      fileId: metadataFile.id,
+    })
+    : null;
+  const images = contents.filter(item => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name));
+  const documents = contents.filter(item => item.kind === "file" && !images.some(image => image.id === item.id));
+  return { group, productFolder, metadataFile, metadataText, images, documents };
+}
 
 export const integrationsRouter = router({
   oneDriveStatus: protectedProcedure.query(async ({ ctx }) => {
@@ -77,5 +121,115 @@ export const integrationsRouter = router({
       folderName: catalogFolder.name,
     });
     return { selectedFolderName: catalogFolder.name };
+  }),
+  catalogGroups: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    const connection = await requireSelectedCatalog(ctx.user.id);
+    const items = await listCatalogChildren({
+      encryptedAccessToken: connection.encryptedAccessToken,
+      driveId: connection.selectedDriveId!,
+      folderId: connection.selectedFolderId!,
+    });
+    return items.filter(item => item.kind === "folder");
+  }),
+  catalogProductFolders: protectedProcedure.input(z.object({ groupId: z.string().min(1) })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const connection = await requireSelectedCatalog(ctx.user.id);
+    const groups = await listCatalogChildren({
+      encryptedAccessToken: connection.encryptedAccessToken,
+      driveId: connection.selectedDriveId!,
+      folderId: connection.selectedFolderId!,
+    });
+    const group = groups.find(item => item.id === input.groupId && item.kind === "folder");
+    if (!group) throw new TRPCError({ code: "BAD_REQUEST", message: "المجموعة المختارة ليست ضمن جذر Catalog المعتمد." });
+    const items = await listCatalogChildren({
+      encryptedAccessToken: connection.encryptedAccessToken,
+      driveId: connection.selectedDriveId!,
+      folderId: group.id,
+    });
+    return { group, products: items.filter(item => item.kind === "folder") };
+  }),
+  previewCatalogProduct: protectedProcedure.input(z.object({
+    groupId: z.string().min(1),
+    productFolderId: z.string().min(1),
+  })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const { group, productFolder, metadataFile, metadataText, images, documents } = await readSelectedCatalogProduct(ctx.user.id, input);
+    return {
+      mode: "preview" as const,
+      group: { id: group.id, name: group.name },
+      product: { id: productFolder.id, productCode: productFolder.name },
+      metadata: metadataFile ? { fileName: metadataFile.name, content: metadataText } : null,
+      images,
+      documents,
+    };
+  }),
+  createCatalogDraft: protectedProcedure.input(z.object({
+    groupId: z.string().min(1),
+    productFolderId: z.string().min(1),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const { group, productFolder, metadataFile, metadataText, images } = await readSelectedCatalogProduct(ctx.user.id, input);
+    if (!metadataFile || !metadataText) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إنشاء المسودة من دون product.txt." });
+    }
+    let metadata;
+    try {
+      metadata = parseCatalogProductMetadata(metadataText);
+    } catch (error) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "ملف product.txt غير صالح." });
+    }
+    const result = await createCatalogDraftProduct({
+      productCode: productFolder.name,
+      name: metadata.name,
+      category: group.name,
+      description: metadata.description,
+      sellingPrice: metadata.sellingPrice,
+      sourceReference: `Catalog/${group.name}/${productFolder.name}`,
+      createdByUserId: ctx.user.id,
+    });
+    return {
+      ...result,
+      productCode: productFolder.name,
+      imageCount: images.length,
+      variantCount: 0,
+      mediaCount: 0,
+      status: "draft" as const,
+    };
+  }),
+  previewDirectCatalogProduct: protectedProcedure.input(z.object({ productFolderId: z.string().min(1) })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const connection = await requireSelectedCatalog(ctx.user.id);
+    const rootItems = await listCatalogChildren({
+      encryptedAccessToken: connection.encryptedAccessToken,
+      driveId: connection.selectedDriveId!,
+      folderId: connection.selectedFolderId!,
+    });
+    const productFolder = rootItems.find(item => item.id === input.productFolderId && item.kind === "folder");
+    if (!productFolder) throw new TRPCError({ code: "BAD_REQUEST", message: "مجلد المنتج ليس ضمن جذر Catalog المعتمد." });
+    const contents = await listCatalogChildren({
+      encryptedAccessToken: connection.encryptedAccessToken,
+      driveId: connection.selectedDriveId!,
+      folderId: productFolder.id,
+    });
+    const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
+    const metadataText = metadataFile
+      ? await readCatalogTextFile({
+        encryptedAccessToken: connection.encryptedAccessToken,
+        driveId: connection.selectedDriveId!,
+        fileId: metadataFile.id,
+      })
+      : null;
+    const images = contents.filter(item => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name));
+    const documents = contents.filter(item => item.kind === "file" && !images.some(image => image.id === item.id));
+    return {
+      mode: "direct_root_preview" as const,
+      structureWarning: "هذا المجلد يقع مباشرة تحت Catalog، خلاف شجرة المجموعة المعتمدة. المعاينة تشخيصية ولا تعتمد البنية.",
+      group: null,
+      product: { id: productFolder.id, productCode: productFolder.name },
+      metadata: metadataFile ? { fileName: metadataFile.name, content: metadataText } : null,
+      images,
+      documents,
+    };
   }),
 });

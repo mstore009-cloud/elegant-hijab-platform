@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
+import { skipToken } from "@tanstack/react-query";
 import {
   AlertCircle,
   CloudCog,
@@ -35,6 +36,9 @@ export default function Products() {
   const [sellingPrice, setSellingPrice] = useState("");
   const [costPrice, setCostPrice] = useState("");
   const [variants, setVariants] = useState<VariantDraft[]>([emptyVariant()]);
+  const [selectedCatalogGroupId, setSelectedCatalogGroupId] = useState<string | null>(null);
+  const [selectedCatalogProductId, setSelectedCatalogProductId] = useState<string | null>(null);
+  const [directProductPreviewId, setDirectProductPreviewId] = useState<string | null>(null);
 
   const canViewFinancials = profile.data?.canViewSensitiveFinancialData ?? false;
   const canCreate = profile.data?.permissions.includes("products.create") ?? false;
@@ -43,6 +47,32 @@ export default function Products() {
   const catalogStatus = trpc.integrations.catalogSelectionStatus.useQuery(undefined, { enabled: profile.isSuccess && canCreate });
   const catalogFolders = trpc.integrations.catalogRootFolders.useQuery(undefined, {
     enabled: profile.isSuccess && canCreate && catalogStatus.data?.connected === true && catalogStatus.data.status === "connected",
+  });
+  const catalogGroups = trpc.integrations.catalogGroups.useQuery(undefined, {
+    enabled: profile.isSuccess && canCreate && catalogStatus.data?.status === "catalog_selected",
+  });
+  const catalogProductInput = useMemo(
+    () => selectedCatalogGroupId ? { groupId: selectedCatalogGroupId } : skipToken,
+    [selectedCatalogGroupId],
+  );
+  const catalogProducts = trpc.integrations.catalogProductFolders.useQuery(catalogProductInput, {
+    enabled: profile.isSuccess && canCreate && catalogProductInput !== skipToken,
+  });
+  const catalogPreviewInput = useMemo(
+    () => selectedCatalogGroupId && selectedCatalogProductId
+      ? { groupId: selectedCatalogGroupId, productFolderId: selectedCatalogProductId }
+      : skipToken,
+    [selectedCatalogGroupId, selectedCatalogProductId],
+  );
+  const catalogPreview = trpc.integrations.previewCatalogProduct.useQuery(catalogPreviewInput, {
+    enabled: profile.isSuccess && canCreate && catalogPreviewInput !== skipToken,
+  });
+  const directPreviewInput = useMemo(
+    () => directProductPreviewId ? { productFolderId: directProductPreviewId } : skipToken,
+    [directProductPreviewId],
+  );
+  const directCatalogPreview = trpc.integrations.previewDirectCatalogProduct.useQuery(directPreviewInput, {
+    enabled: profile.isSuccess && canCreate && directPreviewInput !== skipToken,
   });
   const validVariants = useMemo(
     () => variants.filter(variant => variant.colorName.trim().length > 0),
@@ -74,6 +104,11 @@ export default function Products() {
       setSellingPrice("");
       setCostPrice("");
       setVariants([emptyVariant()]);
+    },
+  });
+  const createCatalogDraft = trpc.integrations.createCatalogDraft.useMutation({
+    onSuccess: async () => {
+      await Promise.all([utils.products.list.invalidate(), utils.products.importJobs.list.invalidate()]);
     },
   });
 
@@ -214,7 +249,43 @@ export default function Products() {
             <p className="text-sm font-bold text-[#2d5a4d]">اختيار جذر Catalog — تجربة قراءة محدودة</p>
             <p className="mt-2 text-xs leading-6 text-[#5a766b]">بعد دخول Microsoft، تعرض المنصة مجلدات الجذر لاختيار مجلد باسم <bdi>Catalog</bdi> فقط. لا تحفظ كلمة المرور ولا تستورد أي منتج في هذه المرحلة.</p>
             {catalogStatus.data?.status === "catalog_selected" ? (
-              <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-[#2d5a4d]">تم حفظ {catalogStatus.data.selectedFolderName} كمرجع كتالوج. ما زال الاستيراد نفسه يحتاج مراجعة منفصلة.</p>
+              <div className="mt-3 space-y-3 rounded-lg bg-white p-3">
+                <p className="text-xs font-bold text-[#2d5a4d]">تم حفظ {catalogStatus.data.selectedFolderName} كمرجع. اختر الآن منتجًا واحدًا للمعاينة فقط.</p>
+                {catalogGroups.isLoading && <p className="text-xs text-[#5a766b]">جارٍ عرض مجموعات Catalog...</p>}
+                {catalogGroups.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogGroups.error.message}</p>}
+                {catalogGroups.data && (
+                  <div className="flex flex-wrap gap-2">
+                    {catalogGroups.data.map(group => <Button key={group.id} size="sm" variant={selectedCatalogGroupId === group.id ? "default" : "outline"} onClick={() => { setSelectedCatalogGroupId(group.id); setSelectedCatalogProductId(null); setDirectProductPreviewId(null); }} className={selectedCatalogGroupId === group.id ? "bg-[#2d5a4d] hover:bg-[#21453a]" : "border-[#9dc2b2] text-[#2d5a4d]"}>{group.name}</Button>)}
+                  </div>
+                )}
+                {selectedCatalogGroupId && <div className="space-y-2 border-t border-[#e5eee8] pt-3">
+                  <p className="text-xs text-[#5a766b]">مجلدات المنتجات في المجموعة:</p>
+                  {catalogProducts.isLoading && <p className="text-xs text-[#5a766b]">جارٍ عرض مجلدات المنتجات...</p>}
+                  {catalogProducts.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogProducts.error.message}</p>}
+                  {catalogProducts.data?.products.map(product => <Button key={product.id} size="sm" variant={selectedCatalogProductId === product.id ? "default" : "outline"} onClick={() => setSelectedCatalogProductId(product.id)} className={selectedCatalogProductId === product.id ? "bg-[#72551d] hover:bg-[#5c4417]" : "border-[#d9c490] text-[#72551d]"}>{product.name}</Button>)}
+                  {catalogProducts.data && catalogProducts.data.products.length === 0 && <Button size="sm" variant="outline" onClick={() => setDirectProductPreviewId(catalogProducts.data!.group.id)} className="border-[#d9b17a] text-[#8b552b] hover:bg-[#fff7ed]">معاينة {catalogProducts.data.group.name} كمجلد منتج مباشر — اختبار فقط</Button>}
+                </div>}
+                {catalogPreview.isLoading && <p className="text-xs text-[#5a766b]">جارٍ قراءة المسودة دون حفظ...</p>}
+                {catalogPreview.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogPreview.error.message}</p>}
+                {catalogPreview.data && <div className="space-y-2 rounded-lg border border-[#d7e2dc] bg-[#f9fcfa] p-3 text-xs text-[#405c50]">
+                  <p><b>المجموعة:</b> {catalogPreview.data.group.name} · <b>الكود:</b> {catalogPreview.data.product.productCode}</p>
+                  <p><b>ملف البيانات:</b> {catalogPreview.data.metadata?.fileName ?? "غير موجود"} · <b>الصور:</b> {catalogPreview.data.images.length}</p>
+                  {catalogPreview.data.metadata?.content && <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded-md bg-white p-2 text-right leading-5 text-[#405c50]">{catalogPreview.data.metadata.content}</pre>}
+                  <p className="font-bold text-[#72551d]">هذه معاينة قراءة فقط؛ لم يُنشأ أي منتج ولم تُنقل أي صورة.</p>
+                  <Button size="sm" onClick={() => selectedCatalogGroupId && selectedCatalogProductId && createCatalogDraft.mutate({ groupId: selectedCatalogGroupId, productFolderId: selectedCatalogProductId })} disabled={createCatalogDraft.isPending} className="bg-[#1f5b4f] hover:bg-[#153d35]">{createCatalogDraft.isPending ? "جارٍ إنشاء المسودة..." : "إنشاء مسودة داخلية للمراجعة"}</Button>
+                  {createCatalogDraft.error && <p className="rounded-md bg-[#fff4ed] p-2 text-[#9c4b25]">{createCatalogDraft.error.message}</p>}
+                  {createCatalogDraft.data && <p className="rounded-md bg-[#edf7f1] p-2 font-bold text-[#1f5b4f]">{createCatalogDraft.data.created ? `تم إنشاء مسودة ${createCatalogDraft.data.productCode}.` : `المسودة ${createCatalogDraft.data.productCode} موجودة مسبقًا؛ لم يُنشأ تكرار.`} لم تُنشأ ألوان أو مخزون أو وسائط.</p>}
+                </div>}
+                {directCatalogPreview.isLoading && <p className="text-xs text-[#5a766b]">جارٍ قراءة المجلد المباشر كمعاينة تشخيصية...</p>}
+                {directCatalogPreview.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{directCatalogPreview.error.message}</p>}
+                {directCatalogPreview.data && <div className="space-y-2 rounded-lg border border-[#ead1ad] bg-[#fffaf2] p-3 text-xs text-[#6e532b]">
+                  <p className="font-bold">{directCatalogPreview.data.structureWarning}</p>
+                  <p><b>الكود من اسم المجلد:</b> {directCatalogPreview.data.product.productCode}</p>
+                  <p><b>ملف البيانات:</b> {directCatalogPreview.data.metadata?.fileName ?? "غير موجود"} · <b>الصور:</b> {directCatalogPreview.data.images.length}</p>
+                  {directCatalogPreview.data.metadata?.content && <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded-md bg-white p-2 text-right leading-5 text-[#6e532b]">{directCatalogPreview.data.metadata.content}</pre>}
+                  <p className="font-bold">لم يُنشأ منتج ولم تُنقل صورة؛ هذه القراءة لا تعتمد هذا المسار الشاذ.</p>
+                </div>}
+              </div>
             ) : catalogStatus.data?.connected ? (
               <div className="mt-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
