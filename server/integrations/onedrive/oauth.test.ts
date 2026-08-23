@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createOneDriveAuthorizationUrl, createPkcePair, oneDriveAppFolderBootstrapUrl } from "./oauth";
+import { createOneDriveAuthorizationUrl, createPkcePair, formatOneDriveGraphError, oneDriveAppFolderUrl } from "./oauth";
 
 describe("OAuth الخاص بـ OneDrive", () => {
   it("ينشئ PKCE verifier وchallenge مختلفين وصالحين للاستخدام", () => {
@@ -16,9 +16,17 @@ describe("OAuth الخاص بـ OneDrive", () => {
     expect(authorizationUrl.pathname).toContain("/consumers/");
   });
 
-  it("يهيئ مجلد التطبيق عبر مسار كتابة محدود قبل قراءته", () => {
-    expect(oneDriveAppFolderBootstrapUrl()).toBe(
-      "https://graph.microsoft.com/v1.0/me/drive/special/approot/children/.ehp-connection.json:/content",
-    );
+  it("يطلب مجلد التطبيق عبر المسار الرسمي الذي ينشئه Graph عند الحاجة", () => {
+    expect(oneDriveAppFolderUrl()).toBe("https://graph.microsoft.com/v1.0/me/drive/special/approot");
+  });
+
+  it("يعرض حالة Graph وكودها عند فشل الوصول بدل رسالة عامة", () => {
+    expect(formatOneDriveGraphError({
+      status: 403,
+      code: "accessDenied",
+      innerCode: "serviceReadOnly",
+      requestId: "request-123",
+      message: "Access denied",
+    })).toBe("[OneDrive Graph 403 / accessDenied / serviceReadOnly / request request-123] Access denied");
   });
 });

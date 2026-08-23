@@ -66,30 +66,44 @@ export async function exchangeOneDriveCode(input: { code: string; codeVerifier: 
 }
 
 export async function getOneDriveAppFolder(accessToken: string) {
-  const bootstrapUrl = "https://graph.microsoft.com/v1.0/me/drive/special/approot/children/.ehp-connection.json:/content";
-  const bootstrap = await fetch(bootstrapUrl, {
-    method: "PUT",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ managedBy: "ElegantHijabPlatform", purpose: "OneDrive App Folder initialization" }),
-  });
-  if (!bootstrap.ok) {
-    const bootstrapPayload = await bootstrap.json() as { error?: { message?: string } };
-    throw new Error(bootstrapPayload.error?.message ?? "تعذر تهيئة مجلد تطبيق OneDrive.");
-  }
-
-  const response = await fetch("https://graph.microsoft.com/v1.0/me/drive/special/approot", {
+  const response = await fetch(oneDriveAppFolderUrl(), {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  const payload = await response.json() as { id?: string; webUrl?: string; error?: { message?: string } };
+  const payload = await response.json() as {
+    id?: string;
+    webUrl?: string;
+    error?: {
+      code?: string;
+      message?: string;
+      innerError?: { code?: string; requestId?: string; [key: string]: unknown };
+    };
+  };
   if (!response.ok || !payload.id) {
-    throw new Error(payload.error?.message ?? "تعذر الوصول إلى مجلد تطبيق OneDrive.");
+    throw new Error(formatOneDriveGraphError({
+      status: response.status,
+      code: payload.error?.code,
+      message: payload.error?.message,
+      innerCode: payload.error?.innerError?.code,
+      requestId: payload.error?.innerError?.requestId,
+    }));
   }
   return { id: payload.id, webUrl: payload.webUrl ?? null };
 }
 
-export function oneDriveAppFolderBootstrapUrl() {
-  return "https://graph.microsoft.com/v1.0/me/drive/special/approot/children/.ehp-connection.json:/content";
+export function oneDriveAppFolderUrl() {
+  return "https://graph.microsoft.com/v1.0/me/drive/special/approot";
+}
+
+export function formatOneDriveGraphError(input: {
+  status: number;
+  code?: string;
+  message?: string;
+  innerCode?: string;
+  requestId?: string;
+}) {
+  const code = input.code ? ` / ${input.code}` : "";
+  const innerCode = input.innerCode ? ` / ${input.innerCode}` : "";
+  const requestId = input.requestId ? ` / request ${input.requestId}` : "";
+  const message = input.message ?? "تعذر الوصول إلى مجلد تطبيق OneDrive.";
+  return `[OneDrive Graph ${input.status}${code}${innerCode}${requestId}] ${message}`;
 }
