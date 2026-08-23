@@ -200,6 +200,19 @@ export async function attachApprovedCatalogImageReferences(input: {
   };
 }
 
+export async function saveOperationalMediaCopy(input: {
+  mediaId: number;
+  storageKey: string;
+  metadata: Record<string, unknown>;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  await db.update(productMedia).set({
+    storageKey: input.storageKey,
+    operationalMetadata: JSON.stringify(input.metadata),
+  }).where(eq(productMedia.id, input.mediaId));
+}
+
 export async function updateVariantInventory(variantId: number, inventoryQuantity: number) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");

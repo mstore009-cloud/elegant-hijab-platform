@@ -103,6 +103,11 @@ export default function Products() {
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   });
+  const generateOperationalMedia = trpc.products.generateOperationalMedia.useMutation({
+    onSuccess: async () => {
+      await Promise.all([selectedProduct.refetch(), selectedProductMedia.refetch()]);
+    },
+  });
   const validVariants = useMemo(
     () => variants.filter(variant => variant.colorName.trim().length > 0),
     [variants],
@@ -290,6 +295,12 @@ export default function Products() {
             {selectedProductMedia.isLoading && <p className="rounded-xl bg-white p-3 text-sm text-[#315549]">جارٍ جلب مصغرات الصور الخفيفة من OneDrive؛ الأصل العالي لا يُعدّل.</p>}
             {selectedProductMedia.error && <p className="rounded-xl bg-[#fff4ed] p-3 text-sm text-[#9c4b25]">{selectedProductMedia.error.message}</p>}
             {selectedProductMedia.data && <ProductMediaPreview media={selectedProductMedia.data} />}
+            {selectedProduct.data.media.some(media => media.source === "onedrive" && !media.storageKey) && (
+              <Button size="sm" variant="outline" onClick={() => generateOperationalMedia.mutate({ productId: selectedProduct.data.product.id })} disabled={generateOperationalMedia.isPending} className="border-[#9dc2b2] text-[#2d5a4d] hover:bg-[#edf7f1]">
+                {generateOperationalMedia.isPending ? "جارٍ إنشاء النسخ الخفيفة..." : "إنشاء نسخ تشغيلية خفيفة"}
+              </Button>
+            )}
+            {generateOperationalMedia.error && <p className="rounded-xl bg-[#fff4ed] p-3 text-sm text-[#9c4b25]">{generateOperationalMedia.error.message}</p>}
           </section>}
         </article>
 

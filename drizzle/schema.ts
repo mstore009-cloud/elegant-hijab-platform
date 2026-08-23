@@ -110,6 +110,7 @@ export const productMedia = mysqlTable(
     mediaType: mysqlEnum("mediaType", ["image", "video", "document"]).notNull(),
     originalUrl: text("originalUrl"),
     storageKey: varchar("storageKey", { length: 512 }),
+    operationalMetadata: text("operationalMetadata"),
     originalFileName: varchar("originalFileName", { length: 255 }),
     colorVerified: boolean("colorVerified").default(false).notNull(),
     sortOrder: int("sortOrder").default(0).notNull(),

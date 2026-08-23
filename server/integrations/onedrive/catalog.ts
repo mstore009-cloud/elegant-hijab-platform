@@ -125,6 +125,27 @@ export async function readCatalogTextFile(input: {
   return contentResponse.text();
 }
 
+/** Downloads a known approved source image only when generating a separate operational copy. It never writes to OneDrive. */
+export async function readCatalogOriginalImageBytes(input: {
+  encryptedAccessToken: string;
+  driveId: string;
+  fileId: string;
+}): Promise<{ bytes: Buffer; mimeType: string }> {
+  const accessToken = decryptOneDriveToken(input.encryptedAccessToken);
+  const contentResponse = await graphFetch(
+    `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.fileId)}/content`,
+    accessToken,
+  );
+  if (!contentResponse.ok) {
+    throw new Error(`تعذر قراءة أصل صورة المنتج من Microsoft Graph (HTTP ${contentResponse.status}).`);
+  }
+  const mimeType = contentResponse.headers.get("content-type")?.split(";")[0] || "application/octet-stream";
+  if (!mimeType.startsWith("image/")) throw new Error("ملف OneDrive المحدد ليس صورة صالحة لنسخة تشغيلية.");
+  const bytes = Buffer.from(await contentResponse.arrayBuffer());
+  if (bytes.length > 25 * 1024 * 1024) throw new Error("حجم الصورة الأصلية أكبر من حد النسخة التشغيلية (25 ميغابايت).");
+  return { bytes, mimeType };
+}
+
 /** Reads one Microsoft Graph thumbnail transiently for visual analysis; it never stores or publishes the bytes. */
 export async function readCatalogImageDataUrl(input: {
   encryptedAccessToken: string;

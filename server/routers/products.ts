@@ -8,6 +8,8 @@ import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
 import { listCatalogChildren, readCatalogImageDataUrl } from "../integrations/onedrive/catalog";
+import { storageGet } from "../storage";
+import { generateOperationalMediaForProduct } from "../products/operationalMediaService";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
 const productStatus = z.enum(["draft", "needs_review", "ready", "active", "archived"]);
@@ -40,6 +42,18 @@ export const productsRouter = router({
     const media = await getProductMedia(input.productId);
     const oneDriveMedia = media.filter(entry => entry.source === "onedrive" && entry.originalFileName);
     if (oneDriveMedia.length === 0) return [];
+    const variantById = new Map(item.variants.map(variant => [variant.id, variant]));
+    const storedPreviews = await Promise.all(oneDriveMedia
+      .filter(entry => Boolean(entry.storageKey))
+      .map(async entry => ({
+        mediaId: entry.id,
+        colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
+        originalFileName: entry.originalFileName!,
+        dataUrl: (await storageGet(entry.storageKey!)).url,
+        rendition: "operational_webp" as const,
+      })));
+    const missingOperationalCopy = oneDriveMedia.filter(entry => !entry.storageKey);
+    if (missingOperationalCopy.length === 0) return storedPreviews;
     const connection = await getUsableCatalogConnection(ctx.user.id);
     if (!connection?.selectedDriveId || !connection.selectedFolderId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مرجع Catalog غير متاح لمعاينة الصور." });
     const driveId = connection.selectedDriveId;
@@ -51,17 +65,23 @@ export const productsRouter = router({
     if (!productFolder) throw new TRPCError({ code: "NOT_FOUND", message: "لم يوجد مجلد المنتج في Catalog." });
     const sourceFiles = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId, folderId: productFolder.id });
     const byName = new Map(sourceFiles.map(file => [file.name, file]));
-    return Promise.all(oneDriveMedia.slice(0, 12).map(async entry => {
+    const temporaryPreviews = await Promise.all(missingOperationalCopy.slice(0, 12).map(async entry => {
       const sourceFile = byName.get(entry.originalFileName!);
       const sourceFileId = sourceFile?.id;
       if (!sourceFile || sourceFile.kind !== "file" || !sourceFileId) throw new TRPCError({ code: "NOT_FOUND", message: `لم توجد الصورة ${entry.originalFileName} في Catalog.` });
       return {
         mediaId: entry.id,
-        colorName: item.variants.find(variant => variant.id === entry.variantId)?.colorName ?? "",
+        colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
         originalFileName: entry.originalFileName!,
         dataUrl: await readCatalogImageDataUrl({ encryptedAccessToken: connection.encryptedAccessToken, driveId, fileId: sourceFileId }),
+        rendition: "onedrive_thumbnail_c300x400" as const,
       };
     }));
+    return [...storedPreviews, ...temporaryPreviews];
+  }),
+  generateOperationalMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.inventory.update");
+    return generateOperationalMediaForProduct({ userId: ctx.user.id, productId: input.productId });
   }),
   create: protectedProcedure.input(z.object({
     productCode: z.string().trim().min(2).max(80),
