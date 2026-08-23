@@ -222,6 +222,32 @@ export const integrationsRouter = router({
       colorNames: input.colorNames,
     });
   }),
+  previewCatalogProductImages: protectedProcedure.input(z.object({
+    groupId: z.string().min(1),
+    productFolderId: z.string().min(1),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const connection = await requireSelectedCatalog(ctx.user.id);
+    const { images, productFolder } = await readSelectedCatalogProduct(ctx.user.id, input);
+    const previewImages = await Promise.all(images.slice(0, 12).map(async image => ({
+      sourceFileId: image.id,
+      sourceFileName: image.name,
+      sourceWebUrl: image.webUrl,
+      rendition: "onedrive_thumbnail_c300x400" as const,
+      dataUrl: await readCatalogImageDataUrl({
+        encryptedAccessToken: connection.encryptedAccessToken,
+        driveId: connection.selectedDriveId!,
+        fileId: image.id,
+      }),
+    })));
+    return {
+      productCode: productFolder.name,
+      imageCount: images.length,
+      previewedCount: previewImages.length,
+      originalPreserved: true as const,
+      images: previewImages,
+    };
+  }),
   analyzeCatalogProductColors: protectedProcedure.input(z.object({
     groupId: z.string().min(1),
     productFolderId: z.string().min(1),
