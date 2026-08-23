@@ -124,3 +124,30 @@ export async function readCatalogTextFile(input: {
   }
   return contentResponse.text();
 }
+
+/** Reads one Microsoft Graph thumbnail transiently for visual analysis; it never stores or publishes the bytes. */
+export async function readCatalogImageDataUrl(input: {
+  encryptedAccessToken: string;
+  driveId: string;
+  fileId: string;
+}): Promise<string> {
+  const accessToken = decryptOneDriveToken(input.encryptedAccessToken);
+  const metadataResponse = await graphFetch(
+    `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.fileId)}/thumbnails?$select=c300x400`,
+    accessToken,
+  );
+  const metadata = await metadataResponse.json() as { value?: Array<{ c300x400?: { url?: string } }>; error?: GraphChildrenPayload["error"] };
+  if (!metadataResponse.ok || !metadata.value?.[0]?.c300x400?.url) {
+    throw graphError(metadataResponse, metadata, "تعذر تحضير مصغرة صورة المنتج لتحليل اللون.");
+  }
+  const contentResponse = await fetch(metadata.value[0].c300x400.url, { signal: AbortSignal.timeout(20_000) });
+  if (!contentResponse.ok) {
+    throw new Error(`تعذر قراءة مصغرة صورة المنتج من Microsoft Graph (HTTP ${contentResponse.status}).`);
+  }
+  const bytes = Buffer.from(await contentResponse.arrayBuffer());
+  const maxBytes = 2 * 1024 * 1024;
+  if (bytes.length > maxBytes) throw new Error("مصغرة صورة المنتج أكبر من الحد المسموح لتحليل اللون (2 ميغابايت).");
+  const mimeType = contentResponse.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+  if (!mimeType.startsWith("image/")) throw new Error("الملف المحدد ليس صورة صالحة لتحليل اللون.");
+  return `data:${mimeType};base64,${bytes.toString("base64")}`;
+}

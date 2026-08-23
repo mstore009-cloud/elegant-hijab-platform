@@ -70,6 +70,40 @@ export async function exchangeOneDriveCode(input: { code: string; codeVerifier: 
   };
 }
 
+export async function refreshOneDriveToken(input: { refreshToken: string }) {
+  if (!ENV.oneDriveClientSecret) {
+    throw new Error("سر تطبيق OneDrive غير مهيأ.");
+  }
+  const body = new URLSearchParams({
+    client_id: ENV.oneDriveClientId,
+    client_secret: ENV.oneDriveClientSecret,
+    grant_type: "refresh_token",
+    refresh_token: input.refreshToken,
+  });
+  const response = await fetch("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  const payload = await response.json() as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    scope?: string;
+    error?: string;
+    error_description?: string;
+  };
+  if (!response.ok || !payload.access_token || !payload.expires_in) {
+    throw new Error(payload.error_description ?? payload.error ?? "تعذر تجديد تفويض قراءة OneDrive.");
+  }
+  return {
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token ?? input.refreshToken,
+    expiresIn: payload.expires_in,
+    scope: payload.scope ?? "",
+  };
+}
+
 export async function getOneDriveAppFolder(accessToken: string) {
   const response = await fetch(oneDriveAppFolderUrl(), {
     headers: { Authorization: `Bearer ${accessToken}` },

@@ -82,6 +82,24 @@ export async function upsertCatalogConnection(input: {
   });
 }
 
+export async function refreshCatalogConnectionTokens(input: {
+  userId: number;
+  encryptedAccessToken: string;
+  encryptedRefreshToken: string;
+  accessTokenExpiresAt: Date;
+  scope: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  await db.update(oneDriveCatalogConnections).set({
+    encryptedAccessToken: input.encryptedAccessToken,
+    encryptedRefreshToken: input.encryptedRefreshToken,
+    accessTokenExpiresAt: input.accessTokenExpiresAt,
+    scope: input.scope,
+    lastError: null,
+  }).where(eq(oneDriveCatalogConnections.userId, input.userId));
+}
+
 export async function markCatalogConnectionFailed(userId: number, lastError: string) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");

@@ -8,14 +8,16 @@ import {
   getOneDriveConnection,
   selectCatalogRoot,
 } from "../integrations/onedrive/db";
-import { listCatalogChildren, listCatalogRootFolders, readCatalogTextFile } from "../integrations/onedrive/catalog";
+import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
+import { listCatalogChildren, listCatalogRootFolders, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
 import { createOneDriveAuthorizationUrl, createPkcePair } from "../integrations/onedrive/oauth";
 import { parseCatalogProductMetadata } from "../integrations/onedrive/productMetadata";
 import { createCatalogDraftProduct } from "../products/db";
 import { protectedProcedure, router } from "../_core/trpc";
+import { invokeLLM, listLLMModels } from "../_core/llm";
 
 async function requireSelectedCatalog(userId: number) {
-  const connection = await getCatalogConnection(userId);
+  const connection = await getUsableCatalogConnection(userId);
   if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يُعتمد جذر Catalog بعد." });
   }
@@ -55,6 +57,17 @@ async function readSelectedCatalogProduct(userId: number, input: { groupId: stri
   const documents = contents.filter(item => item.kind === "file" && !images.some(image => image.id === item.id));
   return { group, productFolder, metadataFile, metadataText, images, documents };
 }
+
+const colorAnalysisSchema = z.object({
+  colorGroups: z.array(z.object({
+    colorNameArabic: z.string().min(1).max(80),
+    confidence: z.number().min(0).max(1),
+    imageFileNames: z.array(z.string().min(1)).min(1),
+    reviewNote: z.string().max(300),
+  })).max(20),
+  uncertainImageFileNames: z.array(z.string().min(1)).max(50),
+  overallReviewNote: z.string().max(400),
+});
 
 export const integrationsRouter = router({
   oneDriveStatus: protectedProcedure.query(async ({ ctx }) => {
@@ -100,14 +113,14 @@ export const integrationsRouter = router({
   }),
   catalogRootFolders: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await getCatalogConnection(ctx.user.id);
+    const connection = await getUsableCatalogConnection(ctx.user.id);
     if (!connection) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يبدأ تفويض قراءة Catalog بعد." });
     if (connection.status === "failed") throw new TRPCError({ code: "PRECONDITION_FAILED", message: connection.lastError ?? "فشل تفويض Catalog." });
     return listCatalogRootFolders(connection.encryptedAccessToken);
   }),
   selectCatalogRoot: protectedProcedure.input(z.object({ folderId: z.string().min(1) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await getCatalogConnection(ctx.user.id);
+    const connection = await getUsableCatalogConnection(ctx.user.id);
     if (!connection) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يبدأ تفويض قراءة Catalog بعد." });
     const folders = await listCatalogRootFolders(connection.encryptedAccessToken);
     const catalogFolder = folders.find(folder => folder.id === input.folderId && folder.name === "Catalog");
@@ -196,6 +209,87 @@ export const integrationsRouter = router({
       mediaCount: 0,
       status: "draft" as const,
     };
+  }),
+  analyzeCatalogProductColors: protectedProcedure.input(z.object({
+    groupId: z.string().min(1),
+    productFolderId: z.string().min(1),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const connection = await requireSelectedCatalog(ctx.user.id);
+    const { images, productFolder } = await readSelectedCatalogProduct(ctx.user.id, input);
+    if (images.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "لا توجد صور صالحة لتحليل اللون في مجلد المنتج." });
+    const imageDataUrls = await Promise.all(images.map(async image => ({
+      name: image.name,
+      dataUrl: await readCatalogImageDataUrl({
+        encryptedAccessToken: connection.encryptedAccessToken,
+        driveId: connection.selectedDriveId!,
+        fileId: image.id,
+      }),
+    })));
+    const models = await listLLMModels();
+    const visionModel = models.data.find(model => model.id === "gemini-3-flash-preview")?.id
+      ?? models.data.find(model => model.id.startsWith("gemini-"))?.id;
+    if (!visionModel) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لا يتوفر نموذج بصري لتحليل الصور حاليًا." });
+    const response = await invokeLLM({
+      model: visionModel,
+      max_tokens: 1800,
+      messages: [
+        {
+          role: "system",
+          content: "أنت محلل كتالوج أزياء حذر. اقترح فقط لون القماش الرئيسي للمنتج الظاهر، وتجاهل الخلفية والبشرة والإضاءة والظلال. اجمع الصور التي تمثل اللون نفسه من زوايا مختلفة. لا تعتمد لونًا؛ هذه نتيجة مراجعة بشرية فقط. عند الشك ضع اسم الصورة في uncertainImageFileNames ولا تخمّن.",
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `حلل صور المنتج ${productFolder.name}. أسماء الصور بالترتيب: ${imageDataUrls.map(image => image.name).join("، ")}. أرجع أسماء الألوان بالعربية.` },
+            ...imageDataUrls.map(image => ({ type: "image_url" as const, image_url: { url: image.dataUrl, detail: "low" as const } })),
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "catalog_color_analysis",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              colorGroups: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    colorNameArabic: { type: "string" },
+                    confidence: { type: "number" },
+                    imageFileNames: { type: "array", items: { type: "string" } },
+                    reviewNote: { type: "string" },
+                  },
+                  required: ["colorNameArabic", "confidence", "imageFileNames", "reviewNote"],
+                  additionalProperties: false,
+                },
+              },
+              uncertainImageFileNames: { type: "array", items: { type: "string" } },
+              overallReviewNote: { type: "string" },
+            },
+            required: ["colorGroups", "uncertainImageFileNames", "overallReviewNote"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const rawContent = response.choices[0]?.message.content;
+    if (typeof rawContent !== "string") throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "لم يرجع محلل الصور نتيجة قابلة للقراءة." });
+    let analysis;
+    try {
+      analysis = colorAnalysisSchema.parse(JSON.parse(rawContent));
+    } catch {
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "نتيجة محلل الصور لم تطابق صيغة المراجعة المطلوبة." });
+    }
+    const knownFileNames = new Set(images.map(image => image.name));
+    if ([...analysis.colorGroups.flatMap(group => group.imageFileNames), ...analysis.uncertainImageFileNames].some(fileName => !knownFileNames.has(fileName))) {
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "نتيجة محلل الصور أشارت إلى ملف غير موجود في المنتج." });
+    }
+    return { productCode: productFolder.name, imageCount: images.length, ...analysis };
   }),
   previewDirectCatalogProduct: protectedProcedure.input(z.object({ productFolderId: z.string().min(1) })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");

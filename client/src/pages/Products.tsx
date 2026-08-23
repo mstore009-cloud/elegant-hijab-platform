@@ -111,6 +111,7 @@ export default function Products() {
       await Promise.all([utils.products.list.invalidate(), utils.products.importJobs.list.invalidate()]);
     },
   });
+  const analyzeCatalogColors = trpc.integrations.analyzeCatalogProductColors.useMutation();
 
   const updateVariant = (index: number, patch: Partial<VariantDraft>) => {
     setVariants(current => current.map((variant, itemIndex) => (
@@ -272,7 +273,12 @@ export default function Products() {
                   <p><b>ملف البيانات:</b> {catalogPreview.data.metadata?.fileName ?? "غير موجود"} · <b>الصور:</b> {catalogPreview.data.images.length}</p>
                   {catalogPreview.data.metadata?.content && <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded-md bg-white p-2 text-right leading-5 text-[#405c50]">{catalogPreview.data.metadata.content}</pre>}
                   <p className="font-bold text-[#72551d]">هذه معاينة قراءة فقط؛ لم يُنشأ أي منتج ولم تُنقل أي صورة.</p>
-                  <Button size="sm" onClick={() => selectedCatalogGroupId && selectedCatalogProductId && createCatalogDraft.mutate({ groupId: selectedCatalogGroupId, productFolderId: selectedCatalogProductId })} disabled={createCatalogDraft.isPending} className="bg-[#1f5b4f] hover:bg-[#153d35]">{createCatalogDraft.isPending ? "جارٍ إنشاء المسودة..." : "إنشاء مسودة داخلية للمراجعة"}</Button>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Button size="sm" variant="outline" onClick={() => selectedCatalogGroupId && selectedCatalogProductId && analyzeCatalogColors.mutate({ groupId: selectedCatalogGroupId, productFolderId: selectedCatalogProductId })} disabled={analyzeCatalogColors.isPending} className="w-full border-[#9dc2b2] text-[#2d5a4d] hover:bg-[#edf7f1] sm:w-auto">{analyzeCatalogColors.isPending ? "جارٍ تحليل الألوان للمراجعة..." : "اقتراح ألوان الصور للمراجعة"}</Button>
+                    <Button size="sm" onClick={() => selectedCatalogGroupId && selectedCatalogProductId && createCatalogDraft.mutate({ groupId: selectedCatalogGroupId, productFolderId: selectedCatalogProductId })} disabled={createCatalogDraft.isPending} className="w-full bg-[#1f5b4f] hover:bg-[#153d35] sm:w-auto">{createCatalogDraft.isPending ? "جارٍ إنشاء المسودة..." : "إنشاء مسودة داخلية للمراجعة"}</Button>
+                  </div>
+                  {analyzeCatalogColors.error && <p className="rounded-md bg-[#fff4ed] p-2 text-[#9c4b25]">{analyzeCatalogColors.error.message}</p>}
+                  {analyzeCatalogColors.data && <div className="space-y-2 rounded-md border border-[#d8e7df] bg-[#f1f8f4] p-3 text-[#315549]"><p className="font-bold">اقتراحات الألوان — تحتاج اعتمادك</p>{analyzeCatalogColors.data.colorGroups.map((group, index) => <p key={`${group.colorNameArabic}-${index}`}><b>{group.colorNameArabic}</b> · ثقة {Math.round(group.confidence * 100)}٪ · الصور: {group.imageFileNames.join("، ")}<br />{group.reviewNote}</p>)}{analyzeCatalogColors.data.uncertainImageFileNames.length > 0 && <p className="text-[#8a6327]">صور تحتاج حسمًا: {analyzeCatalogColors.data.uncertainImageFileNames.join("، ")}</p>}<p className="font-bold text-[#72551d]">{analyzeCatalogColors.data.overallReviewNote} لا تُحفظ هذه الاقتراحات ولا تنشئ مخزونًا قبل مراجعتك.</p></div>}
                   {createCatalogDraft.error && <p className="rounded-md bg-[#fff4ed] p-2 text-[#9c4b25]">{createCatalogDraft.error.message}</p>}
                   {createCatalogDraft.data && <p className="rounded-md bg-[#edf7f1] p-2 font-bold text-[#1f5b4f]">{createCatalogDraft.data.created ? `تم إنشاء مسودة ${createCatalogDraft.data.productCode}.` : `المسودة ${createCatalogDraft.data.productCode} موجودة مسبقًا؛ لم يُنشأ تكرار.`} لم تُنشأ ألوان أو مخزون أو وسائط.</p>}
                 </div>}
