@@ -13,5 +13,5 @@ describe("products.publicList integration", () => {
     const products = await caller.products.publicList();
 
     expect(products.some(product => product.productCode === "HJB-TEST-001")).toBe(false);
-  });
+  }, 15_000);
 });

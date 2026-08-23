@@ -294,7 +294,6 @@ export default function Products() {
               <Button size="sm" variant="outline" onClick={() => setSelectedProductId(null)}>إغلاق التفاصيل</Button>
             </div>
             <p className="text-sm leading-6 text-[#405c50]">{selectedProduct.data.product.description || "لا يوجد وصف."}</p>
-            <div className="grid gap-3 sm:grid-cols-2">{selectedProduct.data.variants.map(variant => <div key={variant.id} className="rounded-xl border border-[#d8e7df] bg-white p-3"><p className="font-bold text-[#2d5a4d]">{variant.colorName}{variant.sizeLabel ? ` / ${variant.sizeLabel}` : ""}</p><p className="mt-1 text-sm text-[#526158]">المخزون: {variant.inventoryQuantity} · {variant.availability === "available" ? "متاح" : variant.availability === "low_stock" ? "منخفض" : "نفد"}</p></div>)}</div>
             {selectedProductMedia.isLoading && <p className="rounded-xl bg-white p-3 text-sm text-[#315549]">جارٍ جلب مصغرات الصور الخفيفة من OneDrive؛ الأصل العالي لا يُعدّل.</p>}
             {selectedProductMedia.error && <p className="rounded-xl bg-[#fff4ed] p-3 text-sm text-[#9c4b25]">{selectedProductMedia.error.message}</p>}
             {selectedProductMedia.data && <ProductMediaPreview media={selectedProductMedia.data} />}
