@@ -49,3 +49,24 @@ export function normalizeApprovedColorNames(colorNames: string[]): string[] {
   for (const color of normalized) unique.set(color.toLocaleLowerCase("ar"), color);
   return Array.from(unique.values());
 }
+
+export function validateApprovedImageColorLinks(input: {
+  approvedColorNames: string[];
+  availableImageFileNames: string[];
+  links: Array<{ colorName: string; imageFileName: string }>;
+}) {
+  const approvedColors = new Set(normalizeApprovedColorNames(input.approvedColorNames).map(color => color.toLocaleLowerCase("ar")));
+  const availableImages = new Set(input.availableImageFileNames);
+  const linkedColors = new Set<string>();
+  const linkedImages = new Set<string>();
+  for (const link of input.links) {
+    const colorKey = link.colorName.trim().toLocaleLowerCase("ar");
+    if (!approvedColors.has(colorKey)) throw new Error(`اللون ${link.colorName} ليس متغيرًا معتمدًا للمنتج.`);
+    if (!availableImages.has(link.imageFileName)) throw new Error(`الصورة ${link.imageFileName} ليست ضمن مجلد المنتج.`);
+    if (linkedColors.has(colorKey)) throw new Error(`تم تكرار ربط اللون ${link.colorName}.`);
+    if (linkedImages.has(link.imageFileName)) throw new Error(`تم تكرار ربط الصورة ${link.imageFileName}.`);
+    linkedColors.add(colorKey);
+    linkedImages.add(link.imageFileName);
+  }
+  return input.links.map(link => ({ colorName: link.colorName.trim(), imageFileName: link.imageFileName }));
+}

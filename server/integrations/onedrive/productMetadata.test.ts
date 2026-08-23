@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeApprovedColorNames, parseCatalogProductMetadata } from "./productMetadata";
+import { normalizeApprovedColorNames, parseCatalogProductMetadata, validateApprovedImageColorLinks } from "./productMetadata";
 
 describe("parseCatalogProductMetadata", () => {
   it("يقبل SIZES الفارغ للمنتج غير المقيّس", () => {
@@ -39,5 +39,18 @@ PRODUCT_STATUS: draft`)).toThrow("SIZES");
   it("يوحد أسماء الألوان المعتمدة ويرفض بقايا المثال", () => {
     expect(normalizeApprovedColorNames([" عنابي ", "زيتي", "عنابي"])).toEqual(["عنابي", "زيتي"]);
     expect(() => normalizeApprovedColorNames(["...زيتي"])).toThrow("بقايا المثال");
+  });
+
+  it("يتحقق من ربط صورة واحدة بكل لون معتمد", () => {
+    expect(validateApprovedImageColorLinks({
+      approvedColorNames: ["عنابي", "زيتي"],
+      availableImageFileNames: ["a.png", "b.jpg"],
+      links: [{ colorName: "عنابي", imageFileName: "a.png" }, { colorName: "زيتي", imageFileName: "b.jpg" }],
+    })).toHaveLength(2);
+    expect(() => validateApprovedImageColorLinks({
+      approvedColorNames: ["عنابي"],
+      availableImageFileNames: ["a.png"],
+      links: [{ colorName: "عنابي", imageFileName: "a.png" }, { colorName: "عنابي", imageFileName: "a.png" }],
+    })).toThrow("تكرار");
   });
 });

@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
-import { productImportJobs, productVariants, products } from "../../drizzle/schema";
-import { normalizeApprovedColorNames } from "../integrations/onedrive/productMetadata";
+import { productImportJobs, productMedia, productVariants, products } from "../../drizzle/schema";
+import { normalizeApprovedColorNames, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 
 export async function listProducts() {
@@ -123,6 +123,54 @@ export async function createApprovedCatalogColorVariants(input: {
     existingColorNames: approvedColors.filter(color => !newColors.includes(color)),
     inventoryQuantity: 0,
     mediaCount: 0,
+  };
+}
+
+export async function attachApprovedCatalogImageReferences(input: {
+  productCode: string;
+  links: Array<{ colorName: string; imageFileName: string; originalUrl: string | null }>;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const product = await db.select().from(products).where(eq(products.productCode, input.productCode)).limit(1);
+  if (!product[0]) throw new Error("مسودة المنتج غير موجودة.");
+  if (product[0].status !== "draft") throw new Error("لا يمكن ربط مراجع الصور بهذه التجربة إلا بمنتج في حالة مسودة.");
+  const variants = await db.select().from(productVariants).where(eq(productVariants.productId, product[0].id));
+  const validatedLinks = validateApprovedImageColorLinks({
+    approvedColorNames: variants.map(variant => variant.colorName),
+    availableImageFileNames: input.links.map(link => link.imageFileName),
+    links: input.links,
+  });
+  const variantByColor = new Map(variants.map(variant => [variant.colorName.toLocaleLowerCase("ar"), variant]));
+  const existingMedia = await db.select().from(productMedia).where(eq(productMedia.productId, product[0].id));
+  const existingKeys = new Set(existingMedia.map(media => `${media.variantId ?? ""}:${media.originalFileName ?? ""}`));
+  const newRows = validatedLinks
+    .map(link => ({
+      ...link,
+      originalUrl: input.links.find(source => source.colorName.trim() === link.colorName && source.imageFileName === link.imageFileName)?.originalUrl ?? null,
+      variant: variantByColor.get(link.colorName.toLocaleLowerCase("ar"))!,
+    }))
+    .filter(link => !existingKeys.has(`${link.variant.id}:${link.imageFileName}`));
+  if (newRows.length > 0) {
+    await db.insert(productMedia).values(newRows.map((link, index) => ({
+      productId: product[0].id,
+      variantId: link.variant.id,
+      source: "onedrive" as const,
+      mediaType: "image" as const,
+      originalUrl: link.originalUrl,
+      storageKey: null,
+      originalFileName: link.imageFileName,
+      colorVerified: true,
+      sortOrder: index,
+    })));
+  }
+  return {
+    productId: product[0].id,
+    productCode: product[0].productCode,
+    attached: newRows.map(link => ({ colorName: link.colorName, imageFileName: link.imageFileName })),
+    skippedExisting: validatedLinks.filter(link => !newRows.some(row => row.colorName === link.colorName && row.imageFileName === link.imageFileName)),
+    copiedOriginalFiles: false,
+    generatedOperationalCopies: false,
   };
 }
 

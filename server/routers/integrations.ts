@@ -11,8 +11,8 @@ import {
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
 import { listCatalogChildren, listCatalogRootFolders, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
 import { createOneDriveAuthorizationUrl, createPkcePair } from "../integrations/onedrive/oauth";
-import { parseCatalogProductMetadata } from "../integrations/onedrive/productMetadata";
-import { createApprovedCatalogColorVariants, createCatalogDraftProduct } from "../products/db";
+import { parseCatalogProductMetadata, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
+import { attachApprovedCatalogImageReferences, createApprovedCatalogColorVariants, createCatalogDraftProduct } from "../products/db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM, listLLMModels } from "../_core/llm";
 
@@ -220,6 +220,27 @@ export const integrationsRouter = router({
     return createApprovedCatalogColorVariants({
       productCode: productFolder.name,
       colorNames: input.colorNames,
+    });
+  }),
+  attachApprovedCatalogImageReferences: protectedProcedure.input(z.object({
+    groupId: z.string().min(1),
+    productFolderId: z.string().min(1),
+    links: z.array(z.object({ colorName: z.string().trim().min(1).max(80), imageFileName: z.string().trim().min(1).max(255) })).min(1).max(20),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const { productFolder, images } = await readSelectedCatalogProduct(ctx.user.id, input);
+    validateApprovedImageColorLinks({
+      approvedColorNames: input.links.map(link => link.colorName),
+      availableImageFileNames: images.map(image => image.name),
+      links: input.links,
+    });
+    const imageByName = new Map(images.map(image => [image.name, image]));
+    return attachApprovedCatalogImageReferences({
+      productCode: productFolder.name,
+      links: input.links.map(link => ({
+        ...link,
+        originalUrl: imageByName.get(link.imageFileName)?.webUrl ?? null,
+      })),
     });
   }),
   previewCatalogProductImages: protectedProcedure.input(z.object({
