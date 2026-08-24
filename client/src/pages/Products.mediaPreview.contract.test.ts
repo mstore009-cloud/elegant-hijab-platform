@@ -11,7 +11,10 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("اعتماد الاقتراحات المعدلة");
     expect(source).toContain("تعديل المنتج");
     expect(source).toContain("إضافة مجموعة صور");
-    expect(source).toContain("حفظ العدد");
+    expect(source).toContain("saveColorDetails");
+    expect(source).toContain("حفظ</Button>");
+    expect(source).not.toContain("حفظ الاسم");
+    expect(source).not.toContain("حفظ العدد");
     expect(source).toContain("trpc.products.analyzeColors.useMutation");
     expect(source).toContain("trpc.products.saveColorInventory.useMutation");
     expect(source).toContain("إضافة صور");
