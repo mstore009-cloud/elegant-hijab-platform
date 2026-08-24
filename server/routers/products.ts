@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { addManualProductImage, addProductColor, assignProductMediaColor, createImportJob, createProduct, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { addManualProductImage, addProductColor, assignProductMediaColor, createImportJob, createProduct, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -159,6 +159,14 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     return assignProductMediaColor({ ...input, actorUserId: ctx.user.id });
   }),
+  renameColor: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    previousColorName: z.string().trim().min(1).max(100),
+    colorName: z.string().trim().min(1).max(100),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return renameProductColor({ ...input, actorUserId: ctx.user.id });
+  }),
   excludeMediaFromColorReview: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
     mediaIds: z.array(z.number().int().positive()).min(1).max(100),
@@ -208,6 +216,13 @@ export const productsRouter = router({
     const bytes = Buffer.from(input.base64Data, "base64");
     if (bytes.length === 0 || bytes.length > 25 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "حجم الصورة يجب أن يكون بين 1 بايت و25 ميغابايت." });
     return addManualProductImage({ productId: input.productId, fileName: input.fileName, bytes, actorUserId: ctx.user.id });
+  }),
+  detachMedia: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    mediaId: z.number().int().positive(),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return detachProductMediaReference({ productId: input.productId, mediaId: input.mediaId, createdByUserId: ctx.user.id });
   }),
   importJobs: router({
     list: protectedProcedure.query(async ({ ctx }) => {

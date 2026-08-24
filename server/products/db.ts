@@ -225,6 +225,24 @@ export async function addProductColor(input: { productId: number; colorName: str
   return { created: true as const, variants: result };
 }
 
+export async function renameProductColor(input: { productId: number; previousColorName: string; colorName: string; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const previousColorName = input.previousColorName.trim();
+  const colorName = input.colorName.trim();
+  if (!previousColorName || !colorName) throw new Error("يجب إدخال اسم اللون.");
+  if (previousColorName === colorName) return { updatedVariantCount: 0 };
+  const variants = await db.select().from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, previousColorName)));
+  if (!variants.length) throw new Error("اللون المطلوب تعديله غير موجود.");
+  const duplicate = await db.select({ id: productVariants.id }).from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, colorName))).limit(1);
+  if (duplicate.length) throw new Error("يوجد لون آخر بالاسم نفسه.");
+  await db.transaction(async tx => {
+    await tx.update(productVariants).set({ colorName }).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, previousColorName)));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_renamed", changes: JSON.stringify({ previousColorName, colorName, variantIds: variants.map(variant => variant.id) }) });
+  });
+  return { updatedVariantCount: variants.length };
+}
+
 export async function assignProductMediaColor(input: { productId: number; mediaId: number; colorName: string; actorUserId: number }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
