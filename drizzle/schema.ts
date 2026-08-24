@@ -119,6 +119,24 @@ export const productMedia = mysqlTable(
   table => [index("media_product_idx").on(table.productId), index("media_variant_idx").on(table.variantId)],
 );
 
+/**
+ * Audit trail for derived operational media only. This table intentionally keeps
+ * no OneDrive URL, OAuth token, or storage key after a reference is released.
+ */
+export const productMediaLifecycleEvents = mysqlTable(
+  "product_media_lifecycle_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    productId: int("productId").notNull(),
+    mediaId: int("mediaId").notNull(),
+    action: mysqlEnum("action", ["operational_copy_created", "operational_copy_regenerated", "reference_detached", "product_purged"]).notNull(),
+    result: mysqlEnum("result", ["succeeded", "skipped"]).default("succeeded").notNull(),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("media_lifecycle_product_idx").on(table.productId), index("media_lifecycle_media_idx").on(table.mediaId)],
+);
+
 export const productImportJobs = mysqlTable(
   "product_import_jobs",
   {
@@ -139,6 +157,7 @@ export const productImportJobs = mysqlTable(
 export type Product = typeof products.$inferSelect;
 export type ProductVariant = typeof productVariants.$inferSelect;
 export type ProductImportJob = typeof productImportJobs.$inferSelect;
+export type ProductMediaLifecycleEvent = typeof productMediaLifecycleEvents.$inferSelect;
 
 export const oneDriveOAuthStates = mysqlTable(
   "onedrive_oauth_states",

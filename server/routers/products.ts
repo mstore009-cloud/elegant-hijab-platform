@@ -3,13 +3,13 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { createImportJob, createProduct, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, updateVariantInventory } from "../products/db";
+import { createImportJob, createProduct, detachProductMediaReference, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
 import { listCatalogChildren, readCatalogImageDataUrl } from "../integrations/onedrive/catalog";
 import { storageGet } from "../storage";
-import { generateOperationalMediaForProduct } from "../products/operationalMediaService";
+import { generateOperationalMediaForProduct, regenerateOperationalMediaForProduct } from "../products/operationalMediaService";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
 const productStatus = z.enum(["draft", "needs_review", "ready", "active", "archived"]);
@@ -88,6 +88,18 @@ export const productsRouter = router({
   generateOperationalMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     return generateOperationalMediaForProduct({ userId: ctx.user.id, productId: input.productId });
+  }),
+  regenerateOperationalMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaId: z.number().int().positive().optional() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return regenerateOperationalMediaForProduct({ userId: ctx.user.id, productId: input.productId, mediaId: input.mediaId });
+  }),
+  detachMediaReference: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return detachProductMediaReference({ ...input, createdByUserId: ctx.user.id });
+  }),
+  deletePermanently: protectedProcedure.input(z.object({ productId: z.number().int().positive(), confirmProductCode: z.string().trim().min(2).max(80) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.delete");
+    return permanentlyDeleteProduct({ productId: input.productId, expectedProductCode: input.confirmProductCode, createdByUserId: ctx.user.id });
   }),
   create: protectedProcedure.input(z.object({
     productCode: z.string().trim().min(2).max(80),

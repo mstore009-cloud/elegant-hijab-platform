@@ -4,12 +4,29 @@ import { listCatalogChildren, readCatalogOriginalImageBytes } from "../integrati
 import { createOperationalImageDerivative } from "../integrations/onedrive/operationalMedia";
 import { storagePut } from "../storage";
 import { getProductMedia, getProductWithVariants, saveOperationalMediaCopy } from "./db";
+import { selectForcedOperationalRegenerationCandidates, selectOperationalRegenerationCandidates } from "./operationalMediaLifecycle";
 
 export async function generateOperationalMediaForProduct(input: { userId: number; productId: number }) {
+  return materializeOperationalMediaForProduct({ ...input, lifecycleAction: "operational_copy_created" });
+}
+
+export async function regenerateOperationalMediaForProduct(input: { userId: number; productId: number; mediaId?: number }) {
+  return materializeOperationalMediaForProduct({ ...input, lifecycleAction: "operational_copy_regenerated", forceRegeneration: true });
+}
+
+async function materializeOperationalMediaForProduct(input: {
+  userId: number;
+  productId: number;
+  mediaId?: number;
+  lifecycleAction: "operational_copy_created" | "operational_copy_regenerated";
+  forceRegeneration?: boolean;
+}) {
   const item = await getProductWithVariants(input.productId);
   if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
   const media = await getProductMedia(input.productId);
-  const candidates = media.filter(entry => entry.source === "onedrive" && entry.originalFileName && !entry.storageKey);
+  const candidates = input.forceRegeneration
+    ? selectForcedOperationalRegenerationCandidates(media, input.mediaId)
+    : selectOperationalRegenerationCandidates(media);
   if (candidates.length === 0) return { created: [], skipped: media.filter(entry => entry.storageKey).map(entry => entry.id) };
 
   const connection = await getUsableCatalogConnection(input.userId);
@@ -40,6 +57,8 @@ export async function generateOperationalMediaForProduct(input: { userId: number
       mediaId: entry.id,
       storageKey: uploaded.key,
       metadata: { ...derivative.metadata, sourceFileId: sourceFile.id, sourceMimeType: original.mimeType },
+      createdByUserId: input.userId,
+      lifecycleAction: input.lifecycleAction,
     });
     created.push({ mediaId: entry.id, storageKey: uploaded.key, outputBytes: derivative.metadata.outputBytes });
   }

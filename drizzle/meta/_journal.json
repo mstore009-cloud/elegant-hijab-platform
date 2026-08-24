@@ -43,6 +43,13 @@
       "when": 1787508766352,
       "tag": "0005_wandering_fabian_cortez",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1787565404436,
+      "tag": "0006_ordinary_namorita",
+      "breakpoints": true
     }
   ]
 }

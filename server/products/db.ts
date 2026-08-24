@@ -1,7 +1,8 @@
-import { desc, eq } from "drizzle-orm";
-import { productImportJobs, productMedia, productVariants, products } from "../../drizzle/schema";
+import { and, desc, eq } from "drizzle-orm";
+import { productImportJobs, productMedia, productMediaLifecycleEvents, productVariants, products } from "../../drizzle/schema";
 import { normalizeApprovedColorNames, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
+import { planOperationalReferenceDetach } from "./operationalMediaLifecycle";
 
 export async function listProducts() {
   const db = await getDb();
@@ -219,13 +220,82 @@ export async function saveOperationalMediaCopy(input: {
   mediaId: number;
   storageKey: string;
   metadata: Record<string, unknown>;
+  createdByUserId: number;
+  lifecycleAction: "operational_copy_created" | "operational_copy_regenerated";
 }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  await db.update(productMedia).set({
-    storageKey: input.storageKey,
-    operationalMetadata: JSON.stringify(input.metadata),
-  }).where(eq(productMedia.id, input.mediaId));
+  const media = await db.select().from(productMedia).where(eq(productMedia.id, input.mediaId)).limit(1);
+  if (!media[0]) throw new Error("مرجع وسيط المنتج غير موجود.");
+  await db.transaction(async tx => {
+    await tx.update(productMedia).set({
+      storageKey: input.storageKey,
+      operationalMetadata: JSON.stringify(input.metadata),
+    }).where(eq(productMedia.id, input.mediaId));
+    await tx.insert(productMediaLifecycleEvents).values({
+      productId: media[0].productId,
+      mediaId: input.mediaId,
+      action: input.lifecycleAction,
+      result: "succeeded",
+      createdByUserId: input.createdByUserId,
+    });
+  });
+}
+
+/**
+ * Removes the database reference to a OneDrive image and its derived WebP.
+ * The configured storage API provides no object-delete primitive, so clearing
+ * the key and deleting this media row is the supported, non-discoverable
+ * release mechanism. This function never calls Microsoft Graph.
+ */
+export async function detachProductMediaReference(input: { productId: number; mediaId: number; createdByUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const media = await db.select().from(productMedia).where(and(eq(productMedia.id, input.mediaId), eq(productMedia.productId, input.productId))).limit(1);
+  if (!media[0]) throw new Error("مرجع الصورة غير موجود لهذا المنتج.");
+  const plan = planOperationalReferenceDetach(media[0]);
+  await db.transaction(async tx => {
+    await tx.delete(productMedia).where(eq(productMedia.id, input.mediaId));
+    await tx.insert(productMediaLifecycleEvents).values({
+      productId: input.productId,
+      mediaId: input.mediaId,
+      action: "reference_detached",
+      result: "succeeded",
+      createdByUserId: input.createdByUserId,
+    });
+  });
+  return plan;
+}
+
+/**
+ * Performs a database-only final deletion. It releases all product-media
+ * references first, records only non-sensitive audit facts, then deletes the
+ * product and its variants. It never reaches OneDrive or removes source files.
+ */
+export async function permanentlyDeleteProduct(input: { productId: number; expectedProductCode: string; createdByUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const product = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product[0]) throw new Error("المنتج غير موجود.");
+  if (product[0].productCode !== input.expectedProductCode) throw new Error("رمز تأكيد الحذف لا يطابق رمز المنتج.");
+  const media = await getProductMedia(input.productId);
+  const linkedOperationalMedia = media.filter(entry => entry.source === "onedrive" && entry.mediaType === "image");
+  await db.transaction(async tx => {
+    if (linkedOperationalMedia.length > 0) {
+      await tx.insert(productMediaLifecycleEvents).values(linkedOperationalMedia.map(entry => ({
+        productId: input.productId,
+        mediaId: entry.id,
+        action: "product_purged" as const,
+        result: "succeeded" as const,
+        createdByUserId: input.createdByUserId,
+      })));
+    }
+    await tx.update(productImportJobs).set({ linkedProductId: null }).where(eq(productImportJobs.linkedProductId, input.productId));
+    await tx.delete(productMedia).where(eq(productMedia.productId, input.productId));
+    await tx.delete(productVariants).where(eq(productVariants.productId, input.productId));
+    await tx.delete(products).where(eq(products.id, input.productId));
+  });
+  return { productId: input.productId, releasedMediaReferences: linkedOperationalMedia.length, originalFilesModified: false as const };
 }
 
 export async function updateVariantInventory(variantId: number, inventoryQuantity: number) {
