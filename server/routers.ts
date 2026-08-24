@@ -7,6 +7,7 @@ import { productsRouter } from "./routers/products";
 import { integrationsRouter } from "./routers/integrations";
 import { contentRouter } from "./routers/content";
 import { catalogSyncRouter } from "./routers/catalogSync";
+import { ordersRouter } from "./routers/orders";
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -26,6 +27,7 @@ export const appRouter = router({
   integrations: integrationsRouter,
   content: contentRouter,
   catalogSync: catalogSyncRouter,
+  orders: ordersRouter,
 
 });
 

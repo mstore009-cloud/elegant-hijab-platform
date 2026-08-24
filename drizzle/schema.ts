@@ -1,5 +1,7 @@
 import { boolean, decimal, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
+const orderStatuses = ["new", "needs_contact", "confirmed", "preparing", "out_for_delivery", "completed", "cancelled"] as const;
+
 /**
  * Core user table backing auth flow.
  * Extend this file with additional tables as your product grows.
@@ -99,6 +101,63 @@ export const productVariants = mysqlTable(
     uniqueIndex("product_variant_unique").on(table.productId, table.colorName, table.sizeLabel),
     index("variant_product_idx").on(table.productId),
   ],
+);
+
+/** Customer request created from the public store or future staff/WhatsApp channels. */
+export const orders = mysqlTable(
+  "orders",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    orderNumber: varchar("orderNumber", { length: 40 }).notNull().unique(),
+    status: mysqlEnum("status", orderStatuses).default("new").notNull(),
+    source: mysqlEnum("source", ["storefront", "manual", "whatsapp"]).default("storefront").notNull(),
+    customerName: varchar("customerName", { length: 160 }).notNull(),
+    customerPhone: varchar("customerPhone", { length: 40 }).notNull(),
+    governorate: varchar("governorate", { length: 120 }).notNull(),
+    address: text("address").notNull(),
+    customerNote: text("customerNote"),
+    paymentMethod: mysqlEnum("paymentMethod", ["cash_on_delivery"]).default("cash_on_delivery").notNull(),
+    subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
+    inventoryDeductedAt: timestamp("inventoryDeductedAt"),
+    confirmedByUserId: int("confirmedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("orders_status_idx").on(table.status), index("orders_phone_idx").on(table.customerPhone), index("orders_created_idx").on(table.createdAt)],
+);
+
+/** Immutable selling snapshot; later product changes never rewrite an order item. */
+export const orderItems = mysqlTable(
+  "order_items",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    orderId: int("orderId").notNull().references(() => orders.id),
+    productId: int("productId").notNull().references(() => products.id),
+    variantId: int("variantId").notNull().references(() => productVariants.id),
+    productCodeSnapshot: varchar("productCodeSnapshot", { length: 80 }).notNull(),
+    productNameSnapshot: varchar("productNameSnapshot", { length: 220 }).notNull(),
+    colorNameSnapshot: varchar("colorNameSnapshot", { length: 100 }).notNull(),
+    unitPriceSnapshot: decimal("unitPriceSnapshot", { precision: 12, scale: 2 }).notNull(),
+    quantity: int("quantity").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("order_items_order_idx").on(table.orderId), index("order_items_product_idx").on(table.productId), uniqueIndex("order_item_variant_unique").on(table.orderId, table.variantId)],
+);
+
+/** Append-only audit trail of internal transitions; no status is silently overwritten. */
+export const orderStatusEvents = mysqlTable(
+  "order_status_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    orderId: int("orderId").notNull().references(() => orders.id),
+    fromStatus: varchar("fromStatus", { length: 32 }),
+    toStatus: mysqlEnum("toStatus", orderStatuses).notNull(),
+    actorUserId: int("actorUserId").references(() => users.id),
+    source: mysqlEnum("source", ["storefront", "orders_ui", "whatsapp"]).notNull(),
+    note: text("note"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("order_events_order_idx").on(table.orderId), index("order_events_status_idx").on(table.toStatus)],
 );
 
 export const productMedia = mysqlTable(

@@ -10,6 +10,7 @@ import ContentPosts from "./pages/ContentPosts";
 import OperationsOverview from "./pages/OperationsOverview";
 import Products from "./pages/Products";
 import Storefront from "./pages/Storefront";
+import Orders from "./pages/Orders";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -20,6 +21,7 @@ function Router() {
       <Route path={"/"} component={OperationsOverview} />
       <Route path={"/permissions"} component={AccessControl} />
       <Route path={"/products"} component={Products} />
+      <Route path={"/orders"} component={Orders} />
       <Route path={"/content-posts"} component={ContentPosts} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}

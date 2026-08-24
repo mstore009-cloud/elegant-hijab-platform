@@ -4,6 +4,7 @@ export const permissionCatalog = [
   { code: "products.inventory.update", group: "المنتجات", label: "تحديث المخزون" },
   { code: "products.delete", group: "المنتجات", label: "حذف منتج" },
   { code: "pricing.manage", group: "المنتجات", label: "إدارة العروض والتسعير" },
+  { code: "orders.view", group: "الطلبات", label: "عرض قائمة الطلبات" },
   { code: "orders.confirm", group: "الطلبات", label: "تثبيت وتأكيد الطلبات" },
   { code: "orders.fulfill", group: "الطلبات", label: "تجهيز الطلبات" },
   { code: "orders.delivery.submit", group: "الطلبات", label: "رفع الطلب لشركة التوصيل" },
