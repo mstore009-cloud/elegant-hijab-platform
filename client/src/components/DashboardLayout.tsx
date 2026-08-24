@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { Boxes, ClipboardList, ImagePlus, KeyRound, LayoutDashboard, LogOut, PanelLeft } from "lucide-react";
+import { Boxes, ClipboardList, ImagePlus, KeyRound, LayoutDashboard, LogOut, PanelLeft, Settings2 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -32,6 +32,7 @@ const menuItems = [
   { icon: KeyRound, label: "الصلاحيات", path: "/permissions" },
   { icon: Boxes, label: "المنتجات", path: "/products" },
   { icon: ClipboardList, label: "الطلبات", path: "/orders" },
+  { icon: Settings2, label: "إعدادات المتجر", path: "/settings/store" },
   { icon: ImagePlus, label: "مسودات المحتوى", path: "/content-posts" },
 ];
 

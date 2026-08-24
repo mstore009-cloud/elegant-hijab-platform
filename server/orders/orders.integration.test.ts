@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
-import { orderContactEvents, orderItems, orders, orderStatusEvents, productVariants, products, users } from "../../drizzle/schema";
+import { orderContactEvents, orderItems, orders, orderStatusEvents, productVariants, products, promotionCoupons, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { addOrderContactEvent, createStorefrontOrder, getOperationalOrder, transitionOrderStatus, updateOrderCommercialTerms } from "./db";
 
 describe("دورة الطلب", () => {
-  const cleanup: Array<{ orderId: number; productId: number; variantIds: number[] }> = [];
+  const cleanup: Array<{ orderId: number; productId: number; variantIds: number[]; couponId?: number }> = [];
 
   afterEach(async () => {
     const db = await getDb();
@@ -16,6 +16,7 @@ describe("دورة الطلب", () => {
       await db.delete(orderStatusEvents).where(eq(orderStatusEvents.orderId, item.orderId));
       await db.delete(orderItems).where(eq(orderItems.orderId, item.orderId));
       await db.delete(orders).where(eq(orders.id, item.orderId));
+      if (item.couponId) await db.delete(promotionCoupons).where(eq(promotionCoupons.id, item.couponId));
       for (const variantId of item.variantIds) await db.delete(productVariants).where(eq(productVariants.id, variantId));
       await db.delete(products).where(eq(products.id, item.productId));
     }
@@ -58,5 +59,22 @@ describe("دورة الطلب", () => {
     const [afterSecondCancellation] = await db.select().from(productVariants).where(eq(productVariants.id, secondVariantId));
     expect(afterSecondCancellation?.inventoryQuantity).toBe(4);
     expect((await getOperationalOrder(created.orderId))?.events.map(event => event.toStatus)).toEqual(["cancelled", "confirmed", "new"]);
+  });
+
+  it("يطبق القسيمة على المنتجات فقط ويحفظ الخصم ويرفض تجاوز حد استخدامها", async () => {
+    const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار القسائم.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1); if (!owner) throw new Error("لا يوجد مستخدم مخول للاختبار.");
+    const productCode = `TST-COUPON-${randomUUID().slice(0, 10)}`;
+    const productResult = await db.insert(products).values({ productCode, name: "منتج قسيمة تجريبي", status: "active", sellingPrice: "10000.00", createdByUserId: owner.id });
+    const productId = Number(productResult[0].insertId);
+    const variantResult = await db.insert(productVariants).values({ productId, colorName: "بيج", inventoryQuantity: 3, availability: "available" });
+    const variantId = Number(variantResult[0].insertId);
+    const code = `SAVE${randomUUID().slice(0, 6).toUpperCase()}`;
+    const couponResult = await db.insert(promotionCoupons).values({ code, discountType: "percent", discountValue: "25.00", minimumSubtotal: "5000.00", usageLimit: 1, enabled: true, createdByUserId: owner.id });
+    const couponId = Number(couponResult[0].insertId);
+    const created = await createStorefrontOrder({ items: [{ productCode, colorName: "بيج", quantity: 2 }], customerName: "عميلة قسيمة", customerPhone: "07700000001", governorate: "بغداد", address: "عنوان اختبار قسيمة", couponCode: code });
+    cleanup.push({ orderId: created.orderId, productId, variantIds: [variantId], couponId });
+    expect((await getOperationalOrder(created.orderId))?.order).toMatchObject({ subtotal: "20000.00", manualDiscount: "5000.00", total: "15000.00", customerChannel: "storefront" });
+    await expect(createStorefrontOrder({ items: [{ productCode, colorName: "بيج", quantity: 1 }], customerName: "عميلة ثانية", customerPhone: "07700000002", governorate: "بغداد", address: "عنوان اختبار آخر", couponCode: code })).rejects.toThrow("القسيمة");
   });
 });

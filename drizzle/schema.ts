@@ -144,6 +144,38 @@ export const deliveryGovernorateRates = mysqlTable(
   table => [index("delivery_governorate_rates_enabled_idx").on(table.enabled)],
 );
 
+/** Singleton-style operating settings for the public store. */
+export const storeSettings = mysqlTable(
+  "store_settings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    defaultLanguage: varchar("defaultLanguage", { length: 16 }).default("ar").notNull(),
+    currencyCode: varchar("currencyCode", { length: 8 }).default("IQD").notNull(),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+);
+
+export const promotionCoupons = mysqlTable(
+  "promotion_coupons",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    code: varchar("code", { length: 80 }).notNull().unique(),
+    discountType: mysqlEnum("discountType", ["fixed", "percent"]).notNull(),
+    discountValue: decimal("discountValue", { precision: 12, scale: 2 }).notNull(),
+    minimumSubtotal: decimal("minimumSubtotal", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    startsAt: timestamp("startsAt"),
+    endsAt: timestamp("endsAt"),
+    usageLimit: int("usageLimit"),
+    usageCount: int("usageCount").default(0).notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("promotion_coupons_enabled_idx").on(table.enabled)],
+);
+
 /** Immutable selling snapshot; later product changes never rewrite an order item. */
 export const orderItems = mysqlTable(
   "order_items",

@@ -18,6 +18,12 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("الإجمالي النهائي");
     expect(source).toContain("موافق وإرسال الطلب");
     expect(source).toContain("trpc.orders.createFromStorefront.useMutation");
+    expect(source).toContain("applyCoupon");
+    expect(source).toContain("removeCoupon");
+    expect(source).toContain("قسيمة الخصم");
+    expect(source).toContain("خصم القسيمة");
+    expect(source).toContain("couponCode: appliedCoupon");
+    expect(source).toContain("price(total)");
     expect(source).not.toContain("الدفع الإلكتروني");
   });
 });

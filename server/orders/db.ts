@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { deliveryGovernorateRates, orderContactEvents, orderItems, orders, orderStatusEvents, productMedia, productVariants, products } from "../../drizzle/schema";
+import { deliveryGovernorateRates, orderContactEvents, orderItems, orders, orderStatusEvents, productMedia, productVariants, products, promotionCoupons, storeSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 
 export const orderStatuses = ["new", "needs_contact", "confirmed", "preparing", "out_for_delivery", "completed", "cancelled"] as const;
@@ -10,7 +10,7 @@ export const contactOutcomes = ["attempted", "no_answer", "customer_confirmed", 
 export type ContactOutcome = (typeof contactOutcomes)[number];
 
 type CartItemInput = { productCode: string; colorName: string; quantity: number };
-type CreateStorefrontOrderInput = { items: CartItemInput[]; customerName: string; customerPhone: string; governorate: string; address: string; customerNote?: string | null };
+type CreateStorefrontOrderInput = { items: CartItemInput[]; customerName: string; customerPhone: string; governorate: string; address: string; customerNote?: string | null; couponCode?: string | null };
 function createOrderNumber() { return `ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`; }
 function money(value: number) { return value.toFixed(2); }
 
@@ -44,7 +44,19 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   const deliveryFee = rate ? Number(rate.fee) : 0;
   const orderNumber = createOrderNumber();
   return db.transaction(async tx => {
-    const created = await tx.insert(orders).values({ orderNumber, status: "new", source: "storefront", customerChannel: "storefront", customerName: input.customerName.trim(), customerPhone: input.customerPhone.trim(), governorate: input.governorate.trim(), address: input.address.trim(), customerNote: input.customerNote?.trim() || null, paymentMethod: "cash_on_delivery", subtotal, deliveryFee: money(deliveryFee), manualDiscount: "0.00", total: money(subtotalNumber + deliveryFee) });
+    const couponCode = input.couponCode?.trim().toUpperCase() || null;
+    let couponDiscount = 0;
+    if (couponCode) {
+      const [coupon] = await tx.select().from(promotionCoupons).where(and(eq(promotionCoupons.code, couponCode), eq(promotionCoupons.enabled, true))).limit(1);
+      const now = new Date();
+      const unavailable = !coupon || (coupon.startsAt && coupon.startsAt > now) || (coupon.endsAt && coupon.endsAt < now) || (coupon.usageLimit !== null && coupon.usageCount >= coupon.usageLimit) || subtotalNumber < Number(coupon.minimumSubtotal);
+      if (unavailable) throw new Error("القسيمة لم تعد متاحة لهذا الطلب.");
+      const rawDiscount = coupon.discountType === "percent" ? subtotalNumber * Number(coupon.discountValue) / 100 : Number(coupon.discountValue);
+      couponDiscount = Math.min(subtotalNumber, rawDiscount);
+      const usageUpdate = await tx.update(promotionCoupons).set({ usageCount: sql`${promotionCoupons.usageCount} + 1` }).where(and(eq(promotionCoupons.id, coupon.id), coupon.usageLimit === null ? sql`1 = 1` : sql`${promotionCoupons.usageCount} < ${coupon.usageLimit}`));
+      if (Number(usageUpdate[0].affectedRows) !== 1) throw new Error("وصلت القسيمة إلى حد الاستخدام.");
+    }
+    const created = await tx.insert(orders).values({ orderNumber, status: "new", source: "storefront", customerChannel: "storefront", customerName: input.customerName.trim(), customerPhone: input.customerPhone.trim(), governorate: input.governorate.trim(), address: input.address.trim(), customerNote: input.customerNote?.trim() || null, paymentMethod: "cash_on_delivery", subtotal, deliveryFee: money(deliveryFee), manualDiscount: money(couponDiscount), total: money(Math.max(0, subtotalNumber - couponDiscount + deliveryFee)) });
     const orderId = Number(created[0].insertId);
     await tx.insert(orderItems).values(resolved.map(item => ({ orderId, productId: item.product.id, variantId: item.variant.id, productCodeSnapshot: item.product.productCode, productNameSnapshot: item.product.name, colorNameSnapshot: item.variant.colorName, imageStorageKeySnapshot: item.imageStorageKeySnapshot, unitPriceSnapshot: item.product.sellingPrice, quantity: item.quantity })));
     await tx.insert(orderStatusEvents).values({ orderId, fromStatus: null, toStatus: "new", actorUserId: null, source: "storefront", note: "طلب جديد من المتجر" });
@@ -56,6 +68,56 @@ export async function getPublicDeliveryFee(governorate: string) {
   const db = await getDb(); if (!db || !governorate.trim()) return { fee: "0.00", configured: false };
   const [rate] = await db.select().from(deliveryGovernorateRates).where(and(eq(deliveryGovernorateRates.governorate, governorate.trim()), eq(deliveryGovernorateRates.enabled, true))).limit(1);
   return { fee: rate?.fee ?? "0.00", configured: Boolean(rate) };
+}
+
+export async function getPublicStoreSettings() {
+  const db = await getDb(); if (!db) return { language: "ar", currencyCode: "IQD" };
+  const [settings] = await db.select().from(storeSettings).limit(1);
+  return { language: settings?.defaultLanguage ?? "ar", currencyCode: settings?.currencyCode ?? "IQD" };
+}
+
+export async function validatePublicCoupon(code: string, subtotal: number) {
+  const db = await getDb(); if (!db || !code.trim()) return { valid: false, discount: "0.00", message: "أدخل كود القسيمة." };
+  const [coupon] = await db.select().from(promotionCoupons).where(and(eq(promotionCoupons.code, code.trim().toUpperCase()), eq(promotionCoupons.enabled, true))).limit(1);
+  const now = new Date();
+  if (!coupon || (coupon.startsAt && coupon.startsAt > now) || (coupon.endsAt && coupon.endsAt < now) || (coupon.usageLimit !== null && coupon.usageCount >= coupon.usageLimit) || subtotal < Number(coupon.minimumSubtotal)) return { valid: false, discount: "0.00", message: "القسيمة غير متاحة لهذا الطلب." };
+  const raw = coupon.discountType === "percent" ? subtotal * Number(coupon.discountValue) / 100 : Number(coupon.discountValue);
+  return { valid: true, discount: money(Math.min(subtotal, raw)), message: "تم تطبيق القسيمة." };
+}
+
+export async function getStoreSettingsForStaff() {
+  const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [settings] = await db.select().from(storeSettings).limit(1);
+  return settings ?? { id: 0, defaultLanguage: "ar", currencyCode: "IQD", updatedByUserId: null, updatedAt: null };
+}
+
+export async function saveStoreSettings(input: { defaultLanguage: string; currencyCode: string; actorUserId: number }) {
+  const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [existing] = await db.select({ id: storeSettings.id }).from(storeSettings).limit(1);
+  const values = { defaultLanguage: input.defaultLanguage.trim().toLowerCase(), currencyCode: input.currencyCode.trim().toUpperCase(), updatedByUserId: input.actorUserId };
+  if (existing) await db.update(storeSettings).set(values).where(eq(storeSettings.id, existing.id));
+  else await db.insert(storeSettings).values(values);
+  return getStoreSettingsForStaff();
+}
+
+export async function listPromotionCoupons() {
+  const db = await getDb(); if (!db) return [];
+  return db.select().from(promotionCoupons).orderBy(desc(promotionCoupons.createdAt));
+}
+
+export async function savePromotionCoupon(input: { id?: number; code: string; discountType: "fixed" | "percent"; discountValue: number; minimumSubtotal: number; startsAt?: Date | null; endsAt?: Date | null; usageLimit?: number | null; enabled: boolean; actorUserId: number }) {
+  const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const code = input.code.trim().toUpperCase();
+  if (!code) throw new Error("كود القسيمة مطلوب.");
+  if (input.discountType === "percent" && input.discountValue > 100) throw new Error("لا يمكن أن تتجاوز نسبة الخصم 100٪.");
+  if (input.startsAt && input.endsAt && input.endsAt < input.startsAt) throw new Error("تاريخ النهاية يجب أن يأتي بعد تاريخ البداية.");
+  const values = { code, discountType: input.discountType, discountValue: money(Math.max(0, input.discountValue)), minimumSubtotal: money(Math.max(0, input.minimumSubtotal)), startsAt: input.startsAt ?? null, endsAt: input.endsAt ?? null, usageLimit: input.usageLimit ?? null, enabled: input.enabled };
+  if (input.id) {
+    const [existing] = await db.select({ id: promotionCoupons.id }).from(promotionCoupons).where(eq(promotionCoupons.id, input.id)).limit(1);
+    if (!existing) throw new Error("القسيمة غير موجودة.");
+    await db.update(promotionCoupons).set(values).where(eq(promotionCoupons.id, input.id));
+  } else await db.insert(promotionCoupons).values({ ...values, createdByUserId: input.actorUserId });
+  return listPromotionCoupons();
 }
 
 export async function listDeliveryRates() {
