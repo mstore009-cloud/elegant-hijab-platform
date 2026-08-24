@@ -5,6 +5,7 @@ import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth
 import { parseCatalogProductMetadataLenient } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { generateOperationalMediaForProduct } from "./operationalMediaService";
+import { generateAutomaticColorSuggestion } from "./db";
 
 const isImage = (item: CatalogDriveItem) => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name);
 
@@ -163,6 +164,13 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
         if (images.length > 0) {
           const copies = await generateOperationalMediaForProduct({ userId: ownerUserId, productId: created.productId });
           summary.operationalCopiesCreated += copies.created.length;
+          if (copies.created.length > 0) {
+            try {
+              await generateAutomaticColorSuggestion({ productId: created.productId, actorUserId: ownerUserId });
+            } catch (error) {
+              await db.insert(productOperations).values({ productId: created.productId, actorUserId: ownerUserId, source: "catalog_scan", action: "color_suggestions_generation_failed", changes: JSON.stringify({ message: error instanceof Error ? error.message : "تعذر تحليل ألوان الصور تلقائيًا." }) });
+            }
+          }
         }
       } catch (error) {
         summary.failed += 1;

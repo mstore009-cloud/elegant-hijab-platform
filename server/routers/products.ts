@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { addManualProductImage, addProductColor, assignProductMediaColor, createImportJob, createProduct, detachProductMediaReference, excludeProductMediaFromColorReview, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { addManualProductImage, addProductColor, assignProductMediaColor, createImportJob, createProduct, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -39,7 +39,7 @@ export const productsRouter = router({
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
     const media = await getProductMedia(input.productId);
-    return { product: presentProductForViewer(item.product, canViewFinancials), variants: item.variants, media, missingFields: item.missingFields };
+    return { product: presentProductForViewer(item.product, canViewFinancials), variants: item.variants, media, missingFields: item.missingFields, pendingColorSuggestion: item.pendingColorSuggestion };
   }),
   mediaPreviews: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
@@ -179,12 +179,24 @@ export const productsRouter = router({
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر تحليل ألوان الصور." });
     }
   }),
+  generateAutomaticColorSuggestion: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: ctx.user.id });
+  }),
+  reviewAutomaticColorSuggestion: protectedProcedure.input(z.object({ productId: z.number().int().positive(), suggestionOperationId: z.number().int().positive(), decision: z.enum(["accepted", "rejected"]) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return recordAutomaticColorSuggestionDecision({ ...input, actorUserId: ctx.user.id });
+  }),
   saveInventory: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
     quantities: z.array(z.object({ variantId: z.number().int().positive(), inventoryQuantity: z.number().int().min(0).max(100000) })).min(1).max(250),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     return saveProductInventory({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
+  }),
+  saveColorInventory: protectedProcedure.input(z.object({ productId: z.number().int().positive(), colorName: z.string().trim().min(1).max(100), inventoryQuantity: z.number().int().min(0).max(100000) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.inventory.update");
+    return saveProductColorInventory({ ...input, actorUserId: ctx.user.id });
   }),
   uploadManualImage: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),

@@ -60,6 +60,7 @@ export default function Products() {
   const [reviewColorName, setReviewColorName] = useState("");
   const [reviewMediaIds, setReviewMediaIds] = useState<number[]>([]);
   const [inventoryValues, setInventoryValues] = useState<Record<number, string>>({});
+  const [colorInventoryValues, setColorInventoryValues] = useState<Record<string, string>>({});
   const [suggestions, setSuggestions] = useState<EditableColorSuggestion[]>([]);
   const [analysisNote, setAnalysisNote] = useState("");
 
@@ -72,7 +73,10 @@ export default function Products() {
   const assignMediaColor = trpc.products.assignMediaColor.useMutation({ onSuccess: invalidateProducts });
   const excludeMediaFromColorReview = trpc.products.excludeMediaFromColorReview.useMutation({ onSuccess: invalidateProducts });
   const saveInventory = trpc.products.saveInventory.useMutation({ onSuccess: invalidateProducts });
+  const saveColorInventory = trpc.products.saveColorInventory.useMutation({ onSuccess: invalidateProducts });
   const analyzeColors = trpc.products.analyzeColors.useMutation();
+  const generateAutomaticSuggestion = trpc.products.generateAutomaticColorSuggestion.useMutation({ onSuccess: invalidateProducts });
+  const reviewAutomaticSuggestion = trpc.products.reviewAutomaticColorSuggestion.useMutation({ onSuccess: invalidateProducts });
   const runCatalogScan = trpc.catalogSync.runNow.useMutation({ onSuccess: invalidateProducts });
 
   useEffect(() => {
@@ -83,7 +87,8 @@ export default function Products() {
     setDraftPrice(detail.missingFields.includes("sellingPrice") ? "" : detail.product.sellingPrice);
     setDraftSizes(safeSizes(detail.product.sizeLabels).join("، "));
     setInventoryValues(Object.fromEntries(detail.variants.map(variant => [variant.id, String(variant.inventoryQuantity)])));
-    setSuggestions([]);
+    setColorInventoryValues(detail.variants.reduce((result, variant) => result[variant.colorName] === undefined ? { ...result, [variant.colorName]: String(variant.inventoryQuantity) } : result, {} as Record<string, string>));
+    setSuggestions(detail.pendingColorSuggestion?.suggestion.colorGroups.map(group => ({ ...group, selectedMediaIds: [...group.mediaIds] })) ?? []);
     setAnalysisNote("");
     setNewColorName("");
     setReviewColorName("");
@@ -204,6 +209,23 @@ export default function Products() {
     if (quantities.some(item => !Number.isInteger(item.inventoryQuantity) || item.inventoryQuantity < 0)) return;
     saveInventory.mutate({ productId: selectedProduct.data.product.id, quantities });
   };
+  const saveColorQuantity = (colorName: string) => {
+    if (!selectedProductId) return;
+    const quantity = Number(colorInventoryValues[colorName] ?? 0);
+    if (!Number.isInteger(quantity) || quantity < 0) return;
+    saveColorInventory.mutate({ productId: selectedProductId, colorName, inventoryQuantity: quantity });
+  };
+  const acceptAutomaticSuggestion = async () => {
+    const pending = detail?.pendingColorSuggestion;
+    if (!pending) return;
+    for (const group of pending.suggestion.colorGroups) await createColor(group.colorNameArabic, group.mediaIds);
+    await reviewAutomaticSuggestion.mutateAsync({ productId: pending ? detail!.product.id : 0, suggestionOperationId: pending.operationId, decision: "accepted" });
+  };
+  const rejectAutomaticSuggestion = () => {
+    const pending = detail?.pendingColorSuggestion;
+    if (!pending || !detail) return;
+    reviewAutomaticSuggestion.mutate({ productId: detail.product.id, suggestionOperationId: pending.operationId, decision: "rejected" });
+  };
 
   const detail = selectedProduct.data;
   const sizes = safeSizes(detail?.product.sizeLabels ?? null);
@@ -243,7 +265,7 @@ export default function Products() {
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[minmax(420px,0.9fr)_minmax(560px,1.3fr)]">
+      <section className={selectedProductId ? "grid gap-5 xl:grid-cols-[minmax(420px,0.9fr)_minmax(560px,1.3fr)]" : ""}>
         <article className="overflow-hidden rounded-3xl border border-[#e6ded0] bg-white shadow-[0_15px_38px_rgba(43,58,49,0.05)]">
           <div className="flex items-center justify-between border-b border-[#eee9df] px-5 py-4"><div><h2 className="font-bold text-[#183d35]">قائمة العمل</h2><p className="mt-0.5 text-xs text-[#7b857f]">{filteredProducts.length} نتيجة في العرض الحالي</p></div><Layers3 className="h-5 w-5 text-[#a78550]" /></div>
           {products.isLoading && <div className="space-y-3 p-5"><div className="h-20 animate-pulse rounded-2xl bg-[#f5f2eb]" /><div className="h-20 animate-pulse rounded-2xl bg-[#f5f2eb]" /></div>}
@@ -255,8 +277,7 @@ export default function Products() {
           </div>
         </article>
 
-        <article className="min-h-[680px] overflow-hidden rounded-3xl border border-[#e6ded0] bg-white shadow-[0_15px_38px_rgba(43,58,49,0.05)]">
-          {!selectedProductId && <div className="grid min-h-[680px] place-items-center p-8 text-center"><div><PackagePlus className="mx-auto h-10 w-10 text-[#a78550]" /><h2 className="mt-4 text-xl font-bold text-[#183d35]">اختر منتجًا من قائمة العمل</h2><p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-[#78847e]">ستظهر البيانات والصور والألوان والمخزون في مساحة مراجعة واحدة.</p></div></div>}
+        {selectedProductId && <article className="min-h-[680px] overflow-hidden rounded-3xl border border-[#e6ded0] bg-white shadow-[0_15px_38px_rgba(43,58,49,0.05)]">
           {selectedProduct.isLoading && <div className="p-6 text-sm text-[#526a60]">جارٍ فتح المنتج...</div>}
           {detail && <div className="space-y-0">
             <header className="sticky top-0 z-10 border-b border-[#e9e4da] bg-white/95 px-5 py-4 backdrop-blur sm:px-6"><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-3">{selectedProductMedia.data?.[0] ? <img src={selectedProductMedia.data[0].dataUrl} alt={`صورة ${detail.product.name}`} className="h-16 w-16 rounded-2xl border border-[#d9e6de] object-cover" /> : <div className="grid h-16 w-16 place-items-center rounded-2xl bg-[#f2eee6] text-[#9a815c]"><ImagePlus className="h-5 w-5" /></div>}<div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-xl font-bold text-[#183d35]">{detail.product.name}</h2><Badge className={statusClass(detail.product.status)}>{statusLabel(detail.product.status)}</Badge></div><p className="mt-1 text-xs text-[#74817a]">{detail.product.productCode}{detail.product.category ? ` · ${detail.product.category}` : ""}</p><p className="mt-2 text-xs font-medium text-[#a06122]">{detail.missingFields.length ? `${detail.missingFields.length} عناصر تحتاج إكمالًا` : "البيانات الأساسية مكتملة"}</p></div></div><Button size="icon" variant="ghost" onClick={() => setSelectedProductId(null)} aria-label="إغلاق التفاصيل"><X className="h-4 w-4" /></Button></div></header>
@@ -269,20 +290,16 @@ export default function Products() {
               <section id="media"><SectionTitle number="2" title="الصور وتحليل الألوان" subtitle="التحليل يقترح فقط؛ يمكنك تفكيك المجموعة وإعادة تحليل الصور المحددة." /><div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#f5faf7] p-4"><div><p className="font-bold text-[#245746]">صور المنتج التشغيلية</p><p className="mt-1 text-xs text-[#6b7d74]">كل صورة يرفعها الموظف تتحول إلى WebP داخل المنصة، ولا تحتاج OneDrive.</p></div><div className="flex flex-wrap gap-2"><label className="cursor-pointer"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={addImage} className="sr-only" disabled={!canEdit || uploadImage.isPending} /><span className="inline-flex h-10 items-center rounded-lg border border-[#aacbbc] bg-white px-3 text-sm font-bold text-[#28604e]"><ImagePlus className="ml-1.5 h-4 w-4" />{uploadImage.isPending ? "جارٍ التحويل..." : "إضافة صور"}</span></label><Button onClick={runAllColorAnalysis} disabled={!canEdit || analyzeColors.isPending || !(selectedProductMedia.data?.length)} className="bg-[#a47d40] text-white hover:bg-[#8b6933]"><Sparkles className={`ml-1.5 h-4 w-4 ${analyzeColors.isPending ? "animate-pulse" : ""}`} />{analyzeColors.isPending ? "جارٍ تحليل الصور..." : "تحليل الألوان"}</Button></div></div>{(uploadImage.error || analyzeColors.error) && <p className="mt-3 rounded-xl bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{uploadImage.error?.message ?? analyzeColors.error?.message}</p>}
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                   {reviewableMedia.map(media => (
-                    <ReviewableMediaCard
-                      key={media.mediaId}
-                      media={media}
-                      selected={reviewMediaIds.includes(media.mediaId)}
-                      disabled={!canEdit}
-                      onClick={() => toggleReviewMedia(media.mediaId)}
-                    />
+                    <div key={media.mediaId} className="space-y-2"><ReviewableMediaCard media={media} selected={reviewMediaIds.includes(media.mediaId)} disabled={!canEdit} onClick={() => toggleReviewMedia(media.mediaId)} />{media.colorName && <div className="rounded-xl border border-[#e5ded2] bg-[#fcfbf8] p-2"><p className="text-[11px] font-medium text-[#65746c]">كمية لون {media.colorName}</p><div className="mt-1 flex gap-1"><Input inputMode="numeric" value={colorInventoryValues[media.colorName] ?? String(media.inventoryQuantity)} onChange={event => setColorInventoryValues(current => ({ ...current, [media.colorName!]: event.target.value }))} disabled={!canInventory} className="h-8 min-w-0" /><Button size="sm" onClick={() => saveColorQuantity(media.colorName!)} disabled={!canInventory || saveColorInventory.isPending} className="h-8 bg-[#183d35] px-2">حفظ</Button></div><p className="mt-1 text-[10px] text-[#8a857b]">يُعمم على كل صور هذا اللون</p></div>}</div>
                   ))}
                 </div>
+                {detail.pendingColorSuggestion && <div className="mt-4 rounded-2xl border border-[#d7c488] bg-[#fffaf0] p-4"><p className="font-bold text-[#765429]">اقتراح الألوان التلقائي جاهز للمراجعة</p><p className="mt-1 text-xs text-[#8b7659]">تم التحليل تلقائيًا بعد وصول الصور. اعتمد الاقتراح كما هو أو ارفضه؛ التعديل المتقدم متاح عند الحاجة فقط.</p><div className="mt-3 flex gap-2"><Button onClick={acceptAutomaticSuggestion} disabled={!canEdit || reviewAutomaticSuggestion.isPending} className="bg-[#285f4e] hover:bg-[#1c4b3d]"><Check className="ml-1 h-4 w-4" />اعتماد الألوان</Button><Button variant="outline" onClick={rejectAutomaticSuggestion} disabled={!canEdit || reviewAutomaticSuggestion.isPending} className="border-[#d6c9b6] text-[#765f3c]">رفض الاقتراح</Button></div></div>}
                 {reviewableMedia.length > 0 && <div className="mt-4 rounded-2xl border-2 border-[#d6c08b] bg-[#fffaf0] p-4"><div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-bold text-[#765429]">مراجعة الصور والألوان</p><p className="mt-1 text-xs leading-5 text-[#8b7659]">اضغط أي صورة أعلاه—حتى لو كانت مرتبطة بلون—ثم صحح لونها أو أعد تحليلها أو استبعدها من اللون. لا تختفي الصورة من المنتج.</p></div><span className="rounded-full bg-[#f5e6be] px-2.5 py-1 text-xs font-bold text-[#765429]">{reviewMediaIds.length} صور مختارة</span></div><div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto]"><Input value={reviewColorName} onChange={event => setReviewColorName(event.target.value)} disabled={!canEdit} placeholder="اكتب اسم اللون للصور المحددة" /><Button onClick={assignReviewMedia} disabled={!canEdit || !reviewMediaIds.length || !reviewColorName.trim() || addColor.isPending || assignMediaColor.isPending} className="bg-[#285f4e] hover:bg-[#1c4b3d]"><Check className="ml-1 h-4 w-4" />تسمية وربط</Button><Button variant="outline" onClick={analyzeReviewMedia} disabled={!canEdit || !reviewMediaIds.length || analyzeColors.isPending} className="border-[#b8d4c7] text-[#28604e]"><RefreshCw className="ml-1 h-4 w-4" />حلل المحدد</Button><Button variant="outline" onClick={excludeReviewMedia} disabled={!canEdit || !reviewMediaIds.length || excludeMediaFromColorReview.isPending} className="border-[#d6c9b6] text-[#765f3c]">استبعاد من اللون</Button></div>{!canEdit && <p className="mt-3 text-xs text-[#a14724]">حسابك لا يملك حاليًا صلاحية تعديل المنتجات.</p>}</div>}
                 {suggestions.length > 0 && <div className="mt-4 rounded-2xl border border-[#ead8b7] bg-[#fffaf0] p-4"><div className="flex items-start gap-2"><Sparkles className="mt-0.5 h-4 w-4 text-[#a77b2f]" /><div><p className="font-bold text-[#745429]">اقتراحات تحتاج اعتمادًا</p>{analysisNote && <p className="mt-1 text-xs leading-5 text-[#8b7659]">{analysisNote}</p>}</div></div><div className="mt-4 grid gap-3 sm:grid-cols-2">{suggestions.map((suggestion, index) => { const suggestionMedia = suggestion.mediaIds.map(mediaId => mediaById.get(mediaId)).filter((media): media is NonNullable<typeof media> => Boolean(media)); return <div key={`${suggestion.colorNameArabic}-${index}`} className="rounded-xl border border-[#eddfc4] bg-white p-3"><div className="flex items-start gap-3"><div className="flex shrink-0 -space-x-2 space-x-reverse" aria-label={`صور اقتراح ${suggestion.colorNameArabic}`}>{suggestionMedia.slice(0, 4).map(media => <img key={media.mediaId} src={media.dataUrl} alt={`صورة مقترحة للون ${suggestion.colorNameArabic}`} className="h-12 w-12 rounded-xl border-2 border-white object-cover shadow-sm" />)}{suggestionMedia.length > 4 && <span className="grid h-12 w-12 place-items-center rounded-xl border-2 border-white bg-[#f1eadc] text-xs font-bold text-[#765f3c]">+{suggestionMedia.length - 4}</span>}{suggestionMedia.length === 0 && <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#f3f0e9] text-[#9a815c]"><ImagePlus className="h-4 w-4" /></span>}</div><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><Input value={suggestion.colorNameArabic} onChange={event => setSuggestions(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, colorNameArabic: event.target.value } : item))} className="h-9" disabled={!canEdit} /><span className="whitespace-nowrap text-xs text-[#8a7150]">ثقة {Math.round(suggestion.confidence * 100)}%</span></div><p className="mt-2 text-xs text-[#786a57]">{suggestion.reviewNote}</p></div></div><div className="mt-3 flex items-center justify-between"><span className="text-xs text-[#786a57]">{suggestionMedia.length} صور مرتبطة</span><Button size="sm" onClick={() => createColor(suggestion.colorNameArabic, suggestion.mediaIds)} disabled={!canEdit || addColor.isPending || assignMediaColor.isPending} className="bg-[#285f4e] hover:bg-[#1c4b3d]"><Check className="ml-1 h-3.5 w-3.5" />اعتماد وربط</Button></div></div>; })}</div></div>}</section>
 
               {suggestions.length > 0 ? (
-                <section className="rounded-2xl border border-dashed border-[#d9c28d] bg-[#fffdf7] p-4">
+                <details className="rounded-2xl border border-dashed border-[#d9c28d] bg-[#fffdf7] p-4">
+                  <summary className="cursor-pointer font-bold text-[#765429]">تعديل متقدم لاقتراحات الألوان عند الحاجة</summary>
                   <SectionTitle number="3" title="تفكيك الاقتراحات" subtitle="حدد الصور الصحيحة للون، ثم حلل المحدد أو أزله من المجموعة الخاطئة." />
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     {suggestions.map((suggestion, index) => (
@@ -302,7 +319,7 @@ export default function Products() {
                       />
                     ))}
                   </div>
-                </section>
+                </details>
               ) : null}
 
               <section id="colors"><SectionTitle number="4" title="الألوان" subtitle="أضف اللون يدويًا أو اعتمد اقتراح التحليل، ثم أدخل الكمية في الخطوة التالية." /><div className="mt-4 flex flex-col gap-3 rounded-2xl border border-dashed border-[#b8d4c7] bg-[#f8fcfa] p-4 sm:flex-row"><Input value={newColorName} onChange={event => setNewColorName(event.target.value)} placeholder="مثال: عنابي" disabled={!canEdit} className="bg-white" /><Button onClick={() => createColor(newColorName)} disabled={!canEdit || !newColorName.trim() || addColor.isPending} className="whitespace-nowrap bg-[#183d35] hover:bg-[#102f29]"><Palette className="ml-1.5 h-4 w-4" />{addColor.isPending ? "جارٍ الإضافة..." : "إضافة لون"}</Button></div>{addColor.error && <p className="mt-2 text-xs text-[#a14724]">{addColor.error.message}</p>}<div className="mt-4 flex flex-wrap gap-2">{Array.from(variantsByColor.entries()).map(([colorName, variants]) => <div key={colorName} className="rounded-xl border border-[#d6e4dd] bg-white px-3 py-2"><div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[#a47d40]" /><span className="font-bold text-[#355046]">{colorName}</span><span className="text-xs text-[#74817a]">{sizes.length ? `${variants.length} قياسات` : "بلا قياسات"}</span></div></div>)}{variantsByColor.size === 0 && <p className="text-sm text-[#74817a]">لا توجد ألوان معتمدة بعد. استخدم اقتراح التحليل أو أضف لونًا يدويًا.</p>}</div></section>
@@ -312,7 +329,7 @@ export default function Products() {
               <section className="border-t border-[#eee9df] pt-6"><details><summary className="flex cursor-pointer list-none items-center justify-between font-bold text-[#4a6459]">مصدر Catalog وسجل العمل <ChevronDown className="h-4 w-4" /></summary><p className="mt-3 text-sm leading-6 text-[#718078]">Catalog يُقرأ في الخلفية فقط. لا تُعدّل المنصة ملفات OneDrive، وتبقى عملية النشر منفصلة عن هذه الخطوات.</p></details></section>
             </div>
           </div>}
-        </article>
+        </article>}
       </section>
     </div>
   );

@@ -4,6 +4,7 @@ import { normalizeApprovedColorNames, validateApprovedImageColorLinks } from "..
 import { getDb } from "../db";
 import { planOperationalReferenceDetach } from "./operationalMediaLifecycle";
 import { createOperationalImageDerivative } from "../integrations/onedrive/operationalMedia";
+import { analyzeStoredProductColors, type ProductColorSuggestion } from "./colorAnalysis";
 import { storagePut } from "../storage";
 
 export async function listProducts() {
@@ -78,7 +79,49 @@ export async function getProductWithVariants(productId: number) {
   const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
   const missingFields = parseMissingFields(folderImport?.missingFields ?? null);
   if (media.some(item => item.mediaType === "image" && !item.variantId && !item.colorVerified) && !missingFields.includes("imageColorReview")) missingFields.push("imageColorReview");
-  return { product: result[0], variants, missingFields };
+  const operations = await db.select().from(productOperations).where(eq(productOperations.productId, productId)).orderBy(desc(productOperations.createdAt));
+  const generated = operations.find(operation => operation.action === "color_suggestions_generated");
+  const reviewed = generated ? operations.some(operation => operation.action === "color_suggestions_reviewed" && (() => {
+    try { return JSON.parse(operation.changes).suggestionOperationId === generated.id; } catch { return false; }
+  })()) : false;
+  let pendingColorSuggestion: { operationId: number; suggestion: ProductColorSuggestion } | null = null;
+  if (generated && !reviewed) {
+    try {
+      const suggestion = JSON.parse(generated.changes).suggestion as ProductColorSuggestion;
+      if (suggestion && Array.isArray(suggestion.colorGroups)) pendingColorSuggestion = { operationId: generated.id, suggestion };
+    } catch { /* ignore malformed historical log */ }
+  }
+  return { product: result[0], variants, missingFields, pendingColorSuggestion };
+}
+
+export async function generateAutomaticColorSuggestion(input: { productId: number; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const media = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
+  const suggestion = await analyzeStoredProductColors({ productCode: product.productCode, media });
+  const inserted = await db.insert(productOperations).values({
+    productId: input.productId,
+    actorUserId: input.actorUserId,
+    source: "catalog_scan",
+    action: "color_suggestions_generated",
+    changes: JSON.stringify({ suggestion }),
+  });
+  return { operationId: Number(inserted[0].insertId), suggestion };
+}
+
+export async function recordAutomaticColorSuggestionDecision(input: { productId: number; suggestionOperationId: number; decision: "accepted" | "rejected"; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  await db.insert(productOperations).values({
+    productId: input.productId,
+    actorUserId: input.actorUserId,
+    source: "products_ui",
+    action: "color_suggestions_reviewed",
+    changes: JSON.stringify({ suggestionOperationId: input.suggestionOperationId, decision: input.decision }),
+  });
+  return { success: true };
 }
 
 export async function updateProductDetails(input: {
@@ -250,6 +293,21 @@ export async function saveProductInventory(input: { productId: number; quantitie
       action: "inventory_saved",
       changes: JSON.stringify({ quantities: input.quantities }),
     });
+  });
+  await removeCatalogMissingField(input.productId, "inventory");
+  return { updatedVariantCount: variants.length };
+}
+
+export async function saveProductColorInventory(input: { productId: number; colorName: string; inventoryQuantity: number; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  if (!Number.isInteger(input.inventoryQuantity) || input.inventoryQuantity < 0) throw new Error("الكمية يجب أن تكون رقمًا صحيحًا غير سالب.");
+  const variants = await db.select().from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, input.colorName)));
+  if (variants.length === 0) throw new Error("لا يوجد لون معتمد بهذه التسمية.");
+  const availability: "available" | "low_stock" | "out_of_stock" = input.inventoryQuantity <= 0 ? "out_of_stock" : input.inventoryQuantity <= 3 ? "low_stock" : "available";
+  await db.transaction(async tx => {
+    for (const variant of variants) await tx.update(productVariants).set({ inventoryQuantity: input.inventoryQuantity, availability }).where(eq(productVariants.id, variant.id));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_inventory_saved", changes: JSON.stringify({ colorName: input.colorName, inventoryQuantity: input.inventoryQuantity, variantIds: variants.map(variant => variant.id) }) });
   });
   await removeCatalogMissingField(input.productId, "inventory");
   return { updatedVariantCount: variants.length };

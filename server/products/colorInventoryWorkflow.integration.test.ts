@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { addProductColor, assignProductMediaColor, saveProductInventory } from "./db";
+import { addProductColor, assignProductMediaColor, saveProductColorInventory, saveProductInventory } from "./db";
 
 describe("تدفق اللون والمخزون", () => {
   it("يعتمد لونًا ويربط صورته ويحفظ مخزون القياسات من دون نشر المسودة", async () => {
@@ -26,8 +26,10 @@ describe("تدفق اللون والمخزون", () => {
       await assignProductMediaColor({ productId, mediaId, colorName: "عنابي", actorUserId: owner.id });
       await saveProductInventory({ productId, actorUserId: owner.id, quantities: color.variants.map((variant, index) => ({ variantId: variant.id, inventoryQuantity: index === 0 ? 4 : 2 })) });
 
+      await saveProductColorInventory({ productId, colorName: "عنابي", inventoryQuantity: 6, actorUserId: owner.id });
+
       const variants = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
-      expect(variants.map(variant => variant.inventoryQuantity).sort()).toEqual([2, 4]);
+      expect(variants.map(variant => variant.inventoryQuantity).sort()).toEqual([6, 6]);
       const [media] = await db.select().from(productMedia).where(eq(productMedia.id, mediaId)).limit(1);
       expect(media?.colorVerified).toBe(true);
       expect(color.variants.map(variant => variant.id)).toContain(media?.variantId);
@@ -37,7 +39,7 @@ describe("تدفق اللون والمخزون", () => {
       expect(JSON.parse(folder?.missingFields ?? "[]")).not.toContain("colors");
       expect(JSON.parse(folder?.missingFields ?? "[]")).not.toContain("inventory");
       const actions = await db.select({ action: productOperations.action }).from(productOperations).where(eq(productOperations.productId, productId));
-      expect(actions.map(row => row.action)).toEqual(expect.arrayContaining(["color_added", "media_color_assigned", "inventory_saved"]));
+      expect(actions.map(row => row.action)).toEqual(expect.arrayContaining(["color_added", "media_color_assigned", "inventory_saved", "color_inventory_saved"]));
     } finally {
       if (productId) {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));

@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { excludeProductMediaFromColorReview, updateProductDetails } from "./db";
+import { excludeProductMediaFromColorReview, getProductWithVariants, recordAutomaticColorSuggestionDecision, updateProductDetails } from "./db";
 
 describe("عمليات المنتج الموحدة", () => {
   it("يكمل حقول المسودة ويسجل التعديل بصيغة يمكن لواجهة المنتجات وWhatsApp مشاركتها", async () => {
@@ -58,6 +58,34 @@ describe("عمليات المنتج الموحدة", () => {
       if (productId) {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));
         if (mediaId) await db.delete(productMedia).where(eq(productMedia.id, mediaId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 15_000);
+
+  it("يعرض اقتراح اللون التلقائي للمراجعة ثم يخفيه بعد رفض الموظف من دون إنشاء لون", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار اقتراح اللون التلقائي.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار اقتراح اللون التلقائي.");
+    const productCode = `TST-AUTO-COLOR-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ productCode, name: "منتج اقتراح تلقائي", category: "اختبار", description: null, sizeLabels: null, status: "draft", sellingPrice: "0.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      const operation = await db.insert(productOperations).values({ productId, actorUserId: owner.id, source: "catalog_scan", action: "color_suggestions_generated", changes: JSON.stringify({ suggestion: { colorGroups: [{ colorNameArabic: "عنابي", confidence: 0.7, mediaIds: [1], reviewNote: "اقتراح تلقائي" }], uncertainMediaIds: [], overallReviewNote: "راجع الاقتراح" } }) });
+      const operationId = Number(operation[0].insertId);
+      const pending = await getProductWithVariants(productId);
+      expect(pending?.pendingColorSuggestion).toMatchObject({ operationId, suggestion: { colorGroups: [{ colorNameArabic: "عنابي" }] } });
+      expect(pending?.variants).toHaveLength(0);
+      await recordAutomaticColorSuggestionDecision({ productId, suggestionOperationId: operationId, decision: "rejected", actorUserId: owner.id });
+      const reviewed = await getProductWithVariants(productId);
+      expect(reviewed?.pendingColorSuggestion).toBeNull();
+      expect(reviewed?.variants).toHaveLength(0);
+      expect(reviewed?.product.status).toBe("draft");
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
         await db.delete(products).where(eq(products.id, productId));
       }
     }
