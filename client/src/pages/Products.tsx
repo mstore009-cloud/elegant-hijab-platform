@@ -40,6 +40,8 @@ export default function Products() {
   const [variants, setVariants] = useState<VariantDraft[]>([emptyVariant()]);
   const [selectedCatalogGroupId, setSelectedCatalogGroupId] = useState<string | null>(null);
   const [selectedCatalogProductId, setSelectedCatalogProductId] = useState<string | null>(null);
+  const [catalogGroupPreviewRequested, setCatalogGroupPreviewRequested] = useState(false);
+  const [selectedCatalogDraftFolderIds, setSelectedCatalogDraftFolderIds] = useState<string[]>([]);
   const [directProductPreviewId, setDirectProductPreviewId] = useState<string | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [integrationsReady, setIntegrationsReady] = useState(false);
@@ -84,6 +86,15 @@ export default function Products() {
   const catalogPreview = trpc.integrations.previewCatalogProduct.useQuery(catalogPreviewInput, {
     enabled: profile.isSuccess && canCreate && catalogPreviewInput !== skipToken,
     staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const catalogGroupPreviewInput = useMemo(
+    () => selectedCatalogGroupId && catalogGroupPreviewRequested ? { groupId: selectedCatalogGroupId } : skipToken,
+    [catalogGroupPreviewRequested, selectedCatalogGroupId],
+  );
+  const catalogGroupPreview = trpc.integrations.previewCatalogGroupProducts.useQuery(catalogGroupPreviewInput, {
+    enabled: profile.isSuccess && canCreate && catalogGroupPreviewInput !== skipToken,
+    staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
   const directPreviewInput = useMemo(
@@ -144,6 +155,12 @@ export default function Products() {
   const createCatalogDraft = trpc.integrations.createCatalogDraft.useMutation({
     onSuccess: async () => {
       await Promise.all([utils.products.list.invalidate(), utils.products.importJobs.list.invalidate()]);
+    },
+  });
+  const createSelectedCatalogDrafts = trpc.integrations.createSelectedCatalogDrafts.useMutation({
+    onSuccess: async () => {
+      setSelectedCatalogDraftFolderIds([]);
+      await Promise.all([utils.products.list.invalidate(), utils.products.importJobs.list.invalidate(), catalogGroupPreview.refetch()]);
     },
   });
   const analyzeCatalogColors = trpc.integrations.analyzeCatalogProductColors.useMutation();
@@ -323,7 +340,7 @@ export default function Products() {
                 {catalogGroups.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogGroups.error.message}</p>}
                 {catalogGroups.data && (
                   <div className="flex flex-wrap gap-2">
-                    {catalogGroups.data.map(group => <Button key={group.id} size="sm" variant={selectedCatalogGroupId === group.id ? "default" : "outline"} onClick={() => { setSelectedCatalogGroupId(group.id); setSelectedCatalogProductId(null); setDirectProductPreviewId(null); }} className={selectedCatalogGroupId === group.id ? "bg-[#2d5a4d] hover:bg-[#21453a]" : "border-[#9dc2b2] text-[#2d5a4d]"}>{group.name}</Button>)}
+                    {catalogGroups.data.map(group => <Button key={group.id} size="sm" variant={selectedCatalogGroupId === group.id ? "default" : "outline"} onClick={() => { setSelectedCatalogGroupId(group.id); setSelectedCatalogProductId(null); setDirectProductPreviewId(null); setCatalogGroupPreviewRequested(false); setSelectedCatalogDraftFolderIds([]); }} className={selectedCatalogGroupId === group.id ? "bg-[#2d5a4d] hover:bg-[#21453a]" : "border-[#9dc2b2] text-[#2d5a4d]"}>{group.name}</Button>)}
                   </div>
                 )}
                 {selectedCatalogGroupId && <div className="space-y-2 border-t border-[#e5eee8] pt-3">
@@ -332,6 +349,16 @@ export default function Products() {
                   {catalogProducts.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogProducts.error.message}</p>}
                   {catalogProducts.data?.products.map(product => <Button key={product.id} size="sm" variant={selectedCatalogProductId === product.id ? "default" : "outline"} onClick={() => setSelectedCatalogProductId(product.id)} className={selectedCatalogProductId === product.id ? "bg-[#72551d] hover:bg-[#5c4417]" : "border-[#d9c490] text-[#72551d]"}>{product.name}</Button>)}
                   {catalogProducts.data && catalogProducts.data.products.length === 0 && <Button size="sm" variant="outline" onClick={() => setDirectProductPreviewId(catalogProducts.data!.group.id)} className="border-[#d9b17a] text-[#8b552b] hover:bg-[#fff7ed]">معاينة {catalogProducts.data.group.name} كمجلد منتج مباشر — اختبار فقط</Button>}
+                  {catalogProducts.data && catalogProducts.data.products.length > 0 && <Button size="sm" variant="outline" onClick={() => setCatalogGroupPreviewRequested(true)} className="border-[#2d5a4d] text-[#2d5a4d] hover:bg-[#edf7f1]">معاينة كل منتجات المجموعة — قراءة فقط</Button>}
+                </div>}
+                {catalogGroupPreview.isLoading && <p className="rounded-lg bg-[#f1f8f4] p-3 text-xs text-[#315549]">جارٍ فحص مجلدات المجموعة وملفات product.txt فقط. لا تُنزّل الصور الأصلية ولا تُنشأ مسودات أثناء الفحص.</p>}
+                {catalogGroupPreview.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogGroupPreview.error.message}</p>}
+                {catalogGroupPreview.data && <div className="space-y-3 rounded-lg border border-[#d7e2dc] bg-[#f9fcfa] p-3 text-xs text-[#405c50]">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-bold">مراجعة جماعية — {catalogGroupPreview.data.group.name}</p><p className="mt-1">قراءة فقط: لا ألوان، لا مخزون، لا وسائط، ولا نشر تلقائي.</p></div><Button size="sm" variant="outline" onClick={() => setSelectedCatalogDraftFolderIds(catalogGroupPreview.data!.entries.filter(entry => entry.selectable).map(entry => entry.productFolderId))} className="border-[#9dc2b2] text-[#2d5a4d]">اختيار كل الصالح</Button></div>
+                  <div className="space-y-2">{catalogGroupPreview.data.entries.map(entry => <label key={entry.productFolderId} className="flex cursor-pointer items-start gap-3 rounded-md border border-[#e3ece6] bg-white p-3"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-[#2d5a4d]" checked={selectedCatalogDraftFolderIds.includes(entry.productFolderId)} disabled={!entry.selectable || createSelectedCatalogDrafts.isPending} onChange={event => setSelectedCatalogDraftFolderIds(current => event.target.checked ? [...current, entry.productFolderId] : current.filter(id => id !== entry.productFolderId))} /><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><b>{entry.productCode}</b><Badge className={entry.state === "ready" ? "bg-[#edf7f1] text-[#1f5b4f]" : entry.state === "already_exists" ? "bg-[#fff8e8] text-[#8a6327]" : "bg-[#fff4ed] text-[#9c4b25]"}>{entry.state === "ready" ? "صالح لمسودة" : entry.state === "already_exists" ? "موجود مسبقًا" : "ناقص أو غير صالح"}</Badge></span><span className="mt-1 block">{entry.metadata ? `${entry.metadata.name} · ${entry.metadata.sellingPrice} د.ع · ${entry.metadata.sizes.length ? entry.metadata.sizes.join("، ") : "بلا قياسات"}` : "لا توجد بيانات صالحة"}</span><span className="mt-1 block text-[#63766d]">الصور: {entry.imageCount} · الملفات الأخرى: {entry.documentCount}</span>{entry.problems.map(problem => <span key={problem} className="mt-1 block text-[#9c4b25]">{problem}</span>)}</span></label>)}</div>
+                  <Button size="sm" onClick={() => selectedCatalogGroupId && createSelectedCatalogDrafts.mutate({ groupId: selectedCatalogGroupId, productFolderIds: selectedCatalogDraftFolderIds })} disabled={selectedCatalogDraftFolderIds.length === 0 || createSelectedCatalogDrafts.isPending} className="w-full bg-[#1f5b4f] hover:bg-[#153d35]">{createSelectedCatalogDrafts.isPending ? "جارٍ إنشاء المسودات المختارة..." : `إنشاء ${selectedCatalogDraftFolderIds.length} مسودة مختارة فقط`}</Button>
+                  {createSelectedCatalogDrafts.error && <p className="rounded-md bg-[#fff4ed] p-2 text-[#9c4b25]">{createSelectedCatalogDrafts.error.message}</p>}
+                  {createSelectedCatalogDrafts.data && <div className="rounded-md bg-[#edf7f1] p-2 text-[#1f5b4f]">{createSelectedCatalogDrafts.data.results.map(result => <p key={result.productFolderId}><b>{result.productCode}:</b> {result.message}</p>)}<p className="mt-2 font-bold">لا توجد ألوان أو مخزون أو وسائط أو نشر ضمن هذه العملية.</p></div>}
                 </div>}
                 {catalogPreview.isLoading && <p className="text-xs text-[#5a766b]">جارٍ قراءة product.txt والصور الوصفية دون حفظ. تنتهي المحاولة بخطأ واضح خلال 20 ثانية إذا لم يستجب OneDrive.</p>}
                 {catalogPreview.error && <p className="rounded-lg bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{catalogPreview.error.message}</p>}

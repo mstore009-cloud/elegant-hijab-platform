@@ -10,9 +10,10 @@ import {
 } from "../integrations/onedrive/db";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
 import { listCatalogChildren, listCatalogRootFolders, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
+import { createSelectedCatalogDrafts, previewCatalogGroupProducts } from "../integrations/onedrive/catalogMultiDraft";
 import { createOneDriveAuthorizationUrl, createPkcePair } from "../integrations/onedrive/oauth";
 import { parseCatalogProductMetadata, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
-import { attachApprovedCatalogImageReferences, createApprovedCatalogColorVariants, createCatalogDraftProduct } from "../products/db";
+import { attachApprovedCatalogImageReferences, createApprovedCatalogColorVariants, createCatalogDraftProduct, listProducts } from "../products/db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM, listLLMModels } from "../_core/llm";
 
@@ -56,6 +57,29 @@ async function readSelectedCatalogProduct(userId: number, input: { groupId: stri
   const images = contents.filter(item => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name));
   const documents = contents.filter(item => item.kind === "file" && !images.some(image => image.id === item.id));
   return { group, productFolder, metadataFile, metadataText, images, documents };
+}
+
+async function previewSelectedCatalogGroup(userId: number, groupId: string) {
+  const connection = await requireSelectedCatalog(userId);
+  const groups = await listCatalogChildren({
+    encryptedAccessToken: connection.encryptedAccessToken,
+    driveId: connection.selectedDriveId!,
+    folderId: connection.selectedFolderId!,
+  });
+  const group = groups.find(item => item.id === groupId && item.kind === "folder");
+  if (!group) throw new TRPCError({ code: "BAD_REQUEST", message: "المجموعة المختارة ليست ضمن جذر Catalog المعتمد." });
+  const [items, knownProducts] = await Promise.all([
+    listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId: group.id }),
+    listProducts(),
+  ]);
+  const entries = await previewCatalogGroupProducts({
+    groupName: group.name,
+    productFolders: items.filter(item => item.kind === "folder"),
+    existingProductCodes: new Set(knownProducts.map(product => product.productCode)),
+    readFolderContents: folderId => listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId }),
+    readMetadataText: fileId => readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, fileId }),
+  });
+  return { group: { id: group.id, name: group.name }, entries };
 }
 
 const colorAnalysisSchema = z.object({
@@ -162,6 +186,10 @@ export const integrationsRouter = router({
     });
     return { group, products: items.filter(item => item.kind === "folder") };
   }),
+  previewCatalogGroupProducts: protectedProcedure.input(z.object({ groupId: z.string().min(1) })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    return { mode: "group_preview" as const, ...(await previewSelectedCatalogGroup(ctx.user.id, input.groupId)) };
+  }),
   previewCatalogProduct: protectedProcedure.input(z.object({
     groupId: z.string().min(1),
     productFolderId: z.string().min(1),
@@ -209,6 +237,27 @@ export const integrationsRouter = router({
       mediaCount: 0,
       status: "draft" as const,
     };
+  }),
+  createSelectedCatalogDrafts: protectedProcedure.input(z.object({
+    groupId: z.string().min(1),
+    productFolderIds: z.array(z.string().min(1)).min(1).max(50).refine(ids => new Set(ids).size === ids.length, "لا تكرر المنتج نفسه ضمن الاختيار."),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const preview = await previewSelectedCatalogGroup(ctx.user.id, input.groupId);
+    const results = await createSelectedCatalogDrafts({
+      entries: preview.entries,
+      selectedFolderIds: input.productFolderIds,
+      createDraft: entry => createCatalogDraftProduct({
+          productCode: entry.productCode,
+          name: entry.metadata.name,
+          category: preview.group.name,
+          description: entry.metadata.description,
+          sellingPrice: entry.metadata.sellingPrice,
+          sourceReference: entry.sourceReference,
+          createdByUserId: ctx.user.id,
+      }),
+    });
+    return { group: preview.group, results, autoPublished: false as const, autoCreatedVariants: false as const, autoCreatedInventory: false as const, autoAttachedMedia: false as const };
   }),
   createApprovedCatalogColorVariants: protectedProcedure.input(z.object({
     groupId: z.string().min(1),
