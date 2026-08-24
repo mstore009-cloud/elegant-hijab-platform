@@ -6,6 +6,14 @@ export type CatalogProductMetadata = {
   status: "draft";
 };
 
+export type LenientCatalogProductMetadata = {
+  name: string | null;
+  sellingPrice: string | null;
+  description: string | null;
+  sizes: string[];
+  problems: string[];
+};
+
 const knownKeys = new Set(["PRODUCT_NAME_AR", "SELLING_PRICE_IQD", "DESCRIPTION_AR", "SIZES", "PREVIOUS_PRICE_IQD", "PRODUCT_STATUS"]);
 
 export function parseCatalogProductMetadata(content: string): CatalogProductMetadata {
@@ -39,6 +47,37 @@ export function parseCatalogProductMetadata(content: string): CatalogProductMeta
     .map(size => size.trim())
     .filter(Boolean);
   return { name, sellingPrice, description, sizes, status: "draft" };
+}
+
+/**
+ * Extracts every usable field but never rejects the folder, so a staff member
+ * can complete the resulting platform draft.
+ */
+export function parseCatalogProductMetadataLenient(content: string | null): LenientCatalogProductMetadata {
+  if (content === null) return { name: null, sellingPrice: null, description: null, sizes: [], problems: ["product.txt"] };
+  const values = new Map<string, string>();
+  for (const sourceLine of content.replace(/^\uFEFF/, "").split(/\r?\n/)) {
+    const line = sourceLine.trim();
+    const separator = line.indexOf(":");
+    if (!line || line.startsWith("#") || separator < 1) continue;
+    const key = line.slice(0, separator).trim();
+    if (knownKeys.has(key)) values.set(key, line.slice(separator + 1).trim());
+  }
+  const problems: string[] = [];
+  const validText = (key: "PRODUCT_NAME_AR" | "DESCRIPTION_AR") => {
+    const value = values.get(key)?.trim() || "";
+    if (!value || value.startsWith("...")) {
+      problems.push(key === "PRODUCT_NAME_AR" ? "name" : "description");
+      return null;
+    }
+    return value;
+  };
+  const rawPrice = values.get("SELLING_PRICE_IQD")?.trim() || "";
+  const sellingPrice = /^\d+(\.\d{1,2})?$/.test(rawPrice) ? rawPrice : null;
+  if (!sellingPrice) problems.push("sellingPrice");
+  if (!values.has("SIZES")) problems.push("sizes");
+  const sizes = (values.get("SIZES") ?? "").split(",").map(size => size.trim()).filter(Boolean);
+  return { name: validText("PRODUCT_NAME_AR"), sellingPrice, description: validText("DESCRIPTION_AR"), sizes, problems };
 }
 
 export function normalizeApprovedColorNames(colorNames: string[]): string[] {

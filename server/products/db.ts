@@ -1,8 +1,10 @@
 import { and, desc, eq } from "drizzle-orm";
-import { productImportJobs, productMedia, productMediaLifecycleEvents, productVariants, products } from "../../drizzle/schema";
+import { catalogFolderImports, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products } from "../../drizzle/schema";
 import { normalizeApprovedColorNames, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { planOperationalReferenceDetach } from "./operationalMediaLifecycle";
+import { createOperationalImageDerivative } from "../integrations/onedrive/operationalMedia";
+import { storagePut } from "../storage";
 
 export async function listProducts() {
   const db = await getDb();
@@ -13,16 +15,27 @@ export async function listProducts() {
 export async function listProductsWithPrimaryOperationalMedia() {
   const db = await getDb();
   if (!db) return [];
-  const [productList, mediaList] = await Promise.all([
+  const [productList, mediaList, folderImports] = await Promise.all([
     db.select().from(products).orderBy(desc(products.updatedAt)),
     db.select().from(productMedia).orderBy(productMedia.sortOrder),
+    db.select().from(catalogFolderImports),
   ]);
   const primaryMediaByProductId = new Map<number, typeof mediaList[number]>();
   for (const media of mediaList) {
     if (!media.storageKey || primaryMediaByProductId.has(media.productId)) continue;
     primaryMediaByProductId.set(media.productId, media);
   }
-  return productList.map(product => ({ product, primaryMedia: primaryMediaByProductId.get(product.id) ?? null }));
+  const missingByProductId = new Map(folderImports.filter(entry => entry.linkedProductId).map(entry => [entry.linkedProductId!, parseMissingFields(entry.missingFields)]));
+  return productList.map(product => ({ product, primaryMedia: primaryMediaByProductId.get(product.id) ?? null, missingFields: missingByProductId.get(product.id) ?? [] }));
+}
+
+export function parseMissingFields(value: string | null) {
+  try {
+    const parsed = JSON.parse(value ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((field): field is string => typeof field === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export function isPublicProductStatus(status: string) {
@@ -51,7 +64,97 @@ export async function getProductWithVariants(productId: number) {
   const result = await db.select().from(products).where(eq(products.id, productId)).limit(1);
   if (!result[0]) return null;
   const variants = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
-  return { product: result[0], variants };
+  const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
+  return { product: result[0], variants, missingFields: parseMissingFields(folderImport?.missingFields ?? null) };
+}
+
+export async function updateProductDetails(input: {
+  productId: number;
+  name?: string;
+  description?: string | null;
+  sellingPrice?: string;
+  sizeLabels?: string[];
+  status?: "draft" | "needs_review" | "ready" | "archived";
+  actorUserId: number;
+  source: "products_ui" | "whatsapp";
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, input.productId)).limit(1);
+  const priorMissing = parseMissingFields(folderImport?.missingFields ?? null);
+  const nextMissing = new Set(priorMissing);
+  const changes: Record<string, unknown> = {};
+  const patch: Partial<typeof products.$inferInsert> = {};
+  if (input.name !== undefined) {
+    patch.name = input.name;
+    changes.name = input.name;
+    if (input.name.trim()) nextMissing.delete("name");
+  }
+  if (input.description !== undefined) {
+    patch.description = input.description;
+    changes.descriptionUpdated = true;
+    if (input.description?.trim()) nextMissing.delete("description");
+    else nextMissing.add("description");
+  }
+  if (input.sellingPrice !== undefined) {
+    patch.sellingPrice = input.sellingPrice;
+    changes.sellingPrice = input.sellingPrice;
+    if (Number(input.sellingPrice) > 0) nextMissing.delete("sellingPrice");
+    else nextMissing.add("sellingPrice");
+  }
+  if (input.sizeLabels !== undefined) {
+    patch.sizeLabels = JSON.stringify(input.sizeLabels);
+    changes.sizeLabels = input.sizeLabels;
+    nextMissing.delete("sizes");
+  }
+  if (input.status !== undefined) {
+    patch.status = input.status;
+    changes.status = input.status;
+  }
+  if (Object.keys(patch).length === 0) return { product, missingFields: Array.from(nextMissing) };
+  await db.transaction(async tx => {
+    await tx.update(products).set(patch).where(eq(products.id, input.productId));
+    if (folderImport) await tx.update(catalogFolderImports).set({ missingFields: JSON.stringify(Array.from(nextMissing)), state: "needs_review" }).where(eq(catalogFolderImports.id, folderImport.id));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: input.source, action: "details_updated", changes: JSON.stringify(changes) });
+  });
+  const [updated] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  return { product: updated!, missingFields: Array.from(nextMissing) };
+}
+
+export async function addManualProductImage(input: { productId: number; fileName: string; bytes: Buffer; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const derivative = await createOperationalImageDerivative(input.bytes);
+  const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-") || "image";
+  const uploaded = await storagePut(`products/${input.productId}/manual/${Date.now()}-${safeName}.webp`, derivative.bytes, "image/webp");
+  const existingMedia = await db.select({ id: productMedia.id }).from(productMedia).where(eq(productMedia.productId, input.productId));
+  const result = await db.transaction(async tx => {
+    const created = await tx.insert(productMedia).values({
+      productId: input.productId,
+      source: "manual",
+      mediaType: "image",
+      originalUrl: null,
+      storageKey: uploaded.key,
+      operationalMetadata: JSON.stringify({ ...derivative.metadata, source: "manual_product_upload" }),
+      originalFileName: input.fileName,
+      colorVerified: false,
+      sortOrder: existingMedia.length,
+    });
+    const mediaId = Number(created[0].insertId);
+    await tx.insert(productOperations).values({
+      productId: input.productId,
+      actorUserId: input.actorUserId,
+      source: "products_ui",
+      action: "manual_image_added",
+      changes: JSON.stringify({ mediaId, fileName: input.fileName, format: "webp" }),
+    });
+    return mediaId;
+  });
+  return { mediaId: result, storageKey: uploaded.key, format: "webp" as const };
 }
 
 export async function getProductMedia(productId: number) {
@@ -298,11 +401,22 @@ export async function permanentlyDeleteProduct(input: { productId: number; expec
   return { productId: input.productId, releasedMediaReferences: linkedOperationalMedia.length, originalFilesModified: false as const };
 }
 
-export async function updateVariantInventory(variantId: number, inventoryQuantity: number) {
+export async function updateVariantInventory(input: { variantId: number; inventoryQuantity: number; actorUserId?: number; source?: "products_ui" | "whatsapp" }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const availability: "available" | "low_stock" | "out_of_stock" = inventoryQuantity <= 0 ? "out_of_stock" : inventoryQuantity <= 3 ? "low_stock" : "available";
-  await db.update(productVariants).set({ inventoryQuantity, availability }).where(eq(productVariants.id, variantId));
+  const [variant] = await db.select().from(productVariants).where(eq(productVariants.id, input.variantId)).limit(1);
+  if (!variant) throw new Error("متغير المنتج غير موجود.");
+  const availability: "available" | "low_stock" | "out_of_stock" = input.inventoryQuantity <= 0 ? "out_of_stock" : input.inventoryQuantity <= 3 ? "low_stock" : "available";
+  await db.transaction(async tx => {
+    await tx.update(productVariants).set({ inventoryQuantity: input.inventoryQuantity, availability }).where(eq(productVariants.id, input.variantId));
+    if (input.actorUserId) await tx.insert(productOperations).values({
+      productId: variant.productId,
+      actorUserId: input.actorUserId,
+      source: input.source ?? "products_ui",
+      action: "inventory_updated",
+      changes: JSON.stringify({ variantId: input.variantId, inventoryQuantity: input.inventoryQuantity, availability }),
+    });
+  });
 }
 
 export async function createImportJob(input: {

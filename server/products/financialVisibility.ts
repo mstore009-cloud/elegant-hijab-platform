@@ -4,6 +4,7 @@ export type ProductWithFinancials = {
   name: string;
   category: string | null;
   description: string | null;
+  sizeLabels: string | null;
   status: string;
   sellingPrice: string;
   costPrice: string | null;

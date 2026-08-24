@@ -70,6 +70,7 @@ export const products = mysqlTable(
     name: varchar("name", { length: 220 }).notNull(),
     category: varchar("category", { length: 120 }),
     description: text("description"),
+    sizeLabels: text("sizeLabels"),
     status: mysqlEnum("status", ["draft", "needs_review", "ready", "active", "archived"]).default("draft").notNull(),
     sellingPrice: decimal("sellingPrice", { precision: 12, scale: 2 }).notNull(),
     costPrice: decimal("costPrice", { precision: 12, scale: 2 }),
@@ -191,9 +192,72 @@ export const productImportJobs = mysqlTable(
   table => [index("import_job_status_idx").on(table.status), index("import_job_product_idx").on(table.linkedProductId)],
 );
 
+/** One background Catalog scan configuration per owner connection. */
+export const catalogSyncSettings = mysqlTable(
+  "catalog_sync_settings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    ownerUserId: int("ownerUserId").notNull().unique().references(() => users.id),
+    scheduleCronTaskUid: varchar("scheduleCronTaskUid", { length: 65 }),
+    cronExpression: varchar("cronExpression", { length: 80 }).default("0 */10 * * * *").notNull(),
+    isEnabled: boolean("isEnabled").default(true).notNull(),
+    lastStartedAt: timestamp("lastStartedAt"),
+    lastCompletedAt: timestamp("lastCompletedAt"),
+    lastSummary: text("lastSummary"),
+    lastError: text("lastError"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("catalog_sync_enabled_idx").on(table.isEnabled)],
+);
+
+/** A durable read-only observation of every Catalog product folder. */
+export const catalogFolderImports = mysqlTable(
+  "catalog_folder_imports",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    ownerUserId: int("ownerUserId").notNull().references(() => users.id),
+    productFolderId: varchar("productFolderId", { length: 255 }).notNull(),
+    groupName: varchar("groupName", { length: 120 }).notNull(),
+    productCode: varchar("productCode", { length: 80 }).notNull(),
+    sourceReference: varchar("sourceReference", { length: 512 }).notNull(),
+    state: mysqlEnum("state", ["discovered", "draft_created", "already_exists", "needs_review", "failed"]).notNull(),
+    linkedProductId: int("linkedProductId").references(() => products.id),
+    missingFields: text("missingFields"),
+    imageCount: int("imageCount").default(0).notNull(),
+    lastError: text("lastError"),
+    lastScannedAt: timestamp("lastScannedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("catalog_folder_owner_unique").on(table.ownerUserId, table.productFolderId),
+    index("catalog_folder_state_idx").on(table.state),
+    index("catalog_folder_product_idx").on(table.linkedProductId),
+  ],
+);
+
+/** Unified audit trail for UI, background, and future WhatsApp product changes. */
+export const productOperations = mysqlTable(
+  "product_operations",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    productId: int("productId").notNull().references(() => products.id),
+    actorUserId: int("actorUserId").references(() => users.id),
+    source: mysqlEnum("source", ["catalog_scan", "products_ui", "whatsapp"]).notNull(),
+    action: varchar("action", { length: 80 }).notNull(),
+    changes: text("changes").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("product_operations_product_idx").on(table.productId), index("product_operations_source_idx").on(table.source)],
+);
+
 export type Product = typeof products.$inferSelect;
 export type ProductVariant = typeof productVariants.$inferSelect;
 export type ProductImportJob = typeof productImportJobs.$inferSelect;
+export type CatalogSyncSetting = typeof catalogSyncSettings.$inferSelect;
+export type CatalogFolderImport = typeof catalogFolderImports.$inferSelect;
+export type ProductOperation = typeof productOperations.$inferSelect;
 export type ProductMediaLifecycleEvent = typeof productMediaLifecycleEvents.$inferSelect;
 export type ContentPost = typeof contentPosts.$inferSelect;
 export type ContentPostMedia = typeof contentPostMedia.$inferSelect;

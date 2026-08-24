@@ -6,6 +6,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { registerOneDriveOAuthRoutes } from "../integrations/onedrive/oauthRoutes";
+import { handleScheduledCatalogScan } from "../products/catalogScheduledHandler";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -38,6 +39,7 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerOneDriveOAuthRoutes(app);
+  app.post("/api/scheduled/catalog-scan", handleScheduledCatalogScan);
   // tRPC API
   app.use(
     "/api/trpc",

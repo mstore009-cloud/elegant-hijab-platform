@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { createImportJob, createProduct, detachProductMediaReference, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, updateVariantInventory } from "../products/db";
+import { addManualProductImage, createImportJob, createProduct, detachProductMediaReference, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -25,10 +25,11 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.inventory.update");
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
     const productList = await listProductsWithPrimaryOperationalMedia();
-    return Promise.all(productList.map(async ({ product, primaryMedia }) => ({
+    return Promise.all(productList.map(async ({ product, primaryMedia, missingFields }) => ({
       ...presentProductForViewer(product, canViewFinancials),
       primaryImageUrl: primaryMedia?.storageKey ? (await storageGet(primaryMedia.storageKey)).url : null,
       primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
+      missingFields,
     })));
   }),
   byId: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
@@ -37,7 +38,7 @@ export const productsRouter = router({
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
     const media = await getProductMedia(input.productId);
-    return { product: presentProductForViewer(item.product, canViewFinancials), variants: item.variants, media };
+    return { product: presentProductForViewer(item.product, canViewFinancials), variants: item.variants, media, missingFields: item.missingFields };
   }),
   mediaPreviews: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
@@ -45,15 +46,14 @@ export const productsRouter = router({
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
     const media = await getProductMedia(input.productId);
     const oneDriveMedia = media.filter(entry => entry.source === "onedrive" && entry.originalFileName);
-    if (oneDriveMedia.length === 0) return [];
     const variantById = new Map(item.variants.map(variant => [variant.id, variant]));
-    const storedPreviews = await Promise.all(oneDriveMedia
-      .filter(entry => Boolean(entry.storageKey))
+    const storedPreviews = await Promise.all(media
+      .filter(entry => entry.mediaType === "image" && Boolean(entry.storageKey))
       .map(async entry => ({
         mediaId: entry.id,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
         inventoryQuantity: variantById.get(entry.variantId ?? -1)?.inventoryQuantity ?? 0,
-        originalFileName: entry.originalFileName!,
+        originalFileName: entry.originalFileName ?? "صورة المنتج",
         dataUrl: (await storageGet(entry.storageKey!)).url,
         rendition: "operational_webp" as const,
       })));
@@ -126,8 +126,31 @@ export const productsRouter = router({
   }),
   updateInventory: protectedProcedure.input(z.object({ variantId: z.number().int().positive(), inventoryQuantity: z.number().int().min(0).max(100000) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
-    await updateVariantInventory(input.variantId, input.inventoryQuantity);
+    await updateVariantInventory({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
     return { success: true };
+  }),
+  updateDetails: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    name: z.string().trim().min(2).max(220).optional(),
+    description: z.string().trim().max(4000).nullable().optional(),
+    sellingPrice: moneyString.optional(),
+    sizeLabels: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+    status: z.enum(["draft", "needs_review", "ready", "archived"]).optional(),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const { productId, ...patch } = input;
+    return updateProductDetails({ productId, ...patch, actorUserId: ctx.user.id, source: "products_ui" });
+  }),
+  uploadManualImage: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    fileName: z.string().trim().min(1).max(255),
+    mimeType: z.string().regex(/^image\/(jpeg|png|webp)$/),
+    base64Data: z.string().min(1),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const bytes = Buffer.from(input.base64Data, "base64");
+    if (bytes.length === 0 || bytes.length > 25 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "حجم الصورة يجب أن يكون بين 1 بايت و25 ميغابايت." });
+    return addManualProductImage({ productId: input.productId, fileName: input.fileName, bytes, actorUserId: ctx.user.id });
   }),
   importJobs: router({
     list: protectedProcedure.query(async ({ ctx }) => {
