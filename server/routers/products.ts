@@ -157,11 +157,13 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     return assignProductMediaColor({ ...input, actorUserId: ctx.user.id });
   }),
-  analyzeColors: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+  analyzeColors: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaIds: z.array(z.number().int().positive()).min(1).max(12).optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     const product = await getProductWithVariants(input.productId);
     if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
-    const media = await getProductMedia(input.productId);
+    const allMedia = await getProductMedia(input.productId);
+    const media = input.mediaIds ? allMedia.filter(entry => input.mediaIds!.includes(entry.id)) : allMedia;
+    if (input.mediaIds && media.length !== input.mediaIds.length) throw new TRPCError({ code: "BAD_REQUEST", message: "تتضمن الصور المختارة صورة لا تنتمي إلى هذا المنتج." });
     try {
       return await analyzeStoredProductColors({ productCode: product.product.productCode, media });
     } catch (error) {

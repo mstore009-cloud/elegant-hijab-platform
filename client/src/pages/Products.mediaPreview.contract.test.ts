@@ -12,6 +12,10 @@ describe("عقد الصور والألوان والمخزون في واجهة ا
     expect(source).toContain("trpc.products.analyzeColors.useMutation");
     expect(source).toContain("const suggestionMedia = suggestion.mediaIds.map(mediaId => mediaById.get(mediaId))");
     expect(source).toContain("صور مرتبطة");
+    expect(source).toContain("selectedMediaIds");
+    expect(source).toContain("reanalyzeSelectedMedia");
+    expect(source).toContain("نقل إلى غير مؤكد");
+    expect(source).toContain("حلل المحدد");
     expect(source).toContain("trpc.products.addColor.useMutation");
     expect(source).toContain("trpc.products.saveInventory.useMutation");
   });
