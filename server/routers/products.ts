@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -35,11 +35,23 @@ export const productsRouter = router({
   }),
   byId: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
+    await refreshProductReviewStatus({ productId: input.productId, actorUserId: ctx.user.id });
     const item = await getProductWithVariants(input.productId);
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
     const media = await getProductMedia(input.productId);
-    return { product: presentProductForViewer(item.product, canViewFinancials), variants: item.variants, media, missingFields: item.missingFields, pendingColorSuggestion: item.pendingColorSuggestion };
+    return {
+      product: presentProductForViewer(item.product, canViewFinancials),
+      variants: item.variants,
+      media,
+      missingFields: item.missingFields,
+      pendingColorSuggestion: item.pendingColorSuggestion,
+      reviewReadiness: item.reviewReadiness,
+      publishEligibility: {
+        eligible: item.reviewReadiness.ready,
+        message: item.reviewReadiness.ready ? "المنتج مكتمل وجاهز لقرار النشر عند اعتماد آلية التفعيل." : "المنتج غير قابل للنشر قبل إكمال عناصر الجهوزية الظاهرة أدناه.",
+      },
+    };
   }),
   mediaPreviews: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");

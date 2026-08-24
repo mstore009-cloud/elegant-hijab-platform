@@ -47,6 +47,9 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("فتح الفيديو الأصلي في OneDrive");
     expect(source).toContain("video.playbackReady && video.dataUrl");
     expect(source).toContain("aspect-[9/16]");
+    expect(source).toContain("جاهز للمراجعة");
+    expect(source).toContain("قابل للنشر بعد اعتماد آلية التفعيل");
+    expect(source).toContain("غير قابل للنشر بعد");
     expect(source).not.toContain("حفظ المخزون");
   });
 });
