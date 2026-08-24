@@ -6,6 +6,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import DashboardLayout from "./components/DashboardLayout";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import AccessControl from "./pages/AccessControl";
+import ContentPosts from "./pages/ContentPosts";
 import OperationsOverview from "./pages/OperationsOverview";
 import Products from "./pages/Products";
 
@@ -16,6 +17,7 @@ function Router() {
       <Route path={"/"} component={OperationsOverview} />
       <Route path={"/permissions"} component={AccessControl} />
       <Route path={"/products"} component={Products} />
+      <Route path={"/content-posts"} component={ContentPosts} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

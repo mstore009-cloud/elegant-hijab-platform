@@ -137,6 +137,43 @@ export const productMediaLifecycleEvents = mysqlTable(
   table => [index("media_lifecycle_product_idx").on(table.productId), index("media_lifecycle_media_idx").on(table.mediaId)],
 );
 
+/**
+ * Draft content remains separate from the product catalogue. A post may refer
+ * to a product, but its added media never becomes product media by default.
+ */
+export const contentPosts = mysqlTable(
+  "content_posts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    productId: int("productId").references(() => products.id),
+    status: mysqlEnum("status", ["draft"]).default("draft").notNull(),
+    caption: text("caption"),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("content_post_product_idx").on(table.productId), index("content_post_creator_idx").on(table.createdByUserId)],
+);
+
+/**
+ * Manually added post media points to its own storage key. A product reference
+ * is created only after an explicit, separately authorized attach action.
+ */
+export const contentPostMedia = mysqlTable(
+  "content_post_media",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    postId: int("postId").notNull().references(() => contentPosts.id),
+    storageKey: varchar("storageKey", { length: 512 }).notNull(),
+    originalFileName: varchar("originalFileName", { length: 255 }).notNull(),
+    mimeType: varchar("mimeType", { length: 120 }).notNull(),
+    byteSize: int("byteSize").notNull(),
+    linkedProductMediaId: int("linkedProductMediaId").references(() => productMedia.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("content_post_media_post_idx").on(table.postId), index("content_post_media_product_media_idx").on(table.linkedProductMediaId)],
+);
+
 export const productImportJobs = mysqlTable(
   "product_import_jobs",
   {
@@ -158,6 +195,8 @@ export type Product = typeof products.$inferSelect;
 export type ProductVariant = typeof productVariants.$inferSelect;
 export type ProductImportJob = typeof productImportJobs.$inferSelect;
 export type ProductMediaLifecycleEvent = typeof productMediaLifecycleEvents.$inferSelect;
+export type ContentPost = typeof contentPosts.$inferSelect;
+export type ContentPostMedia = typeof contentPostMedia.$inferSelect;
 
 export const oneDriveOAuthStates = mysqlTable(
   "onedrive_oauth_states",
