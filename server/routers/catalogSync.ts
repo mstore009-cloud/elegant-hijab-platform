@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { createHeartbeatJob, updateHeartbeatJob } from "../_core/heartbeat";
 import { protectedProcedure, router } from "../_core/trpc";
-import { scanCatalogForOwner } from "../products/catalogAutomation";
+import { listDeletedCatalogProducts, restoreDeletedCatalogProduct, scanCatalogForOwner } from "../products/catalogAutomation";
 import { getOrCreateCatalogSyncSettings, markCatalogSyncCompleted, markCatalogSyncFailed, markCatalogSyncStarted, persistCatalogSyncTask } from "../products/catalogSyncSettings";
 
 const cronSchema = z.string().trim().regex(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+$/, "اكتب التكرار بصيغة ستة أجزاء (ثانية، دقيقة، ساعة، يوم، شهر، أسبوع). ");
@@ -32,6 +32,18 @@ export const catalogSyncRouter = router({
   runNow: protectedProcedure.mutation(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
     return runAndRecord(ctx.user.id);
+  }),
+  deletedProducts: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    return listDeletedCatalogProducts(ctx.user.id);
+  }),
+  restoreDeletedProduct: protectedProcedure.input(z.object({ productFolderId: z.string().trim().min(1).max(255) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    try {
+      return await restoreDeletedCatalogProduct({ ownerUserId: ctx.user.id, productFolderId: input.productFolderId });
+    } catch (error) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذرت استعادة المنتج من Catalog." });
+    }
   }),
   activate: protectedProcedure.input(z.object({ cronExpression: cronSchema.default("0 */10 * * * *") })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");

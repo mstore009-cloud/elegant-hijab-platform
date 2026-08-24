@@ -217,3 +217,49 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
   }
   return summary;
 }
+
+export async function listDeletedCatalogProducts(ownerUserId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  return db.select({
+    id: catalogFolderImports.id,
+    productFolderId: catalogFolderImports.productFolderId,
+    groupName: catalogFolderImports.groupName,
+    productCode: catalogFolderImports.productCode,
+    sourceReference: catalogFolderImports.sourceReference,
+    imageCount: catalogFolderImports.imageCount,
+    lastScannedAt: catalogFolderImports.lastScannedAt,
+  }).from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, ownerUserId), eq(catalogFolderImports.lastError, "deleted_by_user"))).orderBy(desc(catalogFolderImports.lastScannedAt));
+}
+
+export async function restoreDeletedCatalogProduct(input: { ownerUserId: number; productFolderId: string }) {
+  const connection = await getUsableCatalogConnection(input.ownerUserId);
+  if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) throw new Error("مرجع Catalog المفوض غير جاهز للاستعادة.");
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [deleted] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, input.ownerUserId), eq(catalogFolderImports.productFolderId, input.productFolderId), eq(catalogFolderImports.lastError, "deleted_by_user"))).limit(1);
+  if (!deleted) throw new Error("لا يوجد منتج محذوف قابل للاستعادة بهذا المرجع.");
+  const [existing] = await db.select().from(products).where(eq(products.productCode, deleted.productCode)).limit(1);
+  if (existing) throw new Error("المنتج موجود بالفعل داخل المنصة؛ لا يحتاج إلى استعادة.");
+
+  const groups = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId })).filter(item => item.kind === "folder");
+  const group = groups.find(item => item.name === deleted.groupName);
+  if (!group) throw new Error("لم تعد مجموعة المنتج موجودة في Catalog.");
+  const folders = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: group.id })).filter(item => item.kind === "folder");
+  const folder = folders.find(item => item.id === deleted.productFolderId);
+  if (!folder) throw new Error("لم يعد مجلد المنتج موجودًا في Catalog.");
+  const contents = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: folder.id });
+  const images = contents.filter(isImage);
+  const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
+  const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
+  const created = await createDraftFromFolder({ ownerUserId: input.ownerUserId, groupName: group.name, folder, images, metadataText });
+  await upsertFolderObservation({ ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source: sourceReference(group.name, folder.name), state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, lastError: null });
+  if (images.length > 0) {
+    await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: created.productId });
+    const freshDb = await getDb();
+    if (freshDb) await ensureAutomaticColorSuggestion({ db: freshDb, productId: created.productId, actorUserId: input.ownerUserId });
+  }
+  const freshDb = await getDb();
+  if (freshDb) await freshDb.insert(productOperations).values({ productId: created.productId, actorUserId: input.ownerUserId, source: "products_ui", action: "restored_from_catalog", changes: JSON.stringify({ productFolderId: folder.id, sourceReference: sourceReference(group.name, folder.name) }) });
+  return { productId: created.productId, productCode: folder.name, state: "draft" as const, imageCount: images.length };
+}

@@ -34,6 +34,11 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("هل أنت متأكد من حذف اللون؟");
     expect(source).toContain("نعم، احذف اللون");
     expect(source).not.toContain("اكتب اسم اللون نفسه");
+    expect(source).toContain("trpc.catalogSync.deletedProducts.useQuery");
+    expect(source).toContain("trpc.catalogSync.restoreDeletedProduct.useMutation");
+    expect(source).toContain("استعادة من Catalog");
+    expect(source).toContain("استعادة كمسودة");
+    expect(source).toContain("نعم، استعده كمسودة");
     expect(source).not.toContain("حفظ المخزون");
   });
 });
