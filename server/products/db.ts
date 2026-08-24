@@ -85,13 +85,16 @@ export async function getProductWithVariants(productId: number) {
   return { product: result[0], variants, missingFields, pendingColorSuggestion };
 }
 
-export async function generateAutomaticColorSuggestion(input: { productId: number; actorUserId: number }) {
+export async function generateAutomaticColorSuggestion(input: { productId: number; actorUserId: number; mediaIds?: number[] }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
   if (!product) throw new Error("المنتج غير موجود.");
   const media = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
-  const suggestion = await analyzeStoredProductColors({ productCode: product.productCode, media });
+  const requestedIds = input.mediaIds ? new Set(input.mediaIds) : null;
+  const eligibleMedia = media.filter(item => Boolean(item.storageKey) && !item.variantId && !item.colorVerified && (!requestedIds || requestedIds.has(item.id)));
+  if (eligibleMedia.length === 0) return null;
+  const suggestion = await analyzeStoredProductColors({ productCode: product.productCode, media: eligibleMedia });
   const inserted = await db.insert(productOperations).values({
     productId: input.productId,
     actorUserId: input.actorUserId,

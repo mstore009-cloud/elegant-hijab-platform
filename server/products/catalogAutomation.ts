@@ -32,11 +32,12 @@ function hasUnreviewedAutomaticSuggestion(operations: Array<{ id: number; action
 
 async function ensureAutomaticColorSuggestion(input: { db: NonNullable<Awaited<ReturnType<typeof getDb>>>; productId: number; actorUserId: number }) {
   const media = await input.db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
-  if (!media.some(item => item.storageKey)) return;
+  const newUnassignedMediaIds = media.filter(item => Boolean(item.storageKey) && !item.variantId && !item.colorVerified).map(item => item.id);
+  if (newUnassignedMediaIds.length === 0) return;
   const operations = await input.db.select().from(productOperations).where(eq(productOperations.productId, input.productId)).orderBy(desc(productOperations.createdAt), desc(productOperations.id));
   if (hasUnreviewedAutomaticSuggestion(operations)) return;
   try {
-    await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: input.actorUserId });
+    await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: input.actorUserId, mediaIds: newUnassignedMediaIds });
   } catch (error) {
     await input.db.insert(productOperations).values({
       productId: input.productId,

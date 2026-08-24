@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { applyAutomaticColorSuggestionReview, excludeProductMediaFromColorReview, getProductWithVariants, recordAutomaticColorSuggestionDecision, updateProductDetails } from "./db";
+import { addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductWithVariants, recordAutomaticColorSuggestionDecision, updateProductDetails } from "./db";
 
 describe("عمليات المنتج الموحدة", () => {
   it("يكمل حقول المسودة ويسجل التعديل بصيغة يمكن لواجهة المنتجات وWhatsApp مشاركتها", async () => {
@@ -118,6 +118,34 @@ describe("عمليات المنتج الموحدة", () => {
       const reviewed = await getProductWithVariants(productId);
       expect(reviewed?.pendingColorSuggestion).toBeNull();
       expect(reviewed?.product.status).toBe("draft");
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productMedia).where(eq(productMedia.productId, productId));
+        await db.delete(productVariants).where(eq(productVariants.productId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 15_000);
+
+  it("لا يعيد تحليل الصور المرتبطة بلون معتمد عند أي فحص لاحق", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار ثبات اللون المعتمد.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار ثبات اللون المعتمد.");
+    const productCode = `TST-LOCKED-COLOR-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ productCode, name: "منتج لون معتمد", category: "اختبار", sizeLabels: null, status: "draft", sellingPrice: "1.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      const media = await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: "products/test/locked.webp", originalFileName: "locked.webp", colorVerified: false });
+      const mediaId = Number(media[0].insertId);
+      await addProductColor({ productId, colorName: "كحلي", actorUserId: owner.id, source: "products_ui" });
+      await assignProductMediaColor({ productId, mediaId, colorName: "كحلي", actorUserId: owner.id });
+
+      expect(await generateAutomaticColorSuggestion({ productId, actorUserId: owner.id })).toBeNull();
+      const generated = await db.select().from(productOperations).where(and(eq(productOperations.productId, productId), eq(productOperations.action, "color_suggestions_generated")));
+      expect(generated).toEqual([]);
     } finally {
       if (productId) {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));

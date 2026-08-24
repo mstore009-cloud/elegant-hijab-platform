@@ -198,7 +198,9 @@ export const productsRouter = router({
   }),
   generateAutomaticColorSuggestion: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
-    return generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: ctx.user.id });
+    const generated = await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: ctx.user.id });
+    if (!generated) throw new TRPCError({ code: "BAD_REQUEST", message: "لا توجد صور جديدة أو غير مسندة تحتاج إلى تحليل." });
+    return generated;
   }),
   reviewAutomaticColorSuggestion: protectedProcedure.input(z.object({ productId: z.number().int().positive(), suggestionOperationId: z.number().int().positive(), decision: z.enum(["accepted", "rejected"]) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
