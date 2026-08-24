@@ -28,6 +28,10 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("remainingForFreeDelivery");
     expect(source).toContain("توصيل مجاني للطلبات الكبيرة");
     expect(source).toContain("freeDeliveryEnabled");
+    expect(source).toContain("احتفال التوصيل المجاني");
+    expect(source).toContain("celebrating");
+    expect(source).toContain("معلومة عن سياسة التوصيل المجاني");
+    expect(source).toContain("الخصم لا يغير هذه العتبة");
     expect(source).not.toContain("الدفع الإلكتروني");
   });
 });
