@@ -220,11 +220,13 @@ export default function Products() {
     if (!pending) return;
     for (const group of pending.suggestion.colorGroups) await createColor(group.colorNameArabic, group.mediaIds);
     await reviewAutomaticSuggestion.mutateAsync({ productId: pending ? detail!.product.id : 0, suggestionOperationId: pending.operationId, decision: "accepted" });
+    setSuggestions([]);
   };
   const rejectAutomaticSuggestion = () => {
     const pending = detail?.pendingColorSuggestion;
     if (!pending || !detail) return;
     reviewAutomaticSuggestion.mutate({ productId: detail.product.id, suggestionOperationId: pending.operationId, decision: "rejected" });
+    setSuggestions([]);
   };
 
   const detail = selectedProduct.data;
