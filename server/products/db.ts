@@ -76,7 +76,7 @@ export async function refreshProductReviewStatus(input: { productId: number; act
   const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
   if (!product) throw new Error("المنتج غير موجود.");
   const readiness = await getProductReviewReadiness(input.productId);
-  const nextStatus = readiness.ready ? "ready" : product.status === "ready" ? "needs_review" : product.status;
+  const nextStatus = readiness.ready ? (product.status === "active" ? "active" : "ready") : ["ready", "active"].includes(product.status) ? "needs_review" : product.status;
   if (nextStatus !== product.status) {
     await db.transaction(async tx => {
       await tx.update(products).set({ status: nextStatus }).where(eq(products.id, input.productId));
@@ -84,6 +84,22 @@ export async function refreshProductReviewStatus(input: { productId: number; act
     });
   }
   return { status: nextStatus, ...readiness };
+}
+
+export async function activateReadyProduct(input: { productId: number; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const readiness = await getProductReviewReadiness(input.productId);
+  if (!readiness.ready) throw new Error(`لا يمكن اعتماد المنتج قبل إكمال التالي: ${readiness.reasons.join("، ")}`);
+  if (product.status !== "active") {
+    await db.transaction(async tx => {
+      await tx.update(products).set({ status: "active" }).where(eq(products.id, input.productId));
+      await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "product_activated", changes: JSON.stringify({ priorStatus: product.status, readinessVerified: true }) });
+    });
+  }
+  return { status: "active" as const };
 }
 
 export function isPublicProductStatus(status: string) {

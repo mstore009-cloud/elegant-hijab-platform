@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -49,7 +49,7 @@ export const productsRouter = router({
       reviewReadiness: item.reviewReadiness,
       publishEligibility: {
         eligible: item.reviewReadiness.ready,
-        message: item.reviewReadiness.ready ? "المنتج مكتمل وجاهز لقرار النشر عند اعتماد آلية التفعيل." : "المنتج غير قابل للنشر قبل إكمال عناصر الجهوزية الظاهرة أدناه.",
+        message: item.product.status === "active" ? "المنتج نشط في الكتالوج." : item.reviewReadiness.ready ? "المنتج مكتمل وجاهز لاعتماد النشر." : "المنتج غير قابل للنشر قبل إكمال عناصر الجهوزية الظاهرة أدناه.",
       },
     };
   }),
@@ -170,6 +170,10 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     const { productId, ...patch } = input;
     return updateProductDetails({ productId, ...patch, actorUserId: ctx.user.id, source: "products_ui" });
+  }),
+  activate: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return activateReadyProduct({ productId: input.productId, actorUserId: ctx.user.id });
   }),
   addColor: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),

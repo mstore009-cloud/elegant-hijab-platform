@@ -50,6 +50,7 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("جاهز للمراجعة");
     expect(source).toContain("قابل للنشر بعد اعتماد آلية التفعيل");
     expect(source).toContain("غير قابل للنشر بعد");
+    expect(source).toContain("اعتماد المنتج");
     expect(source).not.toContain("حفظ المخزون");
   });
 });

@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductReviewReadiness, getProductWithVariants, recordAutomaticColorSuggestionDecision, saveProductColorInventory, updateProductDetails } from "./db";
+import { activateReadyProduct, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductReviewReadiness, getProductWithVariants, recordAutomaticColorSuggestionDecision, saveProductColorInventory, updateProductDetails } from "./db";
 
 describe("عمليات المنتج الموحدة", () => {
   it("يكمل حقول المسودة ويسجل التعديل بصيغة يمكن لواجهة المنتجات وWhatsApp مشاركتها", async () => {
@@ -176,6 +176,9 @@ describe("عمليات المنتج الموحدة", () => {
       expect(await getProductReviewReadiness(productId)).toEqual({ ready: true, reasons: [] });
       const [readyProduct] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
       expect(readyProduct?.status).toBe("ready");
+      await expect(activateReadyProduct({ productId, actorUserId: owner.id })).resolves.toEqual({ status: "active" });
+      const [activeProduct] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      expect(activeProduct?.status).toBe("active");
       await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: `products/test/${productCode}-new.webp`, originalFileName: "new.webp", colorVerified: false });
       await assignProductMediaColor({ productId, mediaId, colorName: "عنابي", actorUserId: owner.id });
       const [needsReview] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
