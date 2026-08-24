@@ -168,6 +168,11 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
         const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
         const existingProduct = productByCode.get(folder.name);
         const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, ownerUserId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
+        if (!existingProduct && priorFolder?.lastError === "deleted_by_user") {
+          await upsertFolderObservation({ ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
+          summary.existing += 1;
+          continue;
+        }
         if (existingProduct) {
           const preserveDraftState = priorFolder?.linkedProductId === existingProduct.id;
           await upsertFolderObservation({

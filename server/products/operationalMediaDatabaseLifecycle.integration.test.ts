@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { productImportJobs, productMedia, productMediaLifecycleEvents, productVariants, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { detachProductMediaReference, permanentlyDeleteProduct } from "./db";
 
@@ -88,15 +88,20 @@ describe("التنفيذ التكاملـي لدورة حياة وسائط ال�
         createdByUserId: owner[0].id,
       });
       importJobId = Number(jobResult[0].insertId);
+      await db.insert(productOperations).values({ productId, actorUserId: owner[0].id, source: "products_ui", action: "test_before_delete", changes: "{}" });
+      await db.insert(catalogFolderImports).values({ ownerUserId: owner[0].id, productFolderId: `folder-${productCode}`, groupName: "اختبار", productCode, sourceReference: `Catalog/اختبار/${productCode}`, state: "draft_created", linkedProductId: productId, missingFields: "[]", imageCount: 2 });
 
       const deletion = await permanentlyDeleteProduct({ productId, expectedProductCode: productCode, createdByUserId: owner[0].id });
       expect(deletion).toEqual({ productId, releasedMediaReferences: 1, originalFilesModified: false });
       expect(await db.select().from(products).where(eq(products.id, productId))).toEqual([]);
       expect(await db.select().from(productVariants).where(eq(productVariants.productId, productId))).toEqual([]);
       expect(await db.select().from(productMedia).where(eq(productMedia.productId, productId))).toEqual([]);
+      expect(await db.select().from(productOperations).where(eq(productOperations.productId, productId))).toEqual([]);
 
       const importJob = await db.select().from(productImportJobs).where(eq(productImportJobs.id, importJobId)).limit(1);
       expect(importJob[0]?.linkedProductId).toBeNull();
+      const folder = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.productCode, productCode)).limit(1);
+      expect(folder[0]).toMatchObject({ linkedProductId: null, state: "needs_review", lastError: "deleted_by_user" });
 
       const purgeEvents = await db.select().from(productMediaLifecycleEvents).where(and(
         eq(productMediaLifecycleEvents.productId, productId),
@@ -106,6 +111,8 @@ describe("التنفيذ التكاملـي لدورة حياة وسائط ال�
     } finally {
       if (importJobId) await db.delete(productImportJobs).where(eq(productImportJobs.id, importJobId));
       if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(catalogFolderImports).where(eq(catalogFolderImports.productCode, productCode));
         await db.delete(productMedia).where(eq(productMedia.productId, productId));
         await db.delete(productVariants).where(eq(productVariants.productId, productId));
         await db.delete(products).where(eq(products.id, productId));

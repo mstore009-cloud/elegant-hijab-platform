@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { addProductColor, assignProductMediaColor, renameProductColor, saveProductColorInventory, saveProductInventory } from "./db";
+import { addProductColor, assignProductMediaColor, deleteProductColor, renameProductColor, saveProductColorInventory, saveProductInventory } from "./db";
 
 describe("تدفق اللون والمخزون", () => {
   it("يعتمد لونًا ويربط صورته ويحفظ مخزون القياسات من دون نشر المسودة", async () => {
@@ -42,6 +42,13 @@ describe("تدفق اللون والمخزون", () => {
       expect(JSON.parse(folder?.missingFields ?? "[]")).not.toContain("inventory");
       const actions = await db.select({ action: productOperations.action }).from(productOperations).where(eq(productOperations.productId, productId));
       expect(actions.map(row => row.action)).toEqual(expect.arrayContaining(["color_added", "media_color_assigned", "inventory_saved", "color_inventory_saved", "color_renamed"]));
+
+      const deleted = await deleteProductColor({ productId, colorName: "نبيذي", actorUserId: owner.id });
+      expect(deleted).toEqual({ colorName: "نبيذي", deletedVariantCount: 2, deletedMediaCount: 1, originalFilesModified: false });
+      expect(await db.select().from(productVariants).where(eq(productVariants.productId, productId))).toEqual([]);
+      expect(await db.select().from(productMedia).where(eq(productMedia.productId, productId))).toEqual([]);
+      const actionsAfterDelete = await db.select({ action: productOperations.action }).from(productOperations).where(eq(productOperations.productId, productId));
+      expect(actionsAfterDelete.map(row => row.action)).toContain("color_deleted");
     } finally {
       if (productId) {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));

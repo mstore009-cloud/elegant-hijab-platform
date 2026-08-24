@@ -8,7 +8,7 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
 
     expect(source).toContain("trpc.products.mediaPreviews.useQuery");
     expect(source).toContain("<ColorCard");
-    expect(source).toContain("تأكيد الألوان المقترحة");
+    expect(source).toContain("اعتماد الاقتراحات المعدلة");
     expect(source).toContain("تعديل المنتج");
     expect(source).toContain("إضافة مجموعة صور");
     expect(source).toContain("حفظ العدد");
@@ -17,6 +17,11 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("إضافة صور");
     expect(source).not.toContain("trpc.products.saveInventory.useMutation");
     expect(source).toContain("detachMedia");
+    expect(source).toContain("trpc.products.deleteColor.useMutation");
+    expect(source).toContain("trpc.products.deletePermanently.useMutation");
+    expect(source).toContain("toggleSuggestionMedia");
+    expect(source).toContain("حذف اللون");
+    expect(source).toContain("حذف المنتج نهائيًا");
     expect(source).not.toContain("حفظ المخزون");
   });
 });

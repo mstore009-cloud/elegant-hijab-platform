@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { catalogFolderImports, productMedia, productOperations, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { excludeProductMediaFromColorReview, getProductWithVariants, recordAutomaticColorSuggestionDecision, updateProductDetails } from "./db";
+import { applyAutomaticColorSuggestionReview, excludeProductMediaFromColorReview, getProductWithVariants, recordAutomaticColorSuggestionDecision, updateProductDetails } from "./db";
 
 describe("عمليات المنتج الموحدة", () => {
   it("يكمل حقول المسودة ويسجل التعديل بصيغة يمكن لواجهة المنتجات وWhatsApp مشاركتها", async () => {
@@ -87,6 +87,42 @@ describe("عمليات المنتج الموحدة", () => {
     } finally {
       if (productId) {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 15_000);
+
+  it("يعتمد اسمًا وصورًا معدلة للاقتراح في عملية واحدة من دون نشر المنتج", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار تحرير اقتراح اللون.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار تحرير اقتراح اللون.");
+    const productCode = `TST-EDIT-COLOR-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ productCode, name: "منتج اقتراح قابل للتحرير", category: "اختبار", sizeLabels: null, status: "draft", sellingPrice: "1.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      const first = await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: "products/test/edit-a.webp", originalFileName: "a.webp", colorVerified: false });
+      const second = await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: "products/test/edit-b.webp", originalFileName: "b.webp", colorVerified: false });
+      const mediaIds = [Number(first[0].insertId), Number(second[0].insertId)];
+      const operation = await db.insert(productOperations).values({ productId, actorUserId: owner.id, source: "catalog_scan", action: "color_suggestions_generated", changes: JSON.stringify({ suggestion: { colorGroups: [{ colorNameArabic: "بني", confidence: 0.8, mediaIds: [mediaIds[0]], reviewNote: "" }, { colorNameArabic: "بيج", confidence: 0.8, mediaIds: [mediaIds[1]], reviewNote: "" }], uncertainMediaIds: [], overallReviewNote: "" } }) });
+      const operationId = Number(operation[0].insertId);
+
+      const applied = await applyAutomaticColorSuggestionReview({ productId, suggestionOperationId: operationId, groups: [{ colorName: "كراميل", mediaIds }], actorUserId: owner.id });
+      expect(applied).toEqual({ success: true, colorCount: 1, mediaCount: 2 });
+      const variants = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
+      expect(variants).toHaveLength(1);
+      expect(variants[0]?.colorName).toBe("كراميل");
+      const linkedMedia = await db.select().from(productMedia).where(eq(productMedia.productId, productId));
+      expect(linkedMedia.every(item => item.variantId === variants[0]?.id && item.colorVerified)).toBe(true);
+      const reviewed = await getProductWithVariants(productId);
+      expect(reviewed?.pendingColorSuggestion).toBeNull();
+      expect(reviewed?.product.status).toBe("draft");
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productMedia).where(eq(productMedia.productId, productId));
+        await db.delete(productVariants).where(eq(productVariants.productId, productId));
         await db.delete(products).where(eq(products.id, productId));
       }
     }

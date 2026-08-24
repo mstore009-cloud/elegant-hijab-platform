@@ -1,5 +1,5 @@
-import { and, desc, eq } from "drizzle-orm";
-import { catalogFolderImports, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products } from "../../drizzle/schema";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { catalogFolderImports, contentPostMedia, contentPosts, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products } from "../../drizzle/schema";
 import { normalizeApprovedColorNames, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { planOperationalReferenceDetach } from "./operationalMediaLifecycle";
@@ -113,6 +113,47 @@ export async function recordAutomaticColorSuggestionDecision(input: { productId:
     changes: JSON.stringify({ suggestionOperationId: input.suggestionOperationId, decision: input.decision }),
   });
   return { success: true };
+}
+
+export async function applyAutomaticColorSuggestionReview(input: {
+  productId: number;
+  suggestionOperationId: number;
+  groups: Array<{ colorName: string; mediaIds: number[] }>;
+  actorUserId: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const [generated] = await db.select().from(productOperations).where(and(eq(productOperations.id, input.suggestionOperationId), eq(productOperations.productId, input.productId))).limit(1);
+  if (!generated || generated.action !== "color_suggestions_generated") throw new Error("اقتراح اللون المطلوب غير موجود.");
+  const operations = await db.select().from(productOperations).where(eq(productOperations.productId, input.productId));
+  const alreadyReviewed = operations.some(operation => operation.action === "color_suggestions_reviewed" && (() => { try { return JSON.parse(operation.changes).suggestionOperationId === input.suggestionOperationId; } catch { return false; } })());
+  if (alreadyReviewed) throw new Error("تمت مراجعة هذا الاقتراح مسبقًا.");
+  const groups = input.groups.map(group => ({ colorName: group.colorName.trim(), mediaIds: Array.from(new Set(group.mediaIds)) })).filter(group => group.colorName && group.mediaIds.length);
+  if (!groups.length) throw new Error("يجب إبقاء مجموعة لون واحدة على الأقل قبل الاعتماد.");
+  const allIds = groups.flatMap(group => group.mediaIds);
+  if (new Set(allIds).size !== allIds.length) throw new Error("لا يمكن وضع الصورة نفسها في أكثر من لون.");
+  const media = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
+  const mediaById = new Map(media.map(item => [item.id, item]));
+  if (allIds.some(mediaId => !mediaById.has(mediaId))) throw new Error("يتضمن الاقتراح صورة لا تنتمي إلى هذا المنتج.");
+  const labels = parseProductSizeLabels(product.sizeLabels);
+  const sizeLabels = labels.length ? labels : [""];
+  await db.transaction(async tx => {
+    let variants = await tx.select().from(productVariants).where(eq(productVariants.productId, input.productId));
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+      const group = groups[groupIndex]!;
+      let colorVariants = variants.filter(variant => variant.colorName === group.colorName);
+      if (!colorVariants.length) {
+        await tx.insert(productVariants).values(sizeLabels.map((sizeLabel, index) => ({ productId: input.productId, colorName: group.colorName, sizeLabel, inventoryQuantity: 0, availability: "out_of_stock" as const, sortOrder: variants.length + groupIndex * sizeLabels.length + index })));
+        colorVariants = await tx.select().from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, group.colorName))).orderBy(productVariants.sortOrder);
+        variants = [...variants, ...colorVariants];
+      }
+      await tx.update(productMedia).set({ variantId: colorVariants[0]!.id, colorVerified: true }).where(and(eq(productMedia.productId, input.productId), inArray(productMedia.id, group.mediaIds)));
+    }
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_suggestions_reviewed", changes: JSON.stringify({ suggestionOperationId: input.suggestionOperationId, decision: "accepted", appliedGroups: groups }) });
+  });
+  return { success: true as const, colorCount: groups.length, mediaCount: allIds.length };
 }
 
 export async function updateProductDetails(input: {
@@ -241,6 +282,28 @@ export async function renameProductColor(input: { productId: number; previousCol
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_renamed", changes: JSON.stringify({ previousColorName, colorName, variantIds: variants.map(variant => variant.id) }) });
   });
   return { updatedVariantCount: variants.length };
+}
+
+export async function deleteProductColor(input: { productId: number; colorName: string; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const colorName = input.colorName.trim();
+  const variants = await db.select().from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, colorName)));
+  if (!variants.length) throw new Error("اللون المطلوب حذفه غير موجود.");
+  const variantIds = variants.map(variant => variant.id);
+  const productMediaRows = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
+  const colorMedia = productMediaRows.filter(media => media.variantId !== null && variantIds.includes(media.variantId));
+  await db.transaction(async tx => {
+    if (colorMedia.length) {
+      const mediaIds = colorMedia.map(media => media.id);
+      await tx.update(contentPostMedia).set({ linkedProductMediaId: null }).where(inArray(contentPostMedia.linkedProductMediaId, mediaIds));
+      await tx.insert(productMediaLifecycleEvents).values(colorMedia.map(media => ({ productId: input.productId, mediaId: media.id, action: "reference_detached" as const, result: "succeeded" as const, createdByUserId: input.actorUserId })));
+      await tx.delete(productMedia).where(inArray(productMedia.id, mediaIds));
+    }
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_deleted", changes: JSON.stringify({ colorName, variantIds, mediaIds: colorMedia.map(media => media.id), originalFilesModified: false }) });
+    await tx.delete(productVariants).where(inArray(productVariants.id, variantIds));
+  });
+  return { colorName, deletedVariantCount: variants.length, deletedMediaCount: colorMedia.length, originalFilesModified: false as const };
 }
 
 export async function assignProductMediaColor(input: { productId: number; mediaId: number; colorName: string; actorUserId: number }) {
@@ -581,7 +644,7 @@ export async function permanentlyDeleteProduct(input: { productId: number; expec
   if (!product[0]) throw new Error("المنتج غير موجود.");
   if (product[0].productCode !== input.expectedProductCode) throw new Error("رمز تأكيد الحذف لا يطابق رمز المنتج.");
   const media = await getProductMedia(input.productId);
-  const linkedOperationalMedia = media.filter(entry => entry.source === "onedrive" && entry.mediaType === "image");
+  const linkedOperationalMedia = media.filter(entry => entry.mediaType === "image");
   await db.transaction(async tx => {
     if (linkedOperationalMedia.length > 0) {
       await tx.insert(productMediaLifecycleEvents).values(linkedOperationalMedia.map(entry => ({
@@ -592,9 +655,13 @@ export async function permanentlyDeleteProduct(input: { productId: number; expec
         createdByUserId: input.createdByUserId,
       })));
     }
+    if (media.length > 0) await tx.update(contentPostMedia).set({ linkedProductMediaId: null }).where(inArray(contentPostMedia.linkedProductMediaId, media.map(entry => entry.id)));
+    await tx.update(contentPosts).set({ productId: null }).where(eq(contentPosts.productId, input.productId));
     await tx.update(productImportJobs).set({ linkedProductId: null }).where(eq(productImportJobs.linkedProductId, input.productId));
+    await tx.update(catalogFolderImports).set({ linkedProductId: null, state: "needs_review", lastError: "deleted_by_user" }).where(eq(catalogFolderImports.linkedProductId, input.productId));
     await tx.delete(productMedia).where(eq(productMedia.productId, input.productId));
     await tx.delete(productVariants).where(eq(productVariants.productId, input.productId));
+    await tx.delete(productOperations).where(eq(productOperations.productId, input.productId));
     await tx.delete(products).where(eq(products.id, input.productId));
   });
   return { productId: input.productId, releasedMediaReferences: linkedOperationalMedia.length, originalFilesModified: false as const };

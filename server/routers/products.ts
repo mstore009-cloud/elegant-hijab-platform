@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { addManualProductImage, addProductColor, assignProductMediaColor, createImportJob, createProduct, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -167,6 +167,15 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     return renameProductColor({ ...input, actorUserId: ctx.user.id });
   }),
+  deleteColor: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    colorName: z.string().trim().min(1).max(100),
+    confirmColorName: z.string().trim().min(1).max(100),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.delete");
+    if (input.colorName !== input.confirmColorName) throw new TRPCError({ code: "BAD_REQUEST", message: "اسم تأكيد الحذف لا يطابق اسم اللون." });
+    return deleteProductColor({ productId: input.productId, colorName: input.colorName, actorUserId: ctx.user.id });
+  }),
   excludeMediaFromColorReview: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
     mediaIds: z.array(z.number().int().positive()).min(1).max(100),
@@ -174,7 +183,7 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     return excludeProductMediaFromColorReview({ ...input, actorUserId: ctx.user.id });
   }),
-  analyzeColors: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaIds: z.array(z.number().int().positive()).min(1).max(12).optional() })).mutation(async ({ ctx, input }) => {
+  analyzeColors: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaIds: z.array(z.number().int().positive()).min(1).max(160).optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     const product = await getProductWithVariants(input.productId);
     if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
@@ -194,6 +203,14 @@ export const productsRouter = router({
   reviewAutomaticColorSuggestion: protectedProcedure.input(z.object({ productId: z.number().int().positive(), suggestionOperationId: z.number().int().positive(), decision: z.enum(["accepted", "rejected"]) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     return recordAutomaticColorSuggestionDecision({ ...input, actorUserId: ctx.user.id });
+  }),
+  applyAutomaticColorSuggestion: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    suggestionOperationId: z.number().int().positive(),
+    groups: z.array(z.object({ colorName: z.string().trim().min(1).max(100), mediaIds: z.array(z.number().int().positive()).min(1).max(160) })).min(1).max(80),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return applyAutomaticColorSuggestionReview({ ...input, actorUserId: ctx.user.id });
   }),
   saveInventory: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
