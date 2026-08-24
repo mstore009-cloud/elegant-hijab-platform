@@ -43,11 +43,11 @@ function graphError(response: Response, payload: { error?: GraphChildrenPayload[
   }));
 }
 
-async function graphFetch(url: string, accessToken: string) {
+async function graphFetch(url: string, accessToken: string, timeoutMs = 20_000) {
   try {
     return await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
@@ -135,6 +135,7 @@ export async function readCatalogOriginalImageBytes(input: {
   const contentResponse = await graphFetch(
     `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.fileId)}/content`,
     accessToken,
+    60_000,
   );
   if (!contentResponse.ok) {
     throw new Error(`تعذر قراءة أصل صورة المنتج من Microsoft Graph (HTTP ${contentResponse.status}).`);
@@ -143,6 +144,26 @@ export async function readCatalogOriginalImageBytes(input: {
   if (!mimeType.startsWith("image/")) throw new Error("ملف OneDrive المحدد ليس صورة صالحة لنسخة تشغيلية.");
   const bytes = Buffer.from(await contentResponse.arrayBuffer());
   if (bytes.length > 25 * 1024 * 1024) throw new Error("حجم الصورة الأصلية أكبر من حد النسخة التشغيلية (25 ميغابايت).");
+  return { bytes, mimeType };
+}
+
+/** Downloads a known approved source video only to create a separate operational playback copy. It never writes to OneDrive. */
+export async function readCatalogOriginalVideoBytes(input: {
+  encryptedAccessToken: string;
+  driveId: string;
+  fileId: string;
+}): Promise<{ bytes: Buffer; mimeType: string }> {
+  const accessToken = decryptOneDriveToken(input.encryptedAccessToken);
+  const contentResponse = await graphFetch(
+    `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.fileId)}/content`,
+    accessToken,
+    120_000,
+  );
+  if (!contentResponse.ok) throw new Error(`تعذر قراءة فيديو المنتج من Microsoft Graph (HTTP ${contentResponse.status}).`);
+  const mimeType = contentResponse.headers.get("content-type")?.split(";")[0] || "application/octet-stream";
+  if (!mimeType.startsWith("video/")) throw new Error("الملف المحدد ليس فيديو صالحًا للنسخة التشغيلية.");
+  const bytes = Buffer.from(await contentResponse.arrayBuffer());
+  if (bytes.length > 100 * 1024 * 1024) throw new Error("فيديو المنتج أكبر من الحد التشغيلي الحالي (100 ميغابايت).");
   return { bytes, mimeType };
 }
 

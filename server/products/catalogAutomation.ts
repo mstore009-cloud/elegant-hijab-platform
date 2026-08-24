@@ -4,10 +4,11 @@ import { listCatalogChildren, readCatalogTextFile, type CatalogDriveItem } from 
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
 import { parseCatalogProductMetadataLenient } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
-import { generateOperationalMediaForProduct } from "./operationalMediaService";
+import { generateOperationalMediaForProduct, generateOperationalVideosForProduct } from "./operationalMediaService";
 import { generateAutomaticColorSuggestion } from "./db";
 
 const isImage = (item: CatalogDriveItem) => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name);
+const isVideo = (item: CatalogDriveItem) => item.kind === "file" && /\.(mp4|mov|m4v|webm)$/i.test(item.name);
 
 export type CatalogAutomationSummary = {
   discovered: number;
@@ -88,6 +89,7 @@ async function createDraftFromFolder(input: {
   groupName: string;
   folder: CatalogDriveItem;
   images: CatalogDriveItem[];
+  videos: CatalogDriveItem[];
   metadataText: string | null;
 }) {
   const db = await getDb();
@@ -117,17 +119,12 @@ async function createDraftFromFolder(input: {
       missingFields: JSON.stringify(missingFields),
       createdByUserId: input.ownerUserId,
     });
-    if (input.images.length > 0) {
-      await tx.insert(productMedia).values(input.images.map((image, index) => ({
-        productId,
-        source: "onedrive" as const,
-        mediaType: "image" as const,
-        originalUrl: image.webUrl,
-        originalFileName: image.name,
-        storageKey: null,
-        colorVerified: false,
-        sortOrder: index,
-      })));
+    const catalogMedia = [
+      ...input.images.map((image, index) => ({ productId, source: "onedrive" as const, mediaType: "image" as const, originalUrl: image.webUrl, originalFileName: image.name, storageKey: null, colorVerified: false, sortOrder: index })),
+      ...input.videos.map((video, index) => ({ productId, source: "onedrive" as const, mediaType: "video" as const, originalUrl: video.webUrl, originalFileName: video.name, storageKey: null, colorVerified: true, sortOrder: input.images.length + index })),
+    ];
+    if (catalogMedia.length > 0) {
+      await tx.insert(productMedia).values(catalogMedia);
     }
     await tx.insert(productOperations).values({
       productId,
@@ -139,6 +136,31 @@ async function createDraftFromFolder(input: {
     return { productId, missingFields };
   });
   return result;
+}
+
+async function syncNewCatalogMediaReferences(input: {
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>;
+  productId: number;
+  images: CatalogDriveItem[];
+  videos: CatalogDriveItem[];
+}) {
+  const existing = await input.db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
+  const known = new Set(existing.map(entry => `${entry.mediaType}:${entry.originalFileName ?? ""}`));
+  const additions = [
+    ...input.images.filter(image => !known.has(`image:${image.name}`)).map((image, index) => ({ productId: input.productId, source: "onedrive" as const, mediaType: "image" as const, originalUrl: image.webUrl, originalFileName: image.name, storageKey: null, colorVerified: false, sortOrder: existing.length + index })),
+    ...input.videos.filter(video => !known.has(`video:${video.name}`)).map((video, index) => ({ productId: input.productId, source: "onedrive" as const, mediaType: "video" as const, originalUrl: video.webUrl, originalFileName: video.name, storageKey: null, colorVerified: true, sortOrder: existing.length + input.images.length + index })),
+  ];
+  if (additions.length > 0) await input.db.insert(productMedia).values(additions);
+  return { imagesAdded: additions.filter(entry => entry.mediaType === "image").length, videosAdded: additions.filter(entry => entry.mediaType === "video").length };
+}
+
+async function copyCatalogVideosSafely(input: { db: NonNullable<Awaited<ReturnType<typeof getDb>>>; productId: number; actorUserId: number }) {
+  try {
+    return await generateOperationalVideosForProduct({ userId: input.actorUserId, productId: input.productId });
+  } catch (error) {
+    await input.db.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "catalog_scan", action: "video_operational_copy_failed", changes: JSON.stringify({ message: error instanceof Error ? error.message : "تعذر نسخ الفيديو التشغيلي." }) });
+    return { created: [] as Array<{ mediaId: number; storageKey: string; outputBytes: number }>, skipped: [] as number[], originalFilesModified: false as const };
+  }
 }
 
 /**
@@ -165,6 +187,7 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
       try {
         const contents = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: folder.id });
         const images = contents.filter(isImage);
+        const videos = contents.filter(isVideo);
         const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
         const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
         const existingProduct = productByCode.get(folder.name);
@@ -187,19 +210,28 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
             imageCount: images.length,
             missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [],
           });
+          await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
+          const imageCopies = await generateOperationalMediaForProduct({ userId: ownerUserId, productId: existingProduct.id });
+          summary.operationalCopiesCreated += imageCopies.created.length;
+          const videoCopies = await copyCatalogVideosSafely({ db, productId: existingProduct.id, actorUserId: ownerUserId });
+          summary.operationalCopiesCreated += videoCopies.created.length;
           await ensureAutomaticColorSuggestion({ db, productId: existingProduct.id, actorUserId: ownerUserId });
           summary.existing += 1;
           continue;
         }
-        const created = await createDraftFromFolder({ ownerUserId, groupName: group.name, folder, images, metadataText });
+        const created = await createDraftFromFolder({ ownerUserId, groupName: group.name, folder, images, videos, metadataText });
         productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
         await upsertFolderObservation({ ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
         summary.draftsCreated += 1;
         if (images.length > 0) {
           const copies = await generateOperationalMediaForProduct({ userId: ownerUserId, productId: created.productId });
           summary.operationalCopiesCreated += copies.created.length;
-          await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: ownerUserId });
         }
+        if (videos.length > 0) {
+          const copies = await copyCatalogVideosSafely({ db, productId: created.productId, actorUserId: ownerUserId });
+          summary.operationalCopiesCreated += copies.created.length;
+        }
+        await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: ownerUserId });
       } catch (error) {
         summary.failed += 1;
         await upsertFolderObservation({
@@ -250,9 +282,10 @@ export async function restoreDeletedCatalogProduct(input: { ownerUserId: number;
   if (!folder) throw new Error("لم يعد مجلد المنتج موجودًا في Catalog.");
   const contents = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: folder.id });
   const images = contents.filter(isImage);
+  const videos = contents.filter(isVideo);
   const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
   const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
-  const created = await createDraftFromFolder({ ownerUserId: input.ownerUserId, groupName: group.name, folder, images, metadataText });
+  const created = await createDraftFromFolder({ ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadataText });
   await upsertFolderObservation({ ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source: sourceReference(group.name, folder.name), state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, lastError: null });
   let operationalCopiesCreated = 0;
   if (images.length > 0) {
@@ -261,6 +294,11 @@ export async function restoreDeletedCatalogProduct(input: { ownerUserId: number;
     if (operationalCopiesCreated !== images.length) throw new Error(`استُعيدت ${operationalCopiesCreated} من أصل ${images.length} صورة فقط؛ لم تكتمل الاستعادة.`);
     const freshDb = await getDb();
     if (freshDb) await ensureAutomaticColorSuggestion({ db: freshDb, productId: created.productId, actorUserId: input.ownerUserId });
+  }
+  if (videos.length > 0) {
+    const copies = await generateOperationalVideosForProduct({ userId: input.ownerUserId, productId: created.productId });
+    operationalCopiesCreated += copies.created.length;
+    if (copies.created.length !== videos.length) throw new Error(`استُعيد ${copies.created.length} من أصل ${videos.length} فيديو فقط؛ لم تكتمل الاستعادة.`);
   }
   const freshDb = await getDb();
   if (freshDb) await freshDb.insert(productOperations).values({ productId: created.productId, actorUserId: input.ownerUserId, source: "products_ui", action: "restored_from_catalog", changes: JSON.stringify({ productFolderId: folder.id, sourceReference: sourceReference(group.name, folder.name) }) });

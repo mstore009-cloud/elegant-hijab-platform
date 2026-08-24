@@ -49,9 +49,11 @@ export const productsRouter = router({
     const oneDriveMedia = media.filter(entry => entry.source === "onedrive" && entry.originalFileName);
     const variantById = new Map(item.variants.map(variant => [variant.id, variant]));
     const storedPreviews = await Promise.all(media
-      .filter(entry => entry.mediaType === "image" && Boolean(entry.storageKey))
+      .filter(entry => Boolean(entry.storageKey))
       .map(async entry => ({
         mediaId: entry.id,
+        mediaType: entry.mediaType,
+        playbackReady: true,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
         colorReviewState: entry.variantId ? "assigned" as const : entry.colorVerified ? "excluded" as const : "unconfirmed" as const,
         inventoryQuantity: variantById.get(entry.variantId ?? -1)?.inventoryQuantity ?? 0,
@@ -59,8 +61,19 @@ export const productsRouter = router({
         dataUrl: (await storageGet(entry.storageKey!)).url,
         rendition: "operational_webp" as const,
       })));
-    const missingOperationalCopy = oneDriveMedia.filter(entry => !entry.storageKey);
-    if (missingOperationalCopy.length === 0) return storedPreviews;
+    const missingOperationalCopy = oneDriveMedia.filter(entry => entry.mediaType === "image" && !entry.storageKey);
+    const unavailableVideos = media.filter(entry => entry.mediaType === "video" && !entry.storageKey).map(entry => ({
+      mediaId: entry.id,
+      mediaType: "video" as const,
+      playbackReady: false,
+      colorName: "",
+      colorReviewState: "excluded" as const,
+      inventoryQuantity: 0,
+      originalFileName: entry.originalFileName ?? "فيديو المنتج",
+      dataUrl: entry.originalUrl ?? "",
+      rendition: "catalog_video_pending" as const,
+    }));
+    if (missingOperationalCopy.length === 0) return [...storedPreviews, ...unavailableVideos];
     const connection = await getUsableCatalogConnection(ctx.user.id);
     if (!connection?.selectedDriveId || !connection.selectedFolderId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مرجع Catalog غير متاح لمعاينة الصور." });
     const driveId = connection.selectedDriveId;
@@ -78,6 +91,8 @@ export const productsRouter = router({
       if (!sourceFile || sourceFile.kind !== "file" || !sourceFileId) throw new TRPCError({ code: "NOT_FOUND", message: `لم توجد الصورة ${entry.originalFileName} في Catalog.` });
       return {
         mediaId: entry.id,
+        mediaType: "image" as const,
+        playbackReady: true,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
         colorReviewState: entry.variantId ? "assigned" as const : entry.colorVerified ? "excluded" as const : "unconfirmed" as const,
         inventoryQuantity: variantById.get(entry.variantId ?? -1)?.inventoryQuantity ?? 0,
@@ -86,7 +101,7 @@ export const productsRouter = router({
         rendition: "onedrive_thumbnail_c300x400" as const,
       };
     }));
-    return [...storedPreviews, ...temporaryPreviews];
+    return [...storedPreviews, ...unavailableVideos, ...temporaryPreviews];
   }),
   generateOperationalMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");

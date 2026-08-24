@@ -41,6 +41,10 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("استعادة من Catalog");
     expect(source).toContain("استعادة كمسودة");
     expect(source).toContain("نعم، استعده كمسودة");
+    expect(source).toContain('mediaType === "video"');
+    expect(source).toContain("فيديوهات المنتج");
+    expect(source).toContain("لا تدخل في تحليل الألوان");
+    expect(source).toContain("فتح الفيديو الأصلي في OneDrive");
     expect(source).not.toContain("حفظ المخزون");
   });
 });
