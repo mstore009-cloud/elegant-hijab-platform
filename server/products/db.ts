@@ -122,6 +122,16 @@ export async function listPublicProducts() {
     .orderBy(desc(products.updatedAt));
 }
 
+export async function getPublicStoreProduct(productCode: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [product] = await db.select().from(products).where(and(eq(products.productCode, productCode), eq(products.status, "active"))).limit(1);
+  if (!product) return null;
+  const variants = await db.select().from(productVariants).where(eq(productVariants.productId, product.id)).orderBy(productVariants.sortOrder);
+  const media = await db.select().from(productMedia).where(eq(productMedia.productId, product.id)).orderBy(productMedia.sortOrder);
+  return { product, variants, media };
+}
+
 export async function getProductWithVariants(productId: number) {
   const db = await getDb();
   if (!db) return null;

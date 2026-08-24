@@ -14,17 +14,20 @@ function positiveId(value: string) {
 export function registerCatalogVideoPlaybackRoute(app: Express) {
   app.get("/api/products/:productId/media/:mediaId/video", async (req: Request, res: Response) => {
     try {
-      const user = await sdk.authenticateRequest(req);
-      if (!user) return res.status(401).json({ error: "يجب تسجيل الدخول لتشغيل فيديو المنتج." });
-      await assertPermission(user, "products.inventory.update");
       const productId = positiveId(req.params.productId);
       const mediaId = positiveId(req.params.mediaId);
       if (!productId || !mediaId) return res.status(400).json({ error: "معرف الفيديو غير صالح." });
       const product = await getProductWithVariants(productId);
       if (!product) return res.status(404).json({ error: "المنتج غير موجود." });
+      const user = await sdk.authenticateRequest(req);
+      if (product.product.status !== "active") {
+        if (!user) return res.status(401).json({ error: "يجب تسجيل الدخول لتشغيل فيديو المنتج." });
+        await assertPermission(user, "products.inventory.update");
+      }
       const media = (await getProductMedia(productId)).find(item => item.id === mediaId && item.source === "onedrive" && item.mediaType === "video" && Boolean(item.originalFileName));
       if (!media) return res.status(404).json({ error: "فيديو Catalog غير موجود لهذا المنتج." });
-      const connection = await getUsableCatalogConnection(user.id);
+      const ownerUserId = user?.id ?? product.product.createdByUserId;
+      const connection = await getUsableCatalogConnection(ownerUserId);
       if (!connection?.selectedDriveId || !connection.selectedFolderId) return res.status(412).json({ error: "مرجع Catalog غير متاح لتشغيل الفيديو." });
       const groups = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId });
       const group = groups.find(item => item.kind === "folder" && item.name === product.product.category);

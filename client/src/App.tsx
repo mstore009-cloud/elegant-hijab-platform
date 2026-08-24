@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import DashboardLayout from "./components/DashboardLayout";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -9,11 +9,14 @@ import AccessControl from "./pages/AccessControl";
 import ContentPosts from "./pages/ContentPosts";
 import OperationsOverview from "./pages/OperationsOverview";
 import Products from "./pages/Products";
+import Storefront from "./pages/Storefront";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
+      <Route path={"/store/:productCode"} component={Storefront} />
+      <Route path={"/store"} component={Storefront} />
       <Route path={"/"} component={OperationsOverview} />
       <Route path={"/permissions"} component={AccessControl} />
       <Route path={"/products"} component={Products} />
@@ -39,13 +42,17 @@ function App() {
       >
         <TooltipProvider>
           <Toaster />
-          <DashboardLayout>
-            <Router />
-          </DashboardLayout>
+          <PublicOrDashboard />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
+}
+
+function PublicOrDashboard() {
+  const [location] = useLocation();
+  if (location === "/store" || location.startsWith("/store/")) return <Router />;
+  return <DashboardLayout><Router /></DashboardLayout>;
 }
 
 export default App;

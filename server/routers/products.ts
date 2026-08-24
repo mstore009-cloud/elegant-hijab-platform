@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -21,7 +21,36 @@ async function viewerFinancialAccess(user: { id: number; role: "admin" | "user" 
 }
 
 export const productsRouter = router({
-  publicList: publicProcedure.query(async () => listPublicProducts()),
+  publicList: publicProcedure.query(async () => {
+    const activeProducts = await listPublicProducts();
+    return Promise.all(activeProducts.map(async product => {
+      const publicProduct = await getPublicStoreProduct(product.productCode);
+      const primaryImage = publicProduct?.media.find(media => media.mediaType === "image" && Boolean(media.storageKey));
+      const featuredVideo = publicProduct?.media.find(media => media.mediaType === "video");
+      return {
+        ...product,
+        primaryImageUrl: primaryImage?.storageKey ? (await storageGet(primaryImage.storageKey)).url : null,
+        featuredVideoUrl: featuredVideo ? (featuredVideo.storageKey ? (await storageGet(featuredVideo.storageKey)).url : `/api/products/${publicProduct?.product.id}/media/${featuredVideo.id}/video`) : null,
+      };
+    }));
+  }),
+  publicByCode: publicProcedure.input(z.object({ productCode: z.string().trim().min(1).max(80) })).query(async ({ input }) => {
+    const item = await getPublicStoreProduct(input.productCode);
+    if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير متاح حاليًا." });
+    const variantById = new Map(item.variants.map(variant => [variant.id, variant]));
+    const media = await Promise.all(item.media.map(async entry => ({
+      mediaId: entry.id,
+      mediaType: entry.mediaType,
+      colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? null,
+      originalFileName: entry.originalFileName ?? "وسيط المنتج",
+      url: entry.storageKey ? (await storageGet(entry.storageKey)).url : entry.mediaType === "video" ? `/api/products/${item.product.id}/media/${entry.id}/video` : null,
+    })));
+    return {
+      product: { productCode: item.product.productCode, name: item.product.name, category: item.product.category, description: item.product.description, sellingPrice: item.product.sellingPrice, sizeLabels: item.product.sizeLabels },
+      colors: Array.from(new Set(item.variants.map(variant => variant.colorName))),
+      media: media.filter(entry => Boolean(entry.url)),
+    };
+  }),
   list: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
