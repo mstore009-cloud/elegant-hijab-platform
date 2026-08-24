@@ -123,6 +123,109 @@ export async function updateProductDetails(input: {
   return { product: updated!, missingFields: Array.from(nextMissing) };
 }
 
+function parseProductSizeLabels(value: string | null) {
+  try {
+    const parsed = JSON.parse(value ?? "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((size): size is string => typeof size === "string" && size.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function removeCatalogMissingField(productId: number, field: string) {
+  const db = await getDb();
+  if (!db) return;
+  const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
+  if (!folderImport) return;
+  const nextMissing = parseMissingFields(folderImport.missingFields).filter(item => item !== field);
+  await db.update(catalogFolderImports).set({ missingFields: JSON.stringify(nextMissing), state: "needs_review" }).where(eq(catalogFolderImports.id, folderImport.id));
+}
+
+export async function addProductColor(input: { productId: number; colorName: string; actorUserId: number; source?: "products_ui" | "whatsapp" }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const colorName = input.colorName.trim();
+  if (!colorName) throw new Error("اسم اللون مطلوب.");
+  const existing = await db.select().from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, colorName)));
+  if (existing.length > 0) return { created: false as const, variants: existing };
+
+  const sizes = parseProductSizeLabels(product.sizeLabels);
+  const labels = sizes.length > 0 ? sizes : [""];
+  const result = await db.transaction(async tx => {
+    const current = await tx.select({ sortOrder: productVariants.sortOrder }).from(productVariants).where(eq(productVariants.productId, input.productId));
+    await tx.insert(productVariants).values(labels.map((sizeLabel, index) => ({
+      productId: input.productId,
+      colorName,
+      sizeLabel,
+      inventoryQuantity: 0,
+      availability: "out_of_stock" as const,
+      sortOrder: current.length + index,
+    })));
+    await tx.insert(productOperations).values({
+      productId: input.productId,
+      actorUserId: input.actorUserId,
+      source: input.source ?? "products_ui",
+      action: "color_added",
+      changes: JSON.stringify({ colorName, sizeLabels: labels }),
+    });
+    return tx.select().from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, colorName)));
+  });
+  await removeCatalogMissingField(input.productId, "colors");
+  return { created: true as const, variants: result };
+}
+
+export async function assignProductMediaColor(input: { productId: number; mediaId: number; colorName: string; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [media] = await db.select().from(productMedia).where(and(eq(productMedia.id, input.mediaId), eq(productMedia.productId, input.productId))).limit(1);
+  if (!media) throw new Error("الصورة غير موجودة لهذا المنتج.");
+  const [variant] = await db.select().from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, input.colorName.trim()))).orderBy(productVariants.sortOrder).limit(1);
+  if (!variant) throw new Error("أضف اللون أو اعتمده أولًا قبل ربط الصورة.");
+  await db.transaction(async tx => {
+    await tx.update(productMedia).set({ variantId: variant.id, colorVerified: true }).where(eq(productMedia.id, input.mediaId));
+    await tx.insert(productOperations).values({
+      productId: input.productId,
+      actorUserId: input.actorUserId,
+      source: "products_ui",
+      action: "media_color_assigned",
+      changes: JSON.stringify({ mediaId: input.mediaId, colorName: input.colorName.trim(), variantId: variant.id }),
+    });
+  });
+  return { mediaId: input.mediaId, colorName: input.colorName.trim(), variantId: variant.id };
+}
+
+export async function saveProductInventory(input: { productId: number; quantities: Array<{ variantId: number; inventoryQuantity: number }>; actorUserId: number; source?: "products_ui" | "whatsapp" }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const variants = await db.select().from(productVariants).where(eq(productVariants.productId, input.productId));
+  if (variants.length === 0) throw new Error("أضف لونًا واحدًا على الأقل قبل إدخال المخزون.");
+  const quantities = new Map(input.quantities.map(item => [item.variantId, item.inventoryQuantity]));
+  if (quantities.size !== variants.length || variants.some(variant => !quantities.has(variant.id))) {
+    throw new Error("أدخل كمية لكل لون أو تركيبة لون وقياس قبل الحفظ.");
+  }
+  await db.transaction(async tx => {
+    for (const variant of variants) {
+      const quantity = quantities.get(variant.id)!;
+      if (!Number.isInteger(quantity) || quantity < 0) throw new Error("كمية المخزون يجب أن تكون رقمًا صحيحًا غير سالب.");
+      const availability: "available" | "low_stock" | "out_of_stock" = quantity <= 0 ? "out_of_stock" : quantity <= 3 ? "low_stock" : "available";
+      await tx.update(productVariants).set({ inventoryQuantity: quantity, availability }).where(eq(productVariants.id, variant.id));
+    }
+    await tx.insert(productOperations).values({
+      productId: input.productId,
+      actorUserId: input.actorUserId,
+      source: input.source ?? "products_ui",
+      action: "inventory_saved",
+      changes: JSON.stringify({ quantities: input.quantities }),
+    });
+  });
+  await removeCatalogMissingField(input.productId, "inventory");
+  return { updatedVariantCount: variants.length };
+}
+
 export async function addManualProductImage(input: { productId: number; fileName: string; bytes: Buffer; actorUserId: number }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");

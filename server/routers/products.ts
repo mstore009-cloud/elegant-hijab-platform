@@ -3,13 +3,14 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { addManualProductImage, createImportJob, createProduct, detachProductMediaReference, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, updateProductDetails, updateVariantInventory } from "../products/db";
+import { addManualProductImage, addProductColor, assignProductMediaColor, createImportJob, createProduct, detachProductMediaReference, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
 import { listCatalogChildren, readCatalogImageDataUrl } from "../integrations/onedrive/catalog";
 import { storageGet } from "../storage";
 import { generateOperationalMediaForProduct, regenerateOperationalMediaForProduct } from "../products/operationalMediaService";
+import { analyzeStoredProductColors } from "../products/colorAnalysis";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
 const productStatus = z.enum(["draft", "needs_review", "ready", "active", "archived"]);
@@ -140,6 +141,39 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     const { productId, ...patch } = input;
     return updateProductDetails({ productId, ...patch, actorUserId: ctx.user.id, source: "products_ui" });
+  }),
+  addColor: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    colorName: z.string().trim().min(1).max(100),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return addProductColor({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
+  }),
+  assignMediaColor: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    mediaId: z.number().int().positive(),
+    colorName: z.string().trim().min(1).max(100),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return assignProductMediaColor({ ...input, actorUserId: ctx.user.id });
+  }),
+  analyzeColors: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const product = await getProductWithVariants(input.productId);
+    if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود." });
+    const media = await getProductMedia(input.productId);
+    try {
+      return await analyzeStoredProductColors({ productCode: product.product.productCode, media });
+    } catch (error) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر تحليل ألوان الصور." });
+    }
+  }),
+  saveInventory: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    quantities: z.array(z.object({ variantId: z.number().int().positive(), inventoryQuantity: z.number().int().min(0).max(100000) })).min(1).max(250),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.inventory.update");
+    return saveProductInventory({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
   }),
   uploadManualImage: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
