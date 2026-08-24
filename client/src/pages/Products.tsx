@@ -22,6 +22,7 @@ const missingFieldLabels: Record<string, string> = {
 
 type WorkFilter = "needs_work" | "draft" | "ready" | "active" | "all";
 type EditableColorSuggestion = { colorNameArabic: string; confidence: number; mediaIds: number[]; reviewNote: string; selectedMediaIds: number[] };
+type ReviewableMedia = { mediaId: number; dataUrl: string; originalFileName: string; colorName: string | null; colorReviewState: string; inventoryQuantity: number };
 
 function fieldLabel(field: string) { return missingFieldLabels[field] ?? field; }
 function safeSizes(raw: string | null) {
@@ -29,6 +30,11 @@ function safeSizes(raw: string | null) {
 }
 function statusLabel(status: string) { return ({ draft: "مسودة", needs_review: "تحتاج مراجعة", ready: "جاهز للمراجعة", active: "نشط", archived: "مؤرشف" } as Record<string, string>)[status] ?? status; }
 function statusClass(status: string) { return ({ draft: "bg-[#f1eee7] text-[#635d53]", needs_review: "bg-[#fff1de] text-[#a35d1c]", ready: "bg-[#e9f4ef] text-[#21624d]", active: "bg-[#e4f3ea] text-[#17633b]", archived: "bg-[#f0f0f0] text-[#747474]" } as Record<string, string>)[status] ?? "bg-slate-100 text-slate-700"; }
+function ReviewableMediaCard({ media, selected, disabled, onClick }: { media: ReviewableMedia; selected: boolean; disabled: boolean; onClick: () => void }) {
+  const label = media.colorReviewState === "unconfirmed" ? "غير مؤكد" : media.colorReviewState === "excluded" ? "مستبعدة من مراجعة اللون" : media.colorName || "غير مرتبطة بلون";
+  const helper = selected ? "مختارة للمراجعة" : media.colorReviewState === "unconfirmed" ? "تحتاج تعيين لون" : media.colorReviewState === "excluded" ? "لا تدخل المخزون" : media.colorName ? `${media.inventoryQuantity} قطعة` : "اضغط للمراجعة";
+  return <button type="button" onClick={onClick} disabled={disabled} aria-pressed={selected} className={`overflow-hidden rounded-2xl border-2 bg-white text-right transition ${selected ? "border-[#a47d40] ring-2 ring-[#ead7ac]" : "border-[#e8e2d5] hover:border-[#b8d4c7]"}`}><div className="relative"><img src={media.dataUrl} alt={media.originalFileName} className="aspect-[4/5] w-full object-cover" />{selected && <span className="absolute inset-0 grid place-items-center bg-[#183d35]/35 text-white"><Check className="h-6 w-6" /></span>}</div><div className="p-2.5 text-xs"><p className="truncate font-medium text-[#40554c]">{label}</p><p className="mt-1 text-[#879089]">{helper}</p></div></button>;
+}
 
 export default function Products() {
   const profile = trpc.access.myProfile.useQuery();
@@ -51,6 +57,8 @@ export default function Products() {
   const [draftPrice, setDraftPrice] = useState("");
   const [draftSizes, setDraftSizes] = useState("");
   const [newColorName, setNewColorName] = useState("");
+  const [reviewColorName, setReviewColorName] = useState("");
+  const [reviewMediaIds, setReviewMediaIds] = useState<number[]>([]);
   const [inventoryValues, setInventoryValues] = useState<Record<number, string>>({});
   const [suggestions, setSuggestions] = useState<EditableColorSuggestion[]>([]);
   const [analysisNote, setAnalysisNote] = useState("");
@@ -78,6 +86,8 @@ export default function Products() {
     setSuggestions([]);
     setAnalysisNote("");
     setNewColorName("");
+    setReviewColorName("");
+    setReviewMediaIds([]);
   }, [selectedProduct.data?.product.id]);
 
   const workCounts = useMemo(() => ({
@@ -127,6 +137,9 @@ export default function Products() {
       selectedMediaIds: suggestion.selectedMediaIds.includes(mediaId) ? suggestion.selectedMediaIds.filter(id => id !== mediaId) : [...suggestion.selectedMediaIds, mediaId],
     }));
   };
+  const toggleReviewMedia = (mediaId: number) => {
+    setReviewMediaIds(current => current.includes(mediaId) ? current.filter(id => id !== mediaId) : [...current, mediaId]);
+  };
   const removeSelectedFromSuggestion = (suggestionIndex: number) => {
     setSuggestions(current => current.flatMap((suggestion, index) => {
       if (index !== suggestionIndex) return [suggestion];
@@ -164,6 +177,27 @@ export default function Products() {
       }));
     } catch { /* تظهر رسالة الخطأ قرب إجراء الاستبعاد */ }
   };
+  const analyzeReviewMedia = async () => {
+    if (!selectedProductId || !reviewMediaIds.length) return;
+    try {
+      const result = await analyzeColors.mutateAsync({ productId: selectedProductId, mediaIds: reviewMediaIds });
+      acceptAnalysis(result);
+      setReviewMediaIds([]);
+    } catch { /* تظهر رسالة خطأ التحليل في قسم الصور */ }
+  };
+  const assignReviewMedia = async () => {
+    if (!reviewColorName.trim() || !reviewMediaIds.length) return;
+    await createColor(reviewColorName, reviewMediaIds);
+    setReviewColorName("");
+    setReviewMediaIds([]);
+  };
+  const excludeReviewMedia = async () => {
+    if (!selectedProductId || !reviewMediaIds.length) return;
+    try {
+      await excludeMediaFromColorReview.mutateAsync({ productId: selectedProductId, mediaIds: reviewMediaIds });
+      setReviewMediaIds([]);
+    } catch { /* تظهر رسالة خطأ الاستبعاد في قسم الصور */ }
+  };
   const saveAllInventory = () => {
     if (!selectedProduct.data) return;
     const quantities = selectedProduct.data.variants.map(variant => ({ variantId: variant.id, inventoryQuantity: Number(inventoryValues[variant.id] ?? 0) }));
@@ -180,6 +214,7 @@ export default function Products() {
   }, [detail?.variants]);
   const mediaById = new Map((selectedProductMedia.data ?? []).map(media => [media.mediaId, media]));
   const suggestionMediaFor = (mediaIds: number[]) => mediaIds.map(mediaId => mediaById.get(mediaId)).filter((media): media is NonNullable<typeof media> => Boolean(media));
+  const reviewableMedia = selectedProductMedia.data ?? [];
 
   return (
     <div dir="rtl" className="mx-auto w-full max-w-[1440px] space-y-5 pb-10">
@@ -232,7 +267,18 @@ export default function Products() {
               <section id="basic-details"><SectionTitle number="1" title="البيانات الأساسية" subtitle="أكمل المعلومات التي ستظهر في التشغيل لاحقًا." /><div className="mt-4 grid gap-4 sm:grid-cols-2"><Field label="اسم المنتج"><Input value={draftName} onChange={event => setDraftName(event.target.value)} disabled={!canEdit} /></Field><Field label="سعر البيع (د.ع)"><Input inputMode="decimal" value={draftPrice} onChange={event => setDraftPrice(event.target.value)} disabled={!canEdit} placeholder="أدخل السعر" /></Field><Field label="القياسات المشتركة" hint="مثال: Medium، Large"><Input value={draftSizes} onChange={event => setDraftSizes(event.target.value)} disabled={!canEdit} placeholder="لا توجد قياسات" /></Field><Field label="حالة العمل"><div className="flex h-10 items-center rounded-md border border-[#e2ddd2] bg-[#faf9f6] px-3 text-sm text-[#66736c]">{statusLabel(detail.product.status)} — النشر قرار منفصل</div></Field><div className="sm:col-span-2"><Field label="الوصف"><Textarea value={draftDescription} onChange={event => setDraftDescription(event.target.value)} disabled={!canEdit} placeholder="أضف وصف المنتج" className="min-h-28" /></Field></div></div><div className="mt-4 flex flex-wrap items-center gap-3"><Button onClick={saveDetails} disabled={!canEdit || updateDetails.isPending || !draftName.trim()} className="bg-[#183d35] hover:bg-[#102f29]"><Save className="ml-2 h-4 w-4" />{updateDetails.isPending ? "جارٍ الحفظ..." : "حفظ البيانات"}</Button>{updateDetails.error && <p className="text-xs text-[#a14724]">{updateDetails.error.message}</p>}</div></section>
 
               <section id="media"><SectionTitle number="2" title="الصور وتحليل الألوان" subtitle="التحليل يقترح فقط؛ يمكنك تفكيك المجموعة وإعادة تحليل الصور المحددة." /><div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#f5faf7] p-4"><div><p className="font-bold text-[#245746]">صور المنتج التشغيلية</p><p className="mt-1 text-xs text-[#6b7d74]">كل صورة يرفعها الموظف تتحول إلى WebP داخل المنصة، ولا تحتاج OneDrive.</p></div><div className="flex flex-wrap gap-2"><label className="cursor-pointer"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={addImage} className="sr-only" disabled={!canEdit || uploadImage.isPending} /><span className="inline-flex h-10 items-center rounded-lg border border-[#aacbbc] bg-white px-3 text-sm font-bold text-[#28604e]"><ImagePlus className="ml-1.5 h-4 w-4" />{uploadImage.isPending ? "جارٍ التحويل..." : "إضافة صور"}</span></label><Button onClick={runAllColorAnalysis} disabled={!canEdit || analyzeColors.isPending || !(selectedProductMedia.data?.length)} className="bg-[#a47d40] text-white hover:bg-[#8b6933]"><Sparkles className={`ml-1.5 h-4 w-4 ${analyzeColors.isPending ? "animate-pulse" : ""}`} />{analyzeColors.isPending ? "جارٍ تحليل الصور..." : "تحليل الألوان"}</Button></div></div>{(uploadImage.error || analyzeColors.error) && <p className="mt-3 rounded-xl bg-[#fff4ed] p-3 text-xs text-[#9c4b25]">{uploadImage.error?.message ?? analyzeColors.error?.message}</p>}
-                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{selectedProductMedia.data?.map(media => <div key={media.mediaId} className="overflow-hidden rounded-2xl border border-[#e8e2d5] bg-white"><img src={media.dataUrl} alt={media.originalFileName} className="aspect-[4/5] w-full object-cover" /><div className="p-2.5 text-xs"><p className="truncate font-medium text-[#40554c]">{media.colorReviewState === "unconfirmed" ? "غير مؤكد" : media.colorReviewState === "excluded" ? "مستبعدة من مراجعة اللون" : media.colorName || "غير مرتبطة بلون"}</p><p className="mt-1 text-[#879089]">{media.colorReviewState === "unconfirmed" ? "تحتاج تعيين لون" : media.colorReviewState === "excluded" ? "لا تدخل المخزون" : media.colorName ? `${media.inventoryQuantity} قطعة` : "تحتاج مراجعة"}</p></div></div>)}</div>
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                  {reviewableMedia.map(media => (
+                    <ReviewableMediaCard
+                      key={media.mediaId}
+                      media={media}
+                      selected={reviewMediaIds.includes(media.mediaId)}
+                      disabled={!canEdit}
+                      onClick={() => toggleReviewMedia(media.mediaId)}
+                    />
+                  ))}
+                </div>
+                {reviewableMedia.length > 0 && <div className="mt-4 rounded-2xl border-2 border-[#d6c08b] bg-[#fffaf0] p-4"><div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-bold text-[#765429]">مراجعة الصور والألوان</p><p className="mt-1 text-xs leading-5 text-[#8b7659]">اضغط أي صورة أعلاه—حتى لو كانت مرتبطة بلون—ثم صحح لونها أو أعد تحليلها أو استبعدها من اللون. لا تختفي الصورة من المنتج.</p></div><span className="rounded-full bg-[#f5e6be] px-2.5 py-1 text-xs font-bold text-[#765429]">{reviewMediaIds.length} صور مختارة</span></div><div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto]"><Input value={reviewColorName} onChange={event => setReviewColorName(event.target.value)} disabled={!canEdit} placeholder="اكتب اسم اللون للصور المحددة" /><Button onClick={assignReviewMedia} disabled={!canEdit || !reviewMediaIds.length || !reviewColorName.trim() || addColor.isPending || assignMediaColor.isPending} className="bg-[#285f4e] hover:bg-[#1c4b3d]"><Check className="ml-1 h-4 w-4" />تسمية وربط</Button><Button variant="outline" onClick={analyzeReviewMedia} disabled={!canEdit || !reviewMediaIds.length || analyzeColors.isPending} className="border-[#b8d4c7] text-[#28604e]"><RefreshCw className="ml-1 h-4 w-4" />حلل المحدد</Button><Button variant="outline" onClick={excludeReviewMedia} disabled={!canEdit || !reviewMediaIds.length || excludeMediaFromColorReview.isPending} className="border-[#d6c9b6] text-[#765f3c]">استبعاد من اللون</Button></div>{!canEdit && <p className="mt-3 text-xs text-[#a14724]">حسابك لا يملك حاليًا صلاحية تعديل المنتجات.</p>}</div>}
                 {suggestions.length > 0 && <div className="mt-4 rounded-2xl border border-[#ead8b7] bg-[#fffaf0] p-4"><div className="flex items-start gap-2"><Sparkles className="mt-0.5 h-4 w-4 text-[#a77b2f]" /><div><p className="font-bold text-[#745429]">اقتراحات تحتاج اعتمادًا</p>{analysisNote && <p className="mt-1 text-xs leading-5 text-[#8b7659]">{analysisNote}</p>}</div></div><div className="mt-4 grid gap-3 sm:grid-cols-2">{suggestions.map((suggestion, index) => { const suggestionMedia = suggestion.mediaIds.map(mediaId => mediaById.get(mediaId)).filter((media): media is NonNullable<typeof media> => Boolean(media)); return <div key={`${suggestion.colorNameArabic}-${index}`} className="rounded-xl border border-[#eddfc4] bg-white p-3"><div className="flex items-start gap-3"><div className="flex shrink-0 -space-x-2 space-x-reverse" aria-label={`صور اقتراح ${suggestion.colorNameArabic}`}>{suggestionMedia.slice(0, 4).map(media => <img key={media.mediaId} src={media.dataUrl} alt={`صورة مقترحة للون ${suggestion.colorNameArabic}`} className="h-12 w-12 rounded-xl border-2 border-white object-cover shadow-sm" />)}{suggestionMedia.length > 4 && <span className="grid h-12 w-12 place-items-center rounded-xl border-2 border-white bg-[#f1eadc] text-xs font-bold text-[#765f3c]">+{suggestionMedia.length - 4}</span>}{suggestionMedia.length === 0 && <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#f3f0e9] text-[#9a815c]"><ImagePlus className="h-4 w-4" /></span>}</div><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><Input value={suggestion.colorNameArabic} onChange={event => setSuggestions(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, colorNameArabic: event.target.value } : item))} className="h-9" disabled={!canEdit} /><span className="whitespace-nowrap text-xs text-[#8a7150]">ثقة {Math.round(suggestion.confidence * 100)}%</span></div><p className="mt-2 text-xs text-[#786a57]">{suggestion.reviewNote}</p></div></div><div className="mt-3 flex items-center justify-between"><span className="text-xs text-[#786a57]">{suggestionMedia.length} صور مرتبطة</span><Button size="sm" onClick={() => createColor(suggestion.colorNameArabic, suggestion.mediaIds)} disabled={!canEdit || addColor.isPending || assignMediaColor.isPending} className="bg-[#285f4e] hover:bg-[#1c4b3d]"><Check className="ml-1 h-3.5 w-3.5" />اعتماد وربط</Button></div></div>; })}</div></div>}</section>
 
               {suggestions.length > 0 ? (

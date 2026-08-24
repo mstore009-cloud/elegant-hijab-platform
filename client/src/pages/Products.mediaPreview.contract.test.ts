@@ -8,7 +8,8 @@ describe("عقد الصور والألوان والمخزون في واجهة ا
 
     expect(source).toContain("trpc.products.mediaPreviews.useQuery");
     expect(source).toContain("selectedProductMedia.data?.[0]");
-    expect(source).toContain("selectedProductMedia.data?.map(media");
+    expect(source).toContain("const reviewableMedia = selectedProductMedia.data ?? []");
+    expect(source).toContain("<ReviewableMediaCard");
     expect(source).toContain("trpc.products.analyzeColors.useMutation");
     expect(source).toContain("const suggestionMedia = suggestion.mediaIds.map(mediaId => mediaById.get(mediaId))");
     expect(source).toContain("صور مرتبطة");
@@ -16,6 +17,10 @@ describe("عقد الصور والألوان والمخزون في واجهة ا
     expect(source).toContain("reanalyzeSelectedMedia");
     expect(source).toContain("نقل إلى غير مؤكد");
     expect(source).toContain("حلل المحدد");
+    expect(source).toContain("مراجعة الصور والألوان");
+    expect(source).toContain("toggleReviewMedia");
+    expect(source).toContain("تسمية وربط");
+    expect(source).toContain("استبعاد من اللون");
     expect(source).toContain("trpc.products.addColor.useMutation");
     expect(source).toContain("trpc.products.saveInventory.useMutation");
   });
