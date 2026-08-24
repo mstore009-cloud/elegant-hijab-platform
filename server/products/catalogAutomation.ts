@@ -5,7 +5,6 @@ import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth
 import { parseCatalogProductMetadataLenient } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { generateOperationalMediaForProduct } from "./operationalMediaService";
-import { generateAutomaticColorSuggestion } from "./db";
 
 const isImage = (item: CatalogDriveItem) => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name);
 
@@ -19,37 +18,6 @@ export type CatalogAutomationSummary = {
 
 function sourceReference(groupName: string, productCode: string) {
   return `Catalog/${groupName}/${productCode}`;
-}
-
-function isReliableColorSuggestion(changes: string) {
-  try {
-    const note = JSON.parse(changes)?.suggestion?.overallReviewNote;
-    return typeof note === "string" && !note.includes("تعذر إكمال التحليل الذكي");
-  } catch {
-    return false;
-  }
-}
-
-async function ensureAutomaticColorSuggestion(input: { db: NonNullable<Awaited<ReturnType<typeof getDb>>>; productId: number; actorUserId: number }) {
-  const media = await input.db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
-  if (!media.some(item => item.storageKey)) return { generated: false, reason: "no_operational_media" as const };
-  const operations = await input.db.select().from(productOperations).where(eq(productOperations.productId, input.productId));
-  if (operations.some(operation => operation.action === "color_suggestions_generated" && isReliableColorSuggestion(operation.changes))) {
-    return { generated: false, reason: "reliable_suggestion_exists" as const };
-  }
-  try {
-    await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: input.actorUserId });
-    return { generated: true, reason: "generated" as const };
-  } catch (error) {
-    await input.db.insert(productOperations).values({
-      productId: input.productId,
-      actorUserId: input.actorUserId,
-      source: "catalog_scan",
-      action: "color_suggestions_generation_failed",
-      changes: JSON.stringify({ message: error instanceof Error ? error.message : "تعذر تحليل ألوان الصور تلقائيًا." }),
-    });
-    return { generated: false, reason: "failed" as const };
-  }
 }
 
 async function upsertFolderObservation(input: {
@@ -96,7 +64,7 @@ async function createDraftFromFolder(input: {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const metadata = parseCatalogProductMetadataLenient(input.metadataText);
-  const missingFields = [...metadata.problems, ...(input.images.length === 0 ? ["images"] : []), "colors", "inventory"];
+  const missingFields = [...metadata.problems, ...(input.images.length === 0 ? ["images"] : [])];
   const source = sourceReference(input.groupName, input.folder.name);
   const result = await db.transaction(async tx => {
     const created = await tx.insert(products).values({
@@ -185,7 +153,6 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
             imageCount: images.length,
             missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [],
           });
-          await ensureAutomaticColorSuggestion({ db, productId: existingProduct.id, actorUserId: ownerUserId });
           summary.existing += 1;
           continue;
         }
@@ -196,7 +163,6 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
         if (images.length > 0) {
           const copies = await generateOperationalMediaForProduct({ userId: ownerUserId, productId: created.productId });
           summary.operationalCopiesCreated += copies.created.length;
-          if (copies.created.length > 0) await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: ownerUserId });
         }
       } catch (error) {
         summary.failed += 1;

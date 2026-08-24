@@ -67,7 +67,8 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
       });
       productId = draft!.id;
       const [folder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, owner.id), eq(catalogFolderImports.productFolderId, folderId))).limit(1);
-      expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual(expect.arrayContaining(["product.txt", "images", "colors", "inventory"]));
+      expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual(expect.arrayContaining(["product.txt", "images"]));
+      expect(JSON.parse(folder!.missingFields ?? "[]")).not.toEqual(expect.arrayContaining(["colors", "inventory"]));
       const [job] = await db.select().from(productImportJobs).where(eq(productImportJobs.linkedProductId, productId)).limit(1);
       expect(job).toMatchObject({ status: "needs_review" });
 
@@ -80,7 +81,8 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
         source: "products_ui",
       });
       expect(updated.product).toMatchObject({ status: "draft", description: "وصف استكمل من واجهة المنتجات", sellingPrice: "9000.00" });
-      expect(updated.missingFields).toEqual(expect.arrayContaining(["product.txt", "images", "colors", "inventory"]));
+      expect(updated.missingFields).toEqual(expect.arrayContaining(["product.txt", "images"]));
+      expect(updated.missingFields).not.toEqual(expect.arrayContaining(["colors", "inventory"]));
       expect(updated.missingFields).not.toContain("description");
       expect(updated.missingFields).not.toContain("sellingPrice");
     } finally {

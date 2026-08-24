@@ -22,20 +22,13 @@ export async function listProductsWithPrimaryOperationalMedia() {
     db.select().from(catalogFolderImports),
   ]);
   const primaryMediaByProductId = new Map<number, typeof mediaList[number]>();
-  const unconfirmedMediaByProductId = new Map<number, number>();
   for (const media of mediaList) {
     if (!media.storageKey || primaryMediaByProductId.has(media.productId)) continue;
     primaryMediaByProductId.set(media.productId, media);
   }
-  for (const media of mediaList) {
-    if (media.mediaType === "image" && !media.variantId && !media.colorVerified) {
-      unconfirmedMediaByProductId.set(media.productId, (unconfirmedMediaByProductId.get(media.productId) ?? 0) + 1);
-    }
-  }
   const missingByProductId = new Map(folderImports.filter(entry => entry.linkedProductId).map(entry => [entry.linkedProductId!, parseMissingFields(entry.missingFields)]));
   return productList.map(product => {
     const missingFields = [...(missingByProductId.get(product.id) ?? [])];
-    if ((unconfirmedMediaByProductId.get(product.id) ?? 0) > 0 && !missingFields.includes("imageColorReview")) missingFields.push("imageColorReview");
     return { product, primaryMedia: primaryMediaByProductId.get(product.id) ?? null, missingFields };
   });
 }
@@ -43,7 +36,7 @@ export async function listProductsWithPrimaryOperationalMedia() {
 export function parseMissingFields(value: string | null) {
   try {
     const parsed = JSON.parse(value ?? "[]");
-    return Array.isArray(parsed) ? parsed.filter((field): field is string => typeof field === "string") : [];
+    return Array.isArray(parsed) ? parsed.filter((field): field is string => typeof field === "string" && !["colors", "inventory", "imageColorReview"].includes(field)) : [];
   } catch {
     return [];
   }
@@ -75,10 +68,8 @@ export async function getProductWithVariants(productId: number) {
   const result = await db.select().from(products).where(eq(products.id, productId)).limit(1);
   if (!result[0]) return null;
   const variants = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
-  const media = await db.select().from(productMedia).where(eq(productMedia.productId, productId));
   const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
   const missingFields = parseMissingFields(folderImport?.missingFields ?? null);
-  if (media.some(item => item.mediaType === "image" && !item.variantId && !item.colorVerified) && !missingFields.includes("imageColorReview")) missingFields.push("imageColorReview");
   const operations = await db.select().from(productOperations).where(eq(productOperations.productId, productId)).orderBy(desc(productOperations.createdAt), desc(productOperations.id));
   const generated = operations.find(operation => operation.action === "color_suggestions_generated");
   const reviewed = generated ? operations.some(operation => operation.action === "color_suggestions_reviewed" && (() => {
