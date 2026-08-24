@@ -45,6 +45,7 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("فيديوهات المنتج");
     expect(source).toContain("لا تدخل في تحليل الألوان");
     expect(source).toContain("فتح الفيديو الأصلي في OneDrive");
+    expect(source).toContain("video.playbackReady && video.dataUrl");
     expect(source).not.toContain("حفظ المخزون");
   });
 });

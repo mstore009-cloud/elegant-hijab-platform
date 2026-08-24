@@ -65,13 +65,13 @@ export const productsRouter = router({
     const unavailableVideos = media.filter(entry => entry.mediaType === "video" && !entry.storageKey).map(entry => ({
       mediaId: entry.id,
       mediaType: "video" as const,
-      playbackReady: false,
+      playbackReady: true,
       colorName: "",
       colorReviewState: "excluded" as const,
       inventoryQuantity: 0,
       originalFileName: entry.originalFileName ?? "فيديو المنتج",
-      dataUrl: entry.originalUrl ?? "",
-      rendition: "catalog_video_pending" as const,
+      dataUrl: `/api/products/${input.productId}/media/${entry.id}/video`,
+      rendition: "catalog_video_stream_proxy" as const,
     }));
     if (missingOperationalCopy.length === 0) return [...storedPreviews, ...unavailableVideos];
     const connection = await getUsableCatalogConnection(ctx.user.id);

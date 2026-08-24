@@ -167,6 +167,30 @@ export async function readCatalogOriginalVideoBytes(input: {
   return { bytes, mimeType };
 }
 
+/** Opens a read-only OneDrive video response for a server-side playback proxy. No bytes, token, or URL are exposed to the browser. */
+export async function openCatalogVideoStream(input: {
+  encryptedAccessToken: string;
+  driveId: string;
+  fileId: string;
+  range?: string;
+}) {
+  const accessToken = decryptOneDriveToken(input.encryptedAccessToken);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.fileId)}/content`,
+      { headers: { Authorization: `Bearer ${accessToken}`, ...(input.range ? { Range: input.range } : {}) }, signal: controller.signal },
+    );
+    if (!response.ok) throw new Error(`تعذر بدء تشغيل فيديو المنتج من Microsoft Graph (HTTP ${response.status}).`);
+    const mimeType = response.headers.get("content-type")?.split(";")[0] || "video/mp4";
+    if (!mimeType.startsWith("video/")) throw new Error("الملف المحدد ليس فيديو صالحًا للتشغيل.");
+    return response;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /** Reads one Microsoft Graph thumbnail transiently for visual analysis; it never stores or publishes the bytes. */
 export async function readCatalogImageDataUrl(input: {
   encryptedAccessToken: string;
