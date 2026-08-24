@@ -9,6 +9,8 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("trpc.products.mediaPreviews.useQuery");
     expect(source).toContain("<ColorCard");
     expect(source).toContain("اعتماد الاقتراحات المعدلة");
+    expect(source).toContain("اعتماد هذه المجموعة");
+    expect(source).toContain("حللت الصور المحددة");
     expect(source).toContain("تعديل المنتج");
     expect(source).toContain("إضافة مجموعة صور");
     expect(source).toContain("saveColorDetails");

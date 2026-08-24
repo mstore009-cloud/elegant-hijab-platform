@@ -254,12 +254,15 @@ export async function restoreDeletedCatalogProduct(input: { ownerUserId: number;
   const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
   const created = await createDraftFromFolder({ ownerUserId: input.ownerUserId, groupName: group.name, folder, images, metadataText });
   await upsertFolderObservation({ ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source: sourceReference(group.name, folder.name), state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, lastError: null });
+  let operationalCopiesCreated = 0;
   if (images.length > 0) {
-    await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: created.productId });
+    const copies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: created.productId });
+    operationalCopiesCreated = copies.created.length;
+    if (operationalCopiesCreated !== images.length) throw new Error(`استُعيدت ${operationalCopiesCreated} من أصل ${images.length} صورة فقط؛ لم تكتمل الاستعادة.`);
     const freshDb = await getDb();
     if (freshDb) await ensureAutomaticColorSuggestion({ db: freshDb, productId: created.productId, actorUserId: input.ownerUserId });
   }
   const freshDb = await getDb();
   if (freshDb) await freshDb.insert(productOperations).values({ productId: created.productId, actorUserId: input.ownerUserId, source: "products_ui", action: "restored_from_catalog", changes: JSON.stringify({ productFolderId: folder.id, sourceReference: sourceReference(group.name, folder.name) }) });
-  return { productId: created.productId, productCode: folder.name, state: "draft" as const, imageCount: images.length };
+  return { productId: created.productId, productCode: folder.name, state: "draft" as const, imageCount: images.length, operationalCopiesCreated };
 }
