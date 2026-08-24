@@ -130,6 +130,20 @@ export const orders = mysqlTable(
   table => [index("orders_status_idx").on(table.status), index("orders_phone_idx").on(table.customerPhone), index("orders_created_idx").on(table.createdAt)],
 );
 
+/** Delivery fee configured by staff; a carrier integration can replace this source later. */
+export const deliveryGovernorateRates = mysqlTable(
+  "delivery_governorate_rates",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    governorate: varchar("governorate", { length: 120 }).notNull().unique(),
+    fee: decimal("fee", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("delivery_governorate_rates_enabled_idx").on(table.enabled)],
+);
+
 /** Immutable selling snapshot; later product changes never rewrite an order item. */
 export const orderItems = mysqlTable(
   "order_items",

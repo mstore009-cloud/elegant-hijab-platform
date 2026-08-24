@@ -1,0 +1,14 @@
+import { useMemo, useState } from "react";
+import { Save, Truck } from "lucide-react";
+import { trpc } from "@/lib/trpc";
+
+const governorates = ["بغداد", "البصرة", "نينوى", "الأنبار", "بابل", "كربلاء", "النجف", "ديالى", "ذي قار", "كركوك", "القادسية", "واسط", "ميسان", "المثنى", "صلاح الدين", "السليمانية", "أربيل", "دهوك"];
+
+export default function DeliverySettings() {
+  const rates = trpc.orders.deliveryRates.useQuery(); const utils = trpc.useUtils(); const save = trpc.orders.saveDeliveryRate.useMutation({ onSuccess: () => utils.orders.deliveryRates.invalidate() });
+  const initial = useMemo(() => Object.fromEntries((rates.data ?? []).map(rate => [rate.governorate, { fee: String(rate.fee), enabled: rate.enabled }])), [rates.data]);
+  const [drafts, setDrafts] = useState<Record<string, { fee: string; enabled: boolean }>>({});
+  const value = (governorate: string) => drafts[governorate] ?? initial[governorate] ?? { fee: "0", enabled: true };
+  const update = (governorate: string, patch: Partial<{ fee: string; enabled: boolean }>) => setDrafts(current => ({ ...current, [governorate]: { ...value(governorate), ...patch } }));
+  return <main dir="rtl" className="mx-auto max-w-5xl space-y-6 pb-10"><header className="flex items-center justify-between border-b border-[#e6ded0] pb-5"><div><p className="text-sm font-bold text-[#a47d40]">إعدادات المنصة</p><h1 className="mt-1 text-3xl font-black text-[#183d35]">أجور التوصيل</h1><p className="mt-2 text-sm text-[#68756e]">الأجرة المفعلة هنا تظهر للزبون في ملخص الطلب حسب المحافظة.</p></div><Truck className="h-8 w-8 text-[#a47d40]" /></header><section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{governorates.map(governorate => { const row = value(governorate); return <article key={governorate} className="rounded-2xl border border-[#e6ded0] bg-white p-4"><div className="flex items-center justify-between"><b>{governorate}</b><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={row.enabled} onChange={e => update(governorate, { enabled: e.target.checked })} />مفعلة</label></div><label className="mt-4 block text-xs font-bold text-[#68756e]">الأجرة بالدينار العراقي<input type="number" min="0" className="mt-2 w-full rounded-xl border-2 border-[#d9d0c1] px-3 py-2 outline-none focus:border-[#285f4e]" value={row.fee} onChange={e => update(governorate, { fee: e.target.value })} /></label><button onClick={() => save.mutate({ governorate, fee: Number(row.fee) || 0, enabled: row.enabled })} disabled={save.isPending} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#285f4e] py-2.5 text-sm font-bold text-white"><Save className="h-4 w-4" />حفظ أجرة {governorate}</button></article>; })}</section>{rates.error && <p className="rounded-xl bg-[#fff0ec] p-4 text-sm text-[#9c3f2d]">{rates.error.message}</p>}</main>;
+}

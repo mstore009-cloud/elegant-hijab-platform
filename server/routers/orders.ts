@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { assertPermission } from "../access/authorization";
-import { addOrderContactEvent, contactOutcomes, createStorefrontOrder, customerChannels, getOperationalOrder, listOperationalOrders, orderStatuses, transitionOrderStatus, updateOrderCommercialTerms } from "../orders/db";
+import { addOrderContactEvent, contactOutcomes, createStorefrontOrder, customerChannels, getOperationalOrder, getPublicDeliveryFee, listDeliveryRates, listOperationalOrders, orderStatuses, saveDeliveryRate, transitionOrderStatus, updateOrderCommercialTerms } from "../orders/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 
 const orderStatus = z.enum(orderStatuses);
@@ -13,6 +13,7 @@ function requiredPermissionForStatus(status: (typeof orderStatuses)[number]) {
 }
 
 export const ordersRouter = router({
+  publicDeliveryFee: publicProcedure.input(z.object({ governorate: z.string().trim().max(120) })).query(({ input }) => getPublicDeliveryFee(input.governorate)),
   createFromStorefront: publicProcedure.input(z.object({
     items: z.array(z.object({ productCode: z.string().trim().min(1).max(80), colorName: z.string().trim().min(1).max(100), quantity: z.number().int().min(1).max(100) })).min(1).max(30),
     customerName: z.string().trim().min(2).max(160),
@@ -24,6 +25,14 @@ export const ordersRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "orders.view");
     return listOperationalOrders();
+  }),
+  deliveryRates: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "orders.confirm");
+    return listDeliveryRates();
+  }),
+  saveDeliveryRate: protectedProcedure.input(z.object({ governorate: z.string().trim().min(2).max(120), fee: z.number().min(0).max(10000000), enabled: z.boolean() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.confirm");
+    return saveDeliveryRate({ ...input, actorUserId: ctx.user.id });
   }),
   byId: protectedProcedure.input(z.object({ orderId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "orders.view");

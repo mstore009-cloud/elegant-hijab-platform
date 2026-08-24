@@ -92,6 +92,13 @@
       "when": 1787603137318,
       "tag": "0012_slim_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1787604809975,
+      "tag": "0013_handy_kree",
+      "breakpoints": true
     }
   ]
 }

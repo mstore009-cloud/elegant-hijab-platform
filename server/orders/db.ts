@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { orderContactEvents, orderItems, orders, orderStatusEvents, productMedia, productVariants, products } from "../../drizzle/schema";
+import { deliveryGovernorateRates, orderContactEvents, orderItems, orders, orderStatusEvents, productMedia, productVariants, products } from "../../drizzle/schema";
 import { getDb } from "../db";
 
 export const orderStatuses = ["new", "needs_contact", "confirmed", "preparing", "out_for_delivery", "completed", "cancelled"] as const;
@@ -40,14 +40,36 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   });
   const subtotalNumber = resolved.reduce((total, item) => total + Number(item.product.sellingPrice) * item.quantity, 0);
   const subtotal = money(subtotalNumber);
+  const [rate] = await db.select().from(deliveryGovernorateRates).where(and(eq(deliveryGovernorateRates.governorate, input.governorate.trim()), eq(deliveryGovernorateRates.enabled, true))).limit(1);
+  const deliveryFee = rate ? Number(rate.fee) : 0;
   const orderNumber = createOrderNumber();
   return db.transaction(async tx => {
-    const created = await tx.insert(orders).values({ orderNumber, status: "new", source: "storefront", customerChannel: "storefront", customerName: input.customerName.trim(), customerPhone: input.customerPhone.trim(), governorate: input.governorate.trim(), address: input.address.trim(), customerNote: input.customerNote?.trim() || null, paymentMethod: "cash_on_delivery", subtotal, deliveryFee: "0.00", manualDiscount: "0.00", total: subtotal });
+    const created = await tx.insert(orders).values({ orderNumber, status: "new", source: "storefront", customerChannel: "storefront", customerName: input.customerName.trim(), customerPhone: input.customerPhone.trim(), governorate: input.governorate.trim(), address: input.address.trim(), customerNote: input.customerNote?.trim() || null, paymentMethod: "cash_on_delivery", subtotal, deliveryFee: money(deliveryFee), manualDiscount: "0.00", total: money(subtotalNumber + deliveryFee) });
     const orderId = Number(created[0].insertId);
     await tx.insert(orderItems).values(resolved.map(item => ({ orderId, productId: item.product.id, variantId: item.variant.id, productCodeSnapshot: item.product.productCode, productNameSnapshot: item.product.name, colorNameSnapshot: item.variant.colorName, imageStorageKeySnapshot: item.imageStorageKeySnapshot, unitPriceSnapshot: item.product.sellingPrice, quantity: item.quantity })));
     await tx.insert(orderStatusEvents).values({ orderId, fromStatus: null, toStatus: "new", actorUserId: null, source: "storefront", note: "طلب جديد من المتجر" });
     return { orderId, orderNumber, status: "new" as const };
   });
+}
+
+export async function getPublicDeliveryFee(governorate: string) {
+  const db = await getDb(); if (!db || !governorate.trim()) return { fee: "0.00", configured: false };
+  const [rate] = await db.select().from(deliveryGovernorateRates).where(and(eq(deliveryGovernorateRates.governorate, governorate.trim()), eq(deliveryGovernorateRates.enabled, true))).limit(1);
+  return { fee: rate?.fee ?? "0.00", configured: Boolean(rate) };
+}
+
+export async function listDeliveryRates() {
+  const db = await getDb(); if (!db) return [];
+  return db.select().from(deliveryGovernorateRates).orderBy(deliveryGovernorateRates.governorate);
+}
+
+export async function saveDeliveryRate(input: { governorate: string; fee: number; enabled: boolean; actorUserId: number }) {
+  const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const governorate = input.governorate.trim(); const fee = Math.max(0, Number(input.fee) || 0);
+  const [existing] = await db.select({ id: deliveryGovernorateRates.id }).from(deliveryGovernorateRates).where(eq(deliveryGovernorateRates.governorate, governorate)).limit(1);
+  if (existing) await db.update(deliveryGovernorateRates).set({ fee: money(fee), enabled: input.enabled, updatedByUserId: input.actorUserId }).where(eq(deliveryGovernorateRates.id, existing.id));
+  else await db.insert(deliveryGovernorateRates).values({ governorate, fee: money(fee), enabled: input.enabled, updatedByUserId: input.actorUserId });
+  return getPublicDeliveryFee(governorate);
 }
 
 export async function listOperationalOrders() {
