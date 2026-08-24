@@ -42,6 +42,50 @@ export function parseMissingFields(value: string | null) {
   }
 }
 
+export async function getProductReviewReadiness(productId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
+  const [variants, media, operations] = await Promise.all([
+    db.select().from(productVariants).where(eq(productVariants.productId, productId)),
+    db.select().from(productMedia).where(eq(productMedia.productId, productId)),
+    db.select().from(productOperations).where(eq(productOperations.productId, productId)).orderBy(desc(productOperations.createdAt), desc(productOperations.id)),
+  ]);
+  const reasons: string[] = [];
+  const missingFields = parseMissingFields(folderImport?.missingFields ?? null);
+  if (missingFields.length) reasons.push(...missingFields.map(field => `حقل أساسي ناقص: ${field}`));
+  const images = media.filter(item => item.mediaType === "image");
+  if (!images.length) reasons.push("لا توجد صور للمنتج.");
+  if (images.some(item => !item.storageKey)) reasons.push("توجد صور لم تجهز نسختها التشغيلية بعد.");
+  if (images.some(item => !item.variantId && !item.colorVerified)) reasons.push("توجد صور غير مسندة إلى لون.");
+  if (!variants.length) reasons.push("لا يوجد لون معتمد.");
+  const generated = operations.find(operation => operation.action === "color_suggestions_generated");
+  const reviewed = generated && operations.some(operation => operation.action === "color_suggestions_reviewed" && (() => { try { return JSON.parse(operation.changes).suggestionOperationId === generated.id; } catch { return false; } })());
+  if (generated && !reviewed) reasons.push("يوجد اقتراح ألوان بانتظار المراجعة.");
+  const savedColorQuantities = new Set(operations.filter(operation => operation.action === "color_inventory_saved").flatMap(operation => { try { const colorName = JSON.parse(operation.changes).colorName; return typeof colorName === "string" ? [colorName] : []; } catch { return []; } }));
+  if (operations.some(operation => operation.action === "inventory_saved")) variants.forEach(variant => savedColorQuantities.add(variant.colorName));
+  for (const colorName of Array.from(new Set(variants.map(variant => variant.colorName)))) if (!savedColorQuantities.has(colorName)) reasons.push(`لم تحفظ كمية اللون: ${colorName}`);
+  return { ready: reasons.length === 0, reasons };
+}
+
+export async function refreshProductReviewStatus(input: { productId: number; actorUserId: number; source?: "products_ui" | "whatsapp" }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const readiness = await getProductReviewReadiness(input.productId);
+  const nextStatus = readiness.ready ? "ready" : product.status === "ready" ? "needs_review" : product.status;
+  if (nextStatus !== product.status) {
+    await db.transaction(async tx => {
+      await tx.update(products).set({ status: nextStatus }).where(eq(products.id, input.productId));
+      await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: input.source ?? "products_ui", action: "review_readiness_updated", changes: JSON.stringify({ status: nextStatus, reasons: readiness.reasons }) });
+    });
+  }
+  return { status: nextStatus, ...readiness };
+}
+
 export function isPublicProductStatus(status: string) {
   return status === "active";
 }
@@ -82,7 +126,8 @@ export async function getProductWithVariants(productId: number) {
       if (suggestion && Array.isArray(suggestion.colorGroups)) pendingColorSuggestion = { operationId: generated.id, suggestion };
     } catch { /* ignore malformed historical log */ }
   }
-  return { product: result[0], variants, missingFields, pendingColorSuggestion };
+  const reviewReadiness = await getProductReviewReadiness(productId);
+  return { product: result[0], variants, missingFields, pendingColorSuggestion, reviewReadiness };
 }
 
 export async function generateAutomaticColorSuggestion(input: { productId: number; actorUserId: number; mediaIds?: number[] }) {
@@ -156,6 +201,7 @@ export async function applyAutomaticColorSuggestionReview(input: {
     }
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_suggestions_reviewed", changes: JSON.stringify({ suggestionOperationId: input.suggestionOperationId, decision: "accepted", appliedGroups: groups }) });
   });
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
   return { success: true as const, colorCount: groups.length, mediaCount: allIds.length };
 }
 
@@ -210,6 +256,7 @@ export async function updateProductDetails(input: {
     if (folderImport) await tx.update(catalogFolderImports).set({ missingFields: JSON.stringify(Array.from(nextMissing)), state: "needs_review" }).where(eq(catalogFolderImports.id, folderImport.id));
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: input.source, action: "details_updated", changes: JSON.stringify(changes) });
   });
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId, source: input.source });
   const [updated] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
   return { product: updated!, missingFields: Array.from(nextMissing) };
 }
@@ -266,6 +313,7 @@ export async function addProductColor(input: { productId: number; colorName: str
     return tx.select().from(productVariants).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, colorName)));
   });
   await removeCatalogMissingField(input.productId, "colors");
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId, source: input.source });
   return { created: true as const, variants: result };
 }
 
@@ -284,6 +332,7 @@ export async function renameProductColor(input: { productId: number; previousCol
     await tx.update(productVariants).set({ colorName }).where(and(eq(productVariants.productId, input.productId), eq(productVariants.colorName, previousColorName)));
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_renamed", changes: JSON.stringify({ previousColorName, colorName, variantIds: variants.map(variant => variant.id) }) });
   });
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
   return { updatedVariantCount: variants.length };
 }
 
@@ -306,6 +355,7 @@ export async function deleteProductColor(input: { productId: number; colorName: 
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_deleted", changes: JSON.stringify({ colorName, variantIds, mediaIds: colorMedia.map(media => media.id), originalFilesModified: false }) });
     await tx.delete(productVariants).where(inArray(productVariants.id, variantIds));
   });
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
   return { colorName, deletedVariantCount: variants.length, deletedMediaCount: colorMedia.length, originalFilesModified: false as const };
 }
 
@@ -326,6 +376,7 @@ export async function assignProductMediaColor(input: { productId: number; mediaI
       changes: JSON.stringify({ mediaId: input.mediaId, colorName: input.colorName.trim(), variantId: variant.id }),
     });
   });
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
   return { mediaId: input.mediaId, colorName: input.colorName.trim(), variantId: variant.id };
 }
 
@@ -342,6 +393,7 @@ export async function excludeProductMediaFromColorReview(input: { productId: num
     for (const mediaId of uniqueMediaIds) await tx.update(productMedia).set({ colorVerified: true }).where(eq(productMedia.id, mediaId));
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "media_color_review_excluded", changes: JSON.stringify({ mediaIds: uniqueMediaIds }) });
   });
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
   return { excludedMediaIds: uniqueMediaIds };
 }
 
@@ -370,6 +422,7 @@ export async function saveProductInventory(input: { productId: number; quantitie
     });
   });
   await removeCatalogMissingField(input.productId, "inventory");
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId, source: input.source });
   return { updatedVariantCount: variants.length };
 }
 
@@ -385,6 +438,7 @@ export async function saveProductColorInventory(input: { productId: number; colo
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "color_inventory_saved", changes: JSON.stringify({ colorName: input.colorName, inventoryQuantity: input.inventoryQuantity, variantIds: variants.map(variant => variant.id) }) });
   });
   await removeCatalogMissingField(input.productId, "inventory");
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
   return { updatedVariantCount: variants.length };
 }
 
@@ -419,6 +473,7 @@ export async function addManualProductImage(input: { productId: number; fileName
     });
     return mediaId;
   });
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
   return { mediaId: result, storageKey: uploaded.key, format: "webp" as const };
 }
 

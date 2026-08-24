@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductWithVariants, recordAutomaticColorSuggestionDecision, updateProductDetails } from "./db";
+import { addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductReviewReadiness, getProductWithVariants, recordAutomaticColorSuggestionDecision, saveProductColorInventory, updateProductDetails } from "./db";
 
 describe("عمليات المنتج الموحدة", () => {
   it("يكمل حقول المسودة ويسجل التعديل بصيغة يمكن لواجهة المنتجات وWhatsApp مشاركتها", async () => {
@@ -155,4 +155,38 @@ describe("عمليات المنتج الموحدة", () => {
       }
     }
   }, 15_000);
+
+  it("لا يصبح المنتج جاهزًا للمراجعة قبل حسم كل الصور وحفظ كمية كل لون، ويعود للمراجعة عند إضافة صورة", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار جاهزية المنتج.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار جاهزية المنتج.");
+    const productCode = `TST-READY-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ productCode, name: "منتج جاهز للمراجعة", category: "اختبار", description: "وصف", sizeLabels: null, status: "draft", sellingPrice: "10000.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      const media = await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: `products/test/${productCode}.webp`, originalFileName: "ready.webp", colorVerified: false });
+      const mediaId = Number(media[0].insertId);
+      expect((await getProductReviewReadiness(productId)).ready).toBe(false);
+      await addProductColor({ productId, colorName: "عنابي", actorUserId: owner.id });
+      await assignProductMediaColor({ productId, mediaId, colorName: "عنابي", actorUserId: owner.id });
+      expect((await getProductReviewReadiness(productId)).reasons).toContain("لم تحفظ كمية اللون: عنابي");
+      await saveProductColorInventory({ productId, colorName: "عنابي", inventoryQuantity: 5, actorUserId: owner.id });
+      expect(await getProductReviewReadiness(productId)).toEqual({ ready: true, reasons: [] });
+      const [readyProduct] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      expect(readyProduct?.status).toBe("ready");
+      await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: `products/test/${productCode}-new.webp`, originalFileName: "new.webp", colorVerified: false });
+      await assignProductMediaColor({ productId, mediaId, colorName: "عنابي", actorUserId: owner.id });
+      const [needsReview] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      expect(needsReview?.status).toBe("needs_review");
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productMedia).where(eq(productMedia.productId, productId));
+        await db.delete(productVariants).where(eq(productVariants.productId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 20_000);
 });

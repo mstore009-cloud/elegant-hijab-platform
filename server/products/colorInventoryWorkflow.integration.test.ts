@@ -6,7 +6,7 @@ import { getDb } from "../db";
 import { addProductColor, assignProductMediaColor, deleteProductColor, renameProductColor, saveProductColorInventory, saveProductInventory } from "./db";
 
 describe("تدفق اللون والمخزون", () => {
-  it("يعتمد لونًا ويربط صورته ويحفظ مخزون القياسات من دون نشر المسودة", async () => {
+  it("يعتمد لونًا ويربط صورته ويحفظ مخزون القياسات فيجعل المنتج جاهزًا للمراجعة من دون نشره", async () => {
     const db = await getDb();
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار اللون والمخزون.");
     const [owner] = await db.select({ id: users.id }).from(users).limit(1);
@@ -36,7 +36,7 @@ describe("تدفق اللون والمخزون", () => {
       expect(media?.colorVerified).toBe(true);
       expect(color.variants.map(variant => variant.id)).toContain(media?.variantId);
       const [product] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
-      expect(product?.status).toBe("draft");
+      expect(product?.status).toBe("ready");
       const [folder] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
       expect(JSON.parse(folder?.missingFields ?? "[]")).not.toContain("colors");
       expect(JSON.parse(folder?.missingFields ?? "[]")).not.toContain("inventory");
