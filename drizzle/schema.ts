@@ -151,6 +151,7 @@ export const storeSettings = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     defaultLanguage: varchar("defaultLanguage", { length: 16 }).default("ar").notNull(),
     currencyCode: varchar("currencyCode", { length: 8 }).default("IQD").notNull(),
+    defaultDeliveryFee: decimal("defaultDeliveryFee", { precision: 12, scale: 2 }).default("0.00").notNull(),
     updatedByUserId: int("updatedByUserId").references(() => users.id),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },

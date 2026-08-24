@@ -40,8 +40,8 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   });
   const subtotalNumber = resolved.reduce((total, item) => total + Number(item.product.sellingPrice) * item.quantity, 0);
   const subtotal = money(subtotalNumber);
-  const [rate] = await db.select().from(deliveryGovernorateRates).where(and(eq(deliveryGovernorateRates.governorate, input.governorate.trim()), eq(deliveryGovernorateRates.enabled, true))).limit(1);
-  const deliveryFee = rate ? Number(rate.fee) : 0;
+  const [settings] = await db.select().from(storeSettings).limit(1);
+  const deliveryFee = Number(settings?.defaultDeliveryFee ?? 0);
   const orderNumber = createOrderNumber();
   return db.transaction(async tx => {
     const couponCode = input.couponCode?.trim().toUpperCase() || null;
@@ -64,16 +64,16 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   });
 }
 
-export async function getPublicDeliveryFee(governorate: string) {
-  const db = await getDb(); if (!db || !governorate.trim()) return { fee: "0.00", configured: false };
-  const [rate] = await db.select().from(deliveryGovernorateRates).where(and(eq(deliveryGovernorateRates.governorate, governorate.trim()), eq(deliveryGovernorateRates.enabled, true))).limit(1);
-  return { fee: rate?.fee ?? "0.00", configured: Boolean(rate) };
+export async function getPublicDeliveryFee() {
+  const db = await getDb(); if (!db) return { fee: "0.00", configured: false };
+  const [settings] = await db.select().from(storeSettings).limit(1);
+  return { fee: settings?.defaultDeliveryFee ?? "0.00", configured: Boolean(settings) };
 }
 
 export async function getPublicStoreSettings() {
-  const db = await getDb(); if (!db) return { language: "ar", currencyCode: "IQD" };
+  const db = await getDb(); if (!db) return { language: "ar", currencyCode: "IQD", deliveryFee: "0.00" };
   const [settings] = await db.select().from(storeSettings).limit(1);
-  return { language: settings?.defaultLanguage ?? "ar", currencyCode: settings?.currencyCode ?? "IQD" };
+  return { language: settings?.defaultLanguage ?? "ar", currencyCode: settings?.currencyCode ?? "IQD", deliveryFee: settings?.defaultDeliveryFee ?? "0.00" };
 }
 
 export async function validatePublicCoupon(code: string, subtotal: number) {
@@ -88,13 +88,13 @@ export async function validatePublicCoupon(code: string, subtotal: number) {
 export async function getStoreSettingsForStaff() {
   const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const [settings] = await db.select().from(storeSettings).limit(1);
-  return settings ?? { id: 0, defaultLanguage: "ar", currencyCode: "IQD", updatedByUserId: null, updatedAt: null };
+  return settings ?? { id: 0, defaultLanguage: "ar", currencyCode: "IQD", defaultDeliveryFee: "0.00", updatedByUserId: null, updatedAt: null };
 }
 
-export async function saveStoreSettings(input: { defaultLanguage: string; currencyCode: string; actorUserId: number }) {
+export async function saveStoreSettings(input: { defaultLanguage: string; currencyCode: string; defaultDeliveryFee: number; actorUserId: number }) {
   const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const [existing] = await db.select({ id: storeSettings.id }).from(storeSettings).limit(1);
-  const values = { defaultLanguage: input.defaultLanguage.trim().toLowerCase(), currencyCode: input.currencyCode.trim().toUpperCase(), updatedByUserId: input.actorUserId };
+  const values = { defaultLanguage: input.defaultLanguage.trim().toLowerCase(), currencyCode: input.currencyCode.trim().toUpperCase(), defaultDeliveryFee: money(Math.max(0, Number(input.defaultDeliveryFee) || 0)), updatedByUserId: input.actorUserId };
   if (existing) await db.update(storeSettings).set(values).where(eq(storeSettings.id, existing.id));
   else await db.insert(storeSettings).values(values);
   return getStoreSettingsForStaff();
@@ -131,7 +131,7 @@ export async function saveDeliveryRate(input: { governorate: string; fee: number
   const [existing] = await db.select({ id: deliveryGovernorateRates.id }).from(deliveryGovernorateRates).where(eq(deliveryGovernorateRates.governorate, governorate)).limit(1);
   if (existing) await db.update(deliveryGovernorateRates).set({ fee: money(fee), enabled: input.enabled, updatedByUserId: input.actorUserId }).where(eq(deliveryGovernorateRates.id, existing.id));
   else await db.insert(deliveryGovernorateRates).values({ governorate, fee: money(fee), enabled: input.enabled, updatedByUserId: input.actorUserId });
-  return getPublicDeliveryFee(governorate);
+  return getPublicDeliveryFee();
 }
 
 export async function listOperationalOrders() {
