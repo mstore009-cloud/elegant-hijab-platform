@@ -13,6 +13,11 @@ type CartItemInput = { productCode: string; colorName: string; quantity: number 
 type CreateStorefrontOrderInput = { items: CartItemInput[]; customerName: string; customerPhone: string; governorate: string; address: string; customerNote?: string | null; couponCode?: string | null };
 function createOrderNumber() { return `ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`; }
 function money(value: number) { return value.toFixed(2); }
+export function deliveryTerms(settings: { defaultDeliveryFee: string; freeDeliveryEnabled: boolean; freeDeliveryThreshold: string | null } | undefined, subtotal: number) {
+  const threshold = settings?.freeDeliveryThreshold === null || settings?.freeDeliveryThreshold === undefined ? null : Number(settings.freeDeliveryThreshold);
+  const freeDelivery = Boolean(settings?.freeDeliveryEnabled) && threshold !== null && subtotal >= threshold;
+  return { fee: freeDelivery ? 0 : Number(settings?.defaultDeliveryFee ?? 0), freeDelivery, threshold };
+}
 
 export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   const db = await getDb();
@@ -41,7 +46,7 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   const subtotalNumber = resolved.reduce((total, item) => total + Number(item.product.sellingPrice) * item.quantity, 0);
   const subtotal = money(subtotalNumber);
   const [settings] = await db.select().from(storeSettings).limit(1);
-  const deliveryFee = Number(settings?.defaultDeliveryFee ?? 0);
+  const deliveryFee = deliveryTerms(settings, subtotalNumber).fee;
   const orderNumber = createOrderNumber();
   return db.transaction(async tx => {
     const couponCode = input.couponCode?.trim().toUpperCase() || null;
@@ -64,16 +69,17 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   });
 }
 
-export async function getPublicDeliveryFee() {
-  const db = await getDb(); if (!db) return { fee: "0.00", configured: false };
+export async function getPublicDeliveryFee(subtotal = 0) {
+  const db = await getDb(); if (!db) return { fee: "0.00", configured: false, freeDelivery: false, threshold: null };
   const [settings] = await db.select().from(storeSettings).limit(1);
-  return { fee: settings?.defaultDeliveryFee ?? "0.00", configured: Boolean(settings) };
+  const terms = deliveryTerms(settings, subtotal);
+  return { fee: money(terms.fee), configured: Boolean(settings), freeDelivery: terms.freeDelivery, threshold: terms.threshold === null ? null : money(terms.threshold) };
 }
 
 export async function getPublicStoreSettings() {
-  const db = await getDb(); if (!db) return { language: "ar", currencyCode: "IQD", deliveryFee: "0.00" };
+  const db = await getDb(); if (!db) return { language: "ar", currencyCode: "IQD", deliveryFee: "0.00", freeDeliveryEnabled: false, freeDeliveryThreshold: null };
   const [settings] = await db.select().from(storeSettings).limit(1);
-  return { language: settings?.defaultLanguage ?? "ar", currencyCode: settings?.currencyCode ?? "IQD", deliveryFee: settings?.defaultDeliveryFee ?? "0.00" };
+  return { language: settings?.defaultLanguage ?? "ar", currencyCode: settings?.currencyCode ?? "IQD", deliveryFee: settings?.defaultDeliveryFee ?? "0.00", freeDeliveryEnabled: settings?.freeDeliveryEnabled ?? false, freeDeliveryThreshold: settings?.freeDeliveryThreshold ?? null };
 }
 
 export async function validatePublicCoupon(code: string, subtotal: number) {
@@ -88,13 +94,13 @@ export async function validatePublicCoupon(code: string, subtotal: number) {
 export async function getStoreSettingsForStaff() {
   const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const [settings] = await db.select().from(storeSettings).limit(1);
-  return settings ?? { id: 0, defaultLanguage: "ar", currencyCode: "IQD", defaultDeliveryFee: "0.00", updatedByUserId: null, updatedAt: null };
+  return settings ?? { id: 0, defaultLanguage: "ar", currencyCode: "IQD", defaultDeliveryFee: "0.00", freeDeliveryEnabled: false, freeDeliveryThreshold: null, updatedByUserId: null, updatedAt: null };
 }
 
-export async function saveStoreSettings(input: { defaultLanguage: string; currencyCode: string; defaultDeliveryFee: number; actorUserId: number }) {
+export async function saveStoreSettings(input: { defaultLanguage: string; currencyCode: string; defaultDeliveryFee: number; freeDeliveryEnabled: boolean; freeDeliveryThreshold?: number | null; actorUserId: number }) {
   const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const [existing] = await db.select({ id: storeSettings.id }).from(storeSettings).limit(1);
-  const values = { defaultLanguage: input.defaultLanguage.trim().toLowerCase(), currencyCode: input.currencyCode.trim().toUpperCase(), defaultDeliveryFee: money(Math.max(0, Number(input.defaultDeliveryFee) || 0)), updatedByUserId: input.actorUserId };
+  const values = { defaultLanguage: input.defaultLanguage.trim().toLowerCase(), currencyCode: input.currencyCode.trim().toUpperCase(), defaultDeliveryFee: money(Math.max(0, Number(input.defaultDeliveryFee) || 0)), freeDeliveryEnabled: input.freeDeliveryEnabled, freeDeliveryThreshold: input.freeDeliveryEnabled ? money(Math.max(0, Number(input.freeDeliveryThreshold) || 0)) : null, updatedByUserId: input.actorUserId };
   if (existing) await db.update(storeSettings).set(values).where(eq(storeSettings.id, existing.id));
   else await db.insert(storeSettings).values(values);
   return getStoreSettingsForStaff();

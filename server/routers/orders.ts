@@ -14,7 +14,7 @@ function requiredPermissionForStatus(status: (typeof orderStatuses)[number]) {
 
 export const ordersRouter = router({
   publicStoreSettings: publicProcedure.query(() => getPublicStoreSettings()),
-  publicDeliveryFee: publicProcedure.query(() => getPublicDeliveryFee()),
+  publicDeliveryFee: publicProcedure.input(z.object({ subtotal: z.number().min(0) })).query(({ input }) => getPublicDeliveryFee(input.subtotal)),
   validateCoupon: publicProcedure.input(z.object({ code: z.string().trim().max(80), subtotal: z.number().min(0) })).query(({ input }) => validatePublicCoupon(input.code, input.subtotal)),
   createFromStorefront: publicProcedure.input(z.object({
     items: z.array(z.object({ productCode: z.string().trim().min(1).max(80), colorName: z.string().trim().min(1).max(100), quantity: z.number().int().min(1).max(100) })).min(1).max(30),
@@ -41,7 +41,7 @@ export const ordersRouter = router({
     await assertPermission(ctx.user, "settings.manage");
     return getStoreSettingsForStaff();
   }),
-  saveStoreSettings: protectedProcedure.input(z.object({ defaultLanguage: z.string().trim().min(2).max(16), currencyCode: z.string().trim().min(3).max(8), defaultDeliveryFee: z.number().min(0).max(10000000) })).mutation(async ({ ctx, input }) => {
+  saveStoreSettings: protectedProcedure.input(z.object({ defaultLanguage: z.string().trim().min(2).max(16), currencyCode: z.string().trim().min(3).max(8), defaultDeliveryFee: z.number().min(0).max(10000000), freeDeliveryEnabled: z.boolean(), freeDeliveryThreshold: z.number().min(0).max(100000000).nullable().optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "settings.manage");
     return saveStoreSettings({ ...input, actorUserId: ctx.user.id });
   }),

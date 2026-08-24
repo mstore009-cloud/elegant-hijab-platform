@@ -152,6 +152,8 @@ export const storeSettings = mysqlTable(
     defaultLanguage: varchar("defaultLanguage", { length: 16 }).default("ar").notNull(),
     currencyCode: varchar("currencyCode", { length: 8 }).default("IQD").notNull(),
     defaultDeliveryFee: decimal("defaultDeliveryFee", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    freeDeliveryEnabled: boolean("freeDeliveryEnabled").default(false).notNull(),
+    freeDeliveryThreshold: decimal("freeDeliveryThreshold", { precision: 12, scale: 2 }),
     updatedByUserId: int("updatedByUserId").references(() => users.id),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
