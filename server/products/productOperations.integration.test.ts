@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { catalogFolderImports, productOperations, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, productMedia, productOperations, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { updateProductDetails } from "./db";
+import { excludeProductMediaFromColorReview, updateProductDetails } from "./db";
 
 describe("عمليات المنتج الموحدة", () => {
   it("يكمل حقول المسودة ويسجل التعديل بصيغة يمكن لواجهة المنتجات وWhatsApp مشاركتها", async () => {
@@ -28,6 +28,36 @@ describe("عمليات المنتج الموحدة", () => {
       if (productId) {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));
         await db.delete(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 15_000);
+
+  it("يستبعد الصورة من مراجعة اللون بلا حذف أو ربط لون أو نشر", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار استبعاد مراجعة اللون.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار استبعاد مراجعة اللون.");
+    const productCode = `TST-EXCLUDE-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    let mediaId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ productCode, name: "منتج صورة غير مؤكدة", category: "اختبار", description: null, sizeLabels: null, status: "draft", sellingPrice: "0.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      const media = await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", originalUrl: null, storageKey: `test/${productCode}.webp`, originalFileName: "test.webp", colorVerified: false, sortOrder: 0 });
+      mediaId = Number(media[0].insertId);
+      const result = await excludeProductMediaFromColorReview({ productId, mediaIds: [mediaId], actorUserId: owner.id });
+      expect(result.excludedMediaIds).toEqual([mediaId]);
+      const [storedMedia] = await db.select().from(productMedia).where(eq(productMedia.id, mediaId)).limit(1);
+      expect(storedMedia).toMatchObject({ id: mediaId, productId, variantId: null, colorVerified: true });
+      const [storedProduct] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      expect(storedProduct?.status).toBe("draft");
+      const [audit] = await db.select().from(productOperations).where(and(eq(productOperations.productId, productId), eq(productOperations.action, "media_color_review_excluded"))).limit(1);
+      expect(audit).toMatchObject({ actorUserId: owner.id, source: "products_ui" });
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        if (mediaId) await db.delete(productMedia).where(eq(productMedia.id, mediaId));
         await db.delete(products).where(eq(products.id, productId));
       }
     }

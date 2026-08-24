@@ -3,7 +3,7 @@ import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { addManualProductImage, addProductColor, assignProductMediaColor, createImportJob, createProduct, detachProductMediaReference, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { addManualProductImage, addProductColor, assignProductMediaColor, createImportJob, createProduct, detachProductMediaReference, excludeProductMediaFromColorReview, getProductMedia, getProductWithVariants, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -53,6 +53,7 @@ export const productsRouter = router({
       .map(async entry => ({
         mediaId: entry.id,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
+        colorReviewState: entry.variantId ? "assigned" as const : entry.colorVerified ? "excluded" as const : "unconfirmed" as const,
         inventoryQuantity: variantById.get(entry.variantId ?? -1)?.inventoryQuantity ?? 0,
         originalFileName: entry.originalFileName ?? "صورة المنتج",
         dataUrl: (await storageGet(entry.storageKey!)).url,
@@ -78,6 +79,7 @@ export const productsRouter = router({
       return {
         mediaId: entry.id,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
+        colorReviewState: entry.variantId ? "assigned" as const : entry.colorVerified ? "excluded" as const : "unconfirmed" as const,
         inventoryQuantity: variantById.get(entry.variantId ?? -1)?.inventoryQuantity ?? 0,
         originalFileName: entry.originalFileName!,
         dataUrl: await readCatalogImageDataUrl({ encryptedAccessToken: connection.encryptedAccessToken, driveId, fileId: sourceFileId }),
@@ -156,6 +158,13 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     return assignProductMediaColor({ ...input, actorUserId: ctx.user.id });
+  }),
+  excludeMediaFromColorReview: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    mediaIds: z.array(z.number().int().positive()).min(1).max(100),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    return excludeProductMediaFromColorReview({ ...input, actorUserId: ctx.user.id });
   }),
   analyzeColors: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaIds: z.array(z.number().int().positive()).min(1).max(12).optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");

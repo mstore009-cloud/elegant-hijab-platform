@@ -21,12 +21,22 @@ export async function listProductsWithPrimaryOperationalMedia() {
     db.select().from(catalogFolderImports),
   ]);
   const primaryMediaByProductId = new Map<number, typeof mediaList[number]>();
+  const unconfirmedMediaByProductId = new Map<number, number>();
   for (const media of mediaList) {
     if (!media.storageKey || primaryMediaByProductId.has(media.productId)) continue;
     primaryMediaByProductId.set(media.productId, media);
   }
+  for (const media of mediaList) {
+    if (media.mediaType === "image" && !media.variantId && !media.colorVerified) {
+      unconfirmedMediaByProductId.set(media.productId, (unconfirmedMediaByProductId.get(media.productId) ?? 0) + 1);
+    }
+  }
   const missingByProductId = new Map(folderImports.filter(entry => entry.linkedProductId).map(entry => [entry.linkedProductId!, parseMissingFields(entry.missingFields)]));
-  return productList.map(product => ({ product, primaryMedia: primaryMediaByProductId.get(product.id) ?? null, missingFields: missingByProductId.get(product.id) ?? [] }));
+  return productList.map(product => {
+    const missingFields = [...(missingByProductId.get(product.id) ?? [])];
+    if ((unconfirmedMediaByProductId.get(product.id) ?? 0) > 0 && !missingFields.includes("imageColorReview")) missingFields.push("imageColorReview");
+    return { product, primaryMedia: primaryMediaByProductId.get(product.id) ?? null, missingFields };
+  });
 }
 
 export function parseMissingFields(value: string | null) {
@@ -64,8 +74,11 @@ export async function getProductWithVariants(productId: number) {
   const result = await db.select().from(products).where(eq(products.id, productId)).limit(1);
   if (!result[0]) return null;
   const variants = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
+  const media = await db.select().from(productMedia).where(eq(productMedia.productId, productId));
   const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
-  return { product: result[0], variants, missingFields: parseMissingFields(folderImport?.missingFields ?? null) };
+  const missingFields = parseMissingFields(folderImport?.missingFields ?? null);
+  if (media.some(item => item.mediaType === "image" && !item.variantId && !item.colorVerified) && !missingFields.includes("imageColorReview")) missingFields.push("imageColorReview");
+  return { product: result[0], variants, missingFields };
 }
 
 export async function updateProductDetails(input: {
@@ -196,6 +209,22 @@ export async function assignProductMediaColor(input: { productId: number; mediaI
     });
   });
   return { mediaId: input.mediaId, colorName: input.colorName.trim(), variantId: variant.id };
+}
+
+export async function excludeProductMediaFromColorReview(input: { productId: number; mediaIds: number[]; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const uniqueMediaIds = Array.from(new Set(input.mediaIds));
+  if (uniqueMediaIds.length === 0) throw new Error("اختر صورة واحدة على الأقل لاستبعادها من مراجعة اللون.");
+  const matching = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
+  const mediaById = new Map(matching.map(item => [item.id, item]));
+  if (uniqueMediaIds.some(mediaId => !mediaById.has(mediaId))) throw new Error("تتضمن الصور المحددة صورة لا تنتمي إلى هذا المنتج.");
+  if (uniqueMediaIds.some(mediaId => mediaById.get(mediaId)?.variantId)) throw new Error("لا يمكن استبعاد صورة مرتبطة بلون. افصل رابط اللون أولًا إن احتجت.");
+  await db.transaction(async tx => {
+    for (const mediaId of uniqueMediaIds) await tx.update(productMedia).set({ colorVerified: true }).where(eq(productMedia.id, mediaId));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "media_color_review_excluded", changes: JSON.stringify({ mediaIds: uniqueMediaIds }) });
+  });
+  return { excludedMediaIds: uniqueMediaIds };
 }
 
 export async function saveProductInventory(input: { productId: number; quantities: Array<{ variantId: number; inventoryQuantity: number }>; actorUserId: number; source?: "products_ui" | "whatsapp" }) {
