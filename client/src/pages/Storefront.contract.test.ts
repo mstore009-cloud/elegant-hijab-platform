@@ -24,6 +24,10 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("خصم القسيمة");
     expect(source).toContain("couponCode: appliedCoupon");
     expect(source).toContain("price(total)");
+    expect(source).toContain("FreeDeliveryProgress");
+    expect(source).toContain("remainingForFreeDelivery");
+    expect(source).toContain("توصيل مجاني للطلبات الكبيرة");
+    expect(source).toContain("freeDeliveryEnabled");
     expect(source).not.toContain("الدفع الإلكتروني");
   });
 });

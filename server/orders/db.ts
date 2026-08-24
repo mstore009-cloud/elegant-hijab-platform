@@ -100,7 +100,7 @@ export async function getStoreSettingsForStaff() {
 export async function saveStoreSettings(input: { defaultLanguage: string; currencyCode: string; defaultDeliveryFee: number; freeDeliveryEnabled: boolean; freeDeliveryThreshold?: number | null; actorUserId: number }) {
   const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const [existing] = await db.select({ id: storeSettings.id }).from(storeSettings).limit(1);
-  const values = { defaultLanguage: input.defaultLanguage.trim().toLowerCase(), currencyCode: input.currencyCode.trim().toUpperCase(), defaultDeliveryFee: money(Math.max(0, Number(input.defaultDeliveryFee) || 0)), freeDeliveryEnabled: input.freeDeliveryEnabled, freeDeliveryThreshold: input.freeDeliveryEnabled ? money(Math.max(0, Number(input.freeDeliveryThreshold) || 0)) : null, updatedByUserId: input.actorUserId };
+  const values = { defaultLanguage: input.defaultLanguage.trim().toLowerCase(), currencyCode: input.currencyCode.trim().toUpperCase(), defaultDeliveryFee: money(Math.max(0, Number(input.defaultDeliveryFee) || 0)), freeDeliveryEnabled: input.freeDeliveryEnabled, freeDeliveryThreshold: input.freeDeliveryThreshold === null || input.freeDeliveryThreshold === undefined ? null : money(Math.max(0, Number(input.freeDeliveryThreshold) || 0)), updatedByUserId: input.actorUserId };
   if (existing) await db.update(storeSettings).set(values).where(eq(storeSettings.id, existing.id));
   else await db.insert(storeSettings).values(values);
   return getStoreSettingsForStaff();
