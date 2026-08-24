@@ -8,7 +8,9 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("trpc.products.publicByCode.useQuery");
     expect(source).toContain("muted loop playsInline autoPlay");
     expect(source).toContain("اختاري اللون");
-    expect(source).toContain("اطلب هذا المنتج");
+    expect(source).toContain("أضف ");
+    expect(source).toContain("تم ومتابعة الطلب");
+    expect(source).toContain("سلتك");
     expect(source).toContain("trpc.orders.createFromStorefront.useMutation");
     expect(source).not.toContain("الدفع الإلكتروني");
   });

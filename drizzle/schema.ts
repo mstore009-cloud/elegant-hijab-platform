@@ -111,6 +111,7 @@ export const orders = mysqlTable(
     orderNumber: varchar("orderNumber", { length: 40 }).notNull().unique(),
     status: mysqlEnum("status", orderStatuses).default("new").notNull(),
     source: mysqlEnum("source", ["storefront", "manual", "whatsapp"]).default("storefront").notNull(),
+    customerChannel: mysqlEnum("customerChannel", ["storefront", "whatsapp", "instagram", "messenger", "manual"]).default("storefront").notNull(),
     customerName: varchar("customerName", { length: 160 }).notNull(),
     customerPhone: varchar("customerPhone", { length: 40 }).notNull(),
     governorate: varchar("governorate", { length: 120 }).notNull(),
@@ -118,6 +119,9 @@ export const orders = mysqlTable(
     customerNote: text("customerNote"),
     paymentMethod: mysqlEnum("paymentMethod", ["cash_on_delivery"]).default("cash_on_delivery").notNull(),
     subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
+    deliveryFee: decimal("deliveryFee", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    manualDiscount: decimal("manualDiscount", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    total: decimal("total", { precision: 12, scale: 2 }).default("0.00").notNull(),
     inventoryDeductedAt: timestamp("inventoryDeductedAt"),
     confirmedByUserId: int("confirmedByUserId").references(() => users.id),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -137,6 +141,7 @@ export const orderItems = mysqlTable(
     productCodeSnapshot: varchar("productCodeSnapshot", { length: 80 }).notNull(),
     productNameSnapshot: varchar("productNameSnapshot", { length: 220 }).notNull(),
     colorNameSnapshot: varchar("colorNameSnapshot", { length: 100 }).notNull(),
+    imageStorageKeySnapshot: varchar("imageStorageKeySnapshot", { length: 512 }),
     unitPriceSnapshot: decimal("unitPriceSnapshot", { precision: 12, scale: 2 }).notNull(),
     quantity: int("quantity").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -158,6 +163,21 @@ export const orderStatusEvents = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [index("order_events_order_idx").on(table.orderId), index("order_events_status_idx").on(table.toStatus)],
+);
+
+/** Internal record of contact attempts; the external channel integration is added separately. */
+export const orderContactEvents = mysqlTable(
+  "order_contact_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    orderId: int("orderId").notNull().references(() => orders.id),
+    channel: mysqlEnum("channel", ["storefront", "whatsapp", "instagram", "messenger", "manual"]).notNull(),
+    outcome: mysqlEnum("outcome", ["attempted", "no_answer", "customer_confirmed", "customer_requested_change", "cancelled"]).notNull(),
+    note: text("note"),
+    actorUserId: int("actorUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("order_contact_order_idx").on(table.orderId), index("order_contact_channel_idx").on(table.channel)],
 );
 
 export const productMedia = mysqlTable(

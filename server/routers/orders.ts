@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { assertPermission } from "../access/authorization";
-import { createStorefrontOrder, getOperationalOrder, listOperationalOrders, orderStatuses, transitionOrderStatus } from "../orders/db";
+import { addOrderContactEvent, contactOutcomes, createStorefrontOrder, customerChannels, getOperationalOrder, listOperationalOrders, orderStatuses, transitionOrderStatus, updateOrderCommercialTerms } from "../orders/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 
 const orderStatus = z.enum(orderStatuses);
@@ -14,9 +14,7 @@ function requiredPermissionForStatus(status: (typeof orderStatuses)[number]) {
 
 export const ordersRouter = router({
   createFromStorefront: publicProcedure.input(z.object({
-    productCode: z.string().trim().min(1).max(80),
-    colorName: z.string().trim().min(1).max(100),
-    quantity: z.number().int().min(1).max(100),
+    items: z.array(z.object({ productCode: z.string().trim().min(1).max(80), colorName: z.string().trim().min(1).max(100), quantity: z.number().int().min(1).max(100) })).min(1).max(30),
     customerName: z.string().trim().min(2).max(160),
     customerPhone: z.string().trim().min(6).max(40),
     governorate: z.string().trim().min(2).max(120),
@@ -34,5 +32,13 @@ export const ordersRouter = router({
   transition: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), nextStatus: orderStatus, note: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, requiredPermissionForStatus(input.nextStatus));
     return transitionOrderStatus({ ...input, actorUserId: ctx.user.id });
+  }),
+  updateCommercialTerms: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), deliveryFee: z.number().min(0).max(10000000), manualDiscount: z.number().min(0).max(10000000), customerChannel: z.enum(customerChannels) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.confirm");
+    return updateOrderCommercialTerms({ ...input, actorUserId: ctx.user.id });
+  }),
+  addContactEvent: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), channel: z.enum(customerChannels), outcome: z.enum(contactOutcomes), note: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.confirm");
+    return addOrderContactEvent({ ...input, actorUserId: ctx.user.id });
   }),
 });
