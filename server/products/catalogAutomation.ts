@@ -21,6 +21,37 @@ function sourceReference(groupName: string, productCode: string) {
   return `Catalog/${groupName}/${productCode}`;
 }
 
+function isReliableColorSuggestion(changes: string) {
+  try {
+    const note = JSON.parse(changes)?.suggestion?.overallReviewNote;
+    return typeof note === "string" && !note.includes("تعذر إكمال التحليل الذكي");
+  } catch {
+    return false;
+  }
+}
+
+async function ensureAutomaticColorSuggestion(input: { db: NonNullable<Awaited<ReturnType<typeof getDb>>>; productId: number; actorUserId: number }) {
+  const media = await input.db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
+  if (!media.some(item => item.storageKey)) return { generated: false, reason: "no_operational_media" as const };
+  const operations = await input.db.select().from(productOperations).where(eq(productOperations.productId, input.productId));
+  if (operations.some(operation => operation.action === "color_suggestions_generated" && isReliableColorSuggestion(operation.changes))) {
+    return { generated: false, reason: "reliable_suggestion_exists" as const };
+  }
+  try {
+    await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: input.actorUserId });
+    return { generated: true, reason: "generated" as const };
+  } catch (error) {
+    await input.db.insert(productOperations).values({
+      productId: input.productId,
+      actorUserId: input.actorUserId,
+      source: "catalog_scan",
+      action: "color_suggestions_generation_failed",
+      changes: JSON.stringify({ message: error instanceof Error ? error.message : "تعذر تحليل ألوان الصور تلقائيًا." }),
+    });
+    return { generated: false, reason: "failed" as const };
+  }
+}
+
 async function upsertFolderObservation(input: {
   ownerUserId: number;
   productFolderId: string;
@@ -154,6 +185,7 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
             imageCount: images.length,
             missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [],
           });
+          await ensureAutomaticColorSuggestion({ db, productId: existingProduct.id, actorUserId: ownerUserId });
           summary.existing += 1;
           continue;
         }
@@ -164,13 +196,7 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
         if (images.length > 0) {
           const copies = await generateOperationalMediaForProduct({ userId: ownerUserId, productId: created.productId });
           summary.operationalCopiesCreated += copies.created.length;
-          if (copies.created.length > 0) {
-            try {
-              await generateAutomaticColorSuggestion({ productId: created.productId, actorUserId: ownerUserId });
-            } catch (error) {
-              await db.insert(productOperations).values({ productId: created.productId, actorUserId: ownerUserId, source: "catalog_scan", action: "color_suggestions_generation_failed", changes: JSON.stringify({ message: error instanceof Error ? error.message : "تعذر تحليل ألوان الصور تلقائيًا." }) });
-            }
-          }
+          if (copies.created.length > 0) await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: ownerUserId });
         }
       } catch (error) {
         summary.failed += 1;

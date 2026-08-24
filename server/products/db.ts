@@ -79,7 +79,7 @@ export async function getProductWithVariants(productId: number) {
   const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
   const missingFields = parseMissingFields(folderImport?.missingFields ?? null);
   if (media.some(item => item.mediaType === "image" && !item.variantId && !item.colorVerified) && !missingFields.includes("imageColorReview")) missingFields.push("imageColorReview");
-  const operations = await db.select().from(productOperations).where(eq(productOperations.productId, productId)).orderBy(desc(productOperations.createdAt));
+  const operations = await db.select().from(productOperations).where(eq(productOperations.productId, productId)).orderBy(desc(productOperations.createdAt), desc(productOperations.id));
   const generated = operations.find(operation => operation.action === "color_suggestions_generated");
   const reviewed = generated ? operations.some(operation => operation.action === "color_suggestions_reviewed" && (() => {
     try { return JSON.parse(operation.changes).suggestionOperationId === generated.id; } catch { return false; }

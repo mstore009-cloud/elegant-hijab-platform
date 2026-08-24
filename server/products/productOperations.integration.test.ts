@@ -73,10 +73,11 @@ describe("عمليات المنتج الموحدة", () => {
     try {
       const created = await db.insert(products).values({ productCode, name: "منتج اقتراح تلقائي", category: "اختبار", description: null, sizeLabels: null, status: "draft", sellingPrice: "0.00", createdByUserId: owner.id });
       productId = Number(created[0].insertId);
-      const operation = await db.insert(productOperations).values({ productId, actorUserId: owner.id, source: "catalog_scan", action: "color_suggestions_generated", changes: JSON.stringify({ suggestion: { colorGroups: [{ colorNameArabic: "عنابي", confidence: 0.7, mediaIds: [1], reviewNote: "اقتراح تلقائي" }], uncertainMediaIds: [], overallReviewNote: "راجع الاقتراح" } }) });
+      await db.insert(productOperations).values({ productId, actorUserId: owner.id, source: "catalog_scan", action: "color_suggestions_generated", changes: JSON.stringify({ suggestion: { colorGroups: [{ colorNameArabic: "عنابي", confidence: 0.7, mediaIds: [1], reviewNote: "اقتراح سابق" }], uncertainMediaIds: [], overallReviewNote: "راجع الاقتراح السابق" } }) });
+      const operation = await db.insert(productOperations).values({ productId, actorUserId: owner.id, source: "catalog_scan", action: "color_suggestions_generated", changes: JSON.stringify({ suggestion: { colorGroups: [{ colorNameArabic: "بيج", confidence: 0.9, mediaIds: [2], reviewNote: "اقتراح أحدث" }], uncertainMediaIds: [], overallReviewNote: "راجع الاقتراح الأحدث" } }) });
       const operationId = Number(operation[0].insertId);
       const pending = await getProductWithVariants(productId);
-      expect(pending?.pendingColorSuggestion).toMatchObject({ operationId, suggestion: { colorGroups: [{ colorNameArabic: "عنابي" }] } });
+      expect(pending?.pendingColorSuggestion).toMatchObject({ operationId, suggestion: { colorGroups: [{ colorNameArabic: "بيج" }] } });
       expect(pending?.variants).toHaveLength(0);
       await recordAutomaticColorSuggestionDecision({ productId, suggestionOperationId: operationId, decision: "rejected", actorUserId: owner.id });
       const reviewed = await getProductWithVariants(productId);
