@@ -22,6 +22,10 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("toggleSuggestionMedia");
     expect(source).toContain("حذف اللون");
     expect(source).toContain("حذف المنتج نهائيًا");
+    expect(source).toContain("صور غير مسندة إلى لون");
+    expect(source).toContain("هل أنت متأكد من حذف المنتج؟");
+    expect(source).toContain("نعم، احذف المنتج");
+    expect(source).toContain("<AlertDialogCancel>لا</AlertDialogCancel>");
     expect(source).not.toContain("حفظ المخزون");
   });
 });
