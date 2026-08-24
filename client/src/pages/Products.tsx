@@ -37,7 +37,7 @@ export default function Products() {
   const canInventory = profile.data?.permissions.includes("products.inventory.update") ?? false;
   const utils = trpc.useUtils();
 
-  const [filter, setFilter] = useState<WorkFilter>("needs_work");
+  const [filter, setFilter] = useState<WorkFilter>("all");
   const [search, setSearch] = useState("");
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const detailInput = useMemo(() => selectedProductId ? { productId: selectedProductId } : skipToken, [selectedProductId]);
@@ -81,12 +81,12 @@ export default function Products() {
 
   const workCounts = useMemo(() => ({
     needs_work: products.data?.filter(product => product.missingFields.length > 0).length ?? 0,
-    draft: products.data?.filter(product => product.status === "draft" && product.missingFields.length === 0).length ?? 0,
+    draft: products.data?.filter(product => product.status === "draft").length ?? 0,
     ready: products.data?.filter(product => product.status === "ready" || product.status === "needs_review").length ?? 0,
     active: products.data?.filter(product => product.status === "active").length ?? 0,
   }), [products.data]);
   const filteredProducts = useMemo(() => (products.data ?? []).filter(product => {
-    const matchesFilter = filter === "all" || (filter === "needs_work" ? product.missingFields.length > 0 : filter === "draft" ? product.status === "draft" && product.missingFields.length === 0 : filter === "ready" ? ["ready", "needs_review"].includes(product.status) : product.status === "active");
+    const matchesFilter = filter === "all" || (filter === "needs_work" ? product.missingFields.length > 0 : filter === "draft" ? product.status === "draft" : filter === "ready" ? ["ready", "needs_review"].includes(product.status) : product.status === "active");
     const keyword = search.trim().toLocaleLowerCase("ar");
     const matchesSearch = !keyword || [product.name, product.productCode, product.category ?? "", ...product.missingFields.map(fieldLabel)].join(" ").toLocaleLowerCase("ar").includes(keyword);
     return matchesFilter && matchesSearch;
@@ -134,7 +134,7 @@ export default function Products() {
         <div>
           <p className="text-sm font-medium text-[#98713f]">إدارة الكتالوج</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-[#183d35]">المنتجات</h1>
-          <p className="mt-1 text-sm text-[#68756e]">ابدأ بما يحتاج إكمالًا، ثم راجع الألوان والمخزون من داخل المنتج.</p>
+          <p className="mt-1 text-sm text-[#68756e]">كل المنتجات ظاهرة هنا؛ صفِّها حسب المسودة أو النواقص أو المراجعة. التفعيل غير متاح قبل اعتماد آليته.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-[#506b61]">
           <span className="rounded-full border border-[#cce0d7] bg-[#f1f8f4] px-3 py-1.5"><CloudCog className="ml-1 inline h-3.5 w-3.5" />Catalog تلقائي · {syncStatus.data?.lastSummary ? "آخر فحص مسجل" : "بانتظار الفحص"}</span>
