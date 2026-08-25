@@ -109,8 +109,9 @@ export function isPublicProductStatus(status: string) {
 export async function listPublicProducts() {
   const db = await getDb();
   if (!db) return [];
-  return db
+  const publicProducts = await db
     .select({
+      id: products.id,
       productCode: products.productCode,
       name: products.name,
       category: products.category,
@@ -120,6 +121,8 @@ export async function listPublicProducts() {
     .from(products)
     .where(eq(products.status, "active"))
     .orderBy(desc(products.updatedAt));
+  const variants = await db.select({ productId: productVariants.productId, colorName: productVariants.colorName }).from(productVariants).orderBy(productVariants.sortOrder);
+  return publicProducts.map(product => ({ ...product, defaultColorName: variants.find(variant => variant.productId === product.id)?.colorName ?? null }));
 }
 
 export async function getPublicStoreProduct(productCode: string) {

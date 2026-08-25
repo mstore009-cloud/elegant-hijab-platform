@@ -37,6 +37,12 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("منتجات مقترحة للتوصيل المجاني");
     expect(source).toContain("شريط تمرير المنتجات المقترحة");
     expect(source).toContain("snap-x snap-mandatory");
+    expect(source).toContain("quickAddSuggestion");
+    expect(source).toContain("إضافة للسلة");
+    expect(source).toContain("شريط تقدم التوصيل المجاني في إشعار الإضافة");
+    expect(source).toContain("{Math.round(freeProgress)}% من هدف التوصيل المجاني");
+    expect(source).toContain("السعر الأصلي قبل الخصم");
+    expect(source).toContain("price(subtotal + deliveryFee)");
     expect(source).toContain("يُطبّق الكود تلقائيًا ويُحدّث الإجمالي فورًا");
     expect(source).toContain("يتبقى ${price(remainingForFreeDelivery)} للحصول على توصيل مجاني");
     expect(source).not.toContain("setAgreed");
