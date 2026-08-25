@@ -18,8 +18,9 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("الإجمالي النهائي");
     expect(source).toContain("موافق وإرسال الطلب");
     expect(source).toContain("trpc.orders.createFromStorefront.useMutation");
-    expect(source).toContain("applyCoupon");
     expect(source).toContain("removeCoupon");
+    expect(source).toContain("setAppliedCoupon(couponCode.trim().toUpperCase())");
+    expect(source).toContain("يُطبّق الكود تلقائيًا ويُحدّث الإجمالي فورًا");
     expect(source).toContain("قسيمة الخصم");
     expect(source).toContain("خصم القسيمة");
     expect(source).toContain("couponCode: appliedCoupon");
@@ -32,6 +33,11 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("celebrating");
     expect(source).toContain("معلومة عن سياسة التوصيل المجاني");
     expect(source).toContain("الخصم لا يغير هذه العتبة");
+    expect(source).toContain("SuggestedProducts");
+    expect(source).toContain("منتجات مقترحة للتوصيل المجاني");
+    expect(source).toContain("يتبقى ${price(remainingForFreeDelivery)} للحصول على توصيل مجاني");
+    expect(source).not.toContain("setAgreed");
+    expect(source).not.toContain("form.governorate ? price(deliveryFee)");
     expect(source).not.toContain("الدفع الإلكتروني");
   });
 });
