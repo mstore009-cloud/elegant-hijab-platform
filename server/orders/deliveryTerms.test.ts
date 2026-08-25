@@ -11,4 +11,8 @@ describe("قاعدة التوصيل المجاني", () => {
   it("لا يطبق التوصيل المجاني إذا كان الخيار معطلًا", () => {
     expect(deliveryTerms({ defaultDeliveryFee: "5000.00", freeDeliveryEnabled: false, freeDeliveryThreshold: "1.00" }, 100000)).toMatchObject({ fee: 5000, freeDelivery: false });
   });
+
+  it("لا يحول الأجرة إلى صفر عند حفظ عتبة صفرية بالخطأ", () => {
+    expect(deliveryTerms({ defaultDeliveryFee: "5000.00", freeDeliveryEnabled: true, freeDeliveryThreshold: "0.00" }, 100000)).toMatchObject({ fee: 5000, freeDelivery: false, threshold: 0 });
+  });
 });

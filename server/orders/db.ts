@@ -15,7 +15,7 @@ function createOrderNumber() { return `ORD-${Date.now().toString(36).toUpperCase
 function money(value: number) { return value.toFixed(2); }
 export function deliveryTerms(settings: { defaultDeliveryFee: string; freeDeliveryEnabled: boolean; freeDeliveryThreshold: string | null } | undefined, subtotal: number) {
   const threshold = settings?.freeDeliveryThreshold === null || settings?.freeDeliveryThreshold === undefined ? null : Number(settings.freeDeliveryThreshold);
-  const freeDelivery = Boolean(settings?.freeDeliveryEnabled) && threshold !== null && subtotal >= threshold;
+  const freeDelivery = Boolean(settings?.freeDeliveryEnabled) && threshold !== null && threshold > 0 && subtotal >= threshold;
   return { fee: freeDelivery ? 0 : Number(settings?.defaultDeliveryFee ?? 0), freeDelivery, threshold };
 }
 
