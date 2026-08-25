@@ -88,7 +88,8 @@ export async function validatePublicCoupon(code: string, subtotal: number) {
   const now = new Date();
   if (!coupon || (coupon.startsAt && coupon.startsAt > now) || (coupon.endsAt && coupon.endsAt < now) || (coupon.usageLimit !== null && coupon.usageCount >= coupon.usageLimit) || subtotal < Number(coupon.minimumSubtotal)) return { valid: false, discount: "0.00", message: "القسيمة غير متاحة لهذا الطلب." };
   const raw = coupon.discountType === "percent" ? subtotal * Number(coupon.discountValue) / 100 : Number(coupon.discountValue);
-  return { valid: true, discount: money(Math.min(subtotal, raw)), message: "تم تطبيق القسيمة." };
+  const discount = money(Math.min(subtotal, raw));
+  return { valid: true, discount, message: `تم تطبيق القسيمة بنجاح. وفّرتِ ${discount} د.ع.` };
 }
 
 export async function getStoreSettingsForStaff() {

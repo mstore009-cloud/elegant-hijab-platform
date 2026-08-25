@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { orderContactEvents, orderItems, orders, orderStatusEvents, productVariants, products, promotionCoupons, users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { addOrderContactEvent, createStorefrontOrder, getOperationalOrder, transitionOrderStatus, updateOrderCommercialTerms } from "./db";
+import { addOrderContactEvent, createStorefrontOrder, getOperationalOrder, getPublicDeliveryFee, transitionOrderStatus, updateOrderCommercialTerms } from "./db";
 
 describe("دورة الطلب", () => {
   const cleanup: Array<{ orderId: number; productId: number; variantIds: number[]; couponId?: number }> = [];
@@ -34,13 +34,14 @@ describe("دورة الطلب", () => {
     const variantId = Number(variantResult[0].insertId);
     const secondVariantResult = await db.insert(productVariants).values({ productId, colorName: "أسود", inventoryQuantity: 4, availability: "available" });
     const secondVariantId = Number(secondVariantResult[0].insertId);
+    const expectedDelivery = Number((await getPublicDeliveryFee(36000)).fee);
     const created = await createStorefrontOrder({ items: [{ productCode, colorName: "بيج", quantity: 2 }, { productCode, colorName: "أسود", quantity: 1 }], customerName: "عميلة اختبار", customerPhone: "07700000000", governorate: "بغداد", address: "عنوان اختبار كامل", customerNote: "" });
     cleanup.push({ orderId: created.orderId, productId, variantIds: [variantId, secondVariantId] });
     const [beforeConfirmation] = await db.select().from(productVariants).where(eq(productVariants.id, variantId));
     expect(beforeConfirmation?.inventoryQuantity).toBe(5);
     expect((await getOperationalOrder(created.orderId))?.items).toHaveLength(2);
     expect((await getOperationalOrder(created.orderId))?.items[0]).toMatchObject({ productCodeSnapshot: productCode, unitPriceSnapshot: "12000.00" });
-    expect((await getOperationalOrder(created.orderId))?.order).toMatchObject({ subtotal: "36000.00", deliveryFee: "0.00", manualDiscount: "0.00", total: "36000.00", customerChannel: "storefront" });
+    expect((await getOperationalOrder(created.orderId))?.order).toMatchObject({ subtotal: "36000.00", deliveryFee: expectedDelivery.toFixed(2), manualDiscount: "0.00", total: (36000 + expectedDelivery).toFixed(2), customerChannel: "storefront" });
     await updateOrderCommercialTerms({ orderId: created.orderId, deliveryFee: 3000, manualDiscount: 1000, customerChannel: "instagram", actorUserId: owner.id });
     await addOrderContactEvent({ orderId: created.orderId, channel: "instagram", outcome: "attempted", note: "رسالة أولى", actorUserId: owner.id });
     expect((await getOperationalOrder(created.orderId))?.order).toMatchObject({ customerChannel: "instagram", total: "38000.00" });
@@ -72,9 +73,10 @@ describe("دورة الطلب", () => {
     const code = `SAVE${randomUUID().slice(0, 6).toUpperCase()}`;
     const couponResult = await db.insert(promotionCoupons).values({ code, discountType: "percent", discountValue: "25.00", minimumSubtotal: "5000.00", usageLimit: 1, enabled: true, createdByUserId: owner.id });
     const couponId = Number(couponResult[0].insertId);
+    const expectedDelivery = Number((await getPublicDeliveryFee(20000)).fee);
     const created = await createStorefrontOrder({ items: [{ productCode, colorName: "بيج", quantity: 2 }], customerName: "عميلة قسيمة", customerPhone: "07700000001", governorate: "بغداد", address: "عنوان اختبار قسيمة", couponCode: code });
     cleanup.push({ orderId: created.orderId, productId, variantIds: [variantId], couponId });
-    expect((await getOperationalOrder(created.orderId))?.order).toMatchObject({ subtotal: "20000.00", manualDiscount: "5000.00", total: "15000.00", customerChannel: "storefront" });
+    expect((await getOperationalOrder(created.orderId))?.order).toMatchObject({ subtotal: "20000.00", deliveryFee: expectedDelivery.toFixed(2), manualDiscount: "5000.00", total: (15000 + expectedDelivery).toFixed(2), customerChannel: "storefront" });
     await expect(createStorefrontOrder({ items: [{ productCode, colorName: "بيج", quantity: 1 }], customerName: "عميلة ثانية", customerPhone: "07700000002", governorate: "بغداد", address: "عنوان اختبار آخر", couponCode: code })).rejects.toThrow("القسيمة");
   });
 });

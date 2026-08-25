@@ -35,6 +35,9 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("الخصم لا يغير هذه العتبة");
     expect(source).toContain("SuggestedProducts");
     expect(source).toContain("منتجات مقترحة للتوصيل المجاني");
+    expect(source).toContain("شريط تمرير المنتجات المقترحة");
+    expect(source).toContain("snap-x snap-mandatory");
+    expect(source).toContain("يُطبّق الكود تلقائيًا ويُحدّث الإجمالي فورًا");
     expect(source).toContain("يتبقى ${price(remainingForFreeDelivery)} للحصول على توصيل مجاني");
     expect(source).not.toContain("setAgreed");
     expect(source).not.toContain("form.governorate ? price(deliveryFee)");
