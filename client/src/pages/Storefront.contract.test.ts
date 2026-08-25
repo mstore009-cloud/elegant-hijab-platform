@@ -43,6 +43,12 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("{Math.round(freeProgress)}% من هدف التوصيل المجاني");
     expect(source).toContain("السعر الأصلي قبل الخصم");
     expect(source).toContain("price(subtotal + deliveryFee)");
+    expect(source).toContain("LoaderCircle");
+    expect(source).toContain("جارٍ التحقق من كود الخصم");
+    expect(source).toContain("elegant_hijab_applied_coupon");
+    expect(source).toContain("window.localStorage.setItem");
+    expect(source).toContain("عرض سريع");
+    expect(source).toContain("group-hover:scale-105");
     expect(source).toContain("يُطبّق الكود تلقائيًا ويُحدّث الإجمالي فورًا");
     expect(source).toContain("يتبقى ${price(remainingForFreeDelivery)} للحصول على توصيل مجاني");
     expect(source).not.toContain("setAgreed");
