@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { addOrderContactEvent, contactOutcomes, createStorefrontOrder, customerChannels, getOperationalOrder, getPublicDeliveryFee, getPublicStoreSettings, getStoreSettingsForStaff, listDeliveryRates, listOperationalOrders, listPromotionCoupons, orderStatuses, saveDeliveryRate, savePromotionCoupon, saveStoreSettings, transitionOrderStatus, validatePublicCoupon } from "../orders/db";
@@ -10,6 +11,11 @@ function requiredPermissionForStatus(status: (typeof orderStatuses)[number]) {
   if (status === "preparing" || status === "completed") return "orders.fulfill" as const;
   if (status === "out_for_delivery") return "orders.delivery.submit" as const;
   return "orders.cancel" as const;
+}
+
+function requireOperationalStoreId(storeContext: { id: number } | null) {
+  if (!storeContext) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للمستخدم." });
+  return storeContext.id;
 }
 
 export const ordersRouter = router({
@@ -27,42 +33,42 @@ export const ordersRouter = router({
   })).mutation(async ({ input }) => createStorefrontOrder(input)),
   list: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "orders.view");
-    return listOperationalOrders();
+    return listOperationalOrders(requireOperationalStoreId(ctx.operationalStore));
   }),
   deliveryRates: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "settings.manage");
-    return listDeliveryRates();
+    return listDeliveryRates(requireOperationalStoreId(ctx.operationalStore));
   }),
   saveDeliveryRate: protectedProcedure.input(z.object({ governorate: z.string().trim().min(2).max(120), fee: z.number().min(0).max(10000000), enabled: z.boolean() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "settings.manage");
-    return saveDeliveryRate({ ...input, actorUserId: ctx.user.id });
+    return saveDeliveryRate({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
   }),
   storeSettings: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "settings.manage");
-    return getStoreSettingsForStaff();
+    return getStoreSettingsForStaff(requireOperationalStoreId(ctx.operationalStore));
   }),
   saveStoreSettings: protectedProcedure.input(z.object({ defaultLanguage: z.string().trim().min(2).max(16), currencyCode: z.string().trim().min(3).max(8), defaultDeliveryFee: z.number().min(0).max(10000000), freeDeliveryEnabled: z.boolean(), freeDeliveryThreshold: z.number().min(0).max(100000000).nullable().optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "settings.manage");
-    return saveStoreSettings({ ...input, actorUserId: ctx.user.id });
+    return saveStoreSettings({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
   }),
   coupons: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "settings.manage");
-    return listPromotionCoupons();
+    return listPromotionCoupons(requireOperationalStoreId(ctx.operationalStore));
   }),
   saveCoupon: protectedProcedure.input(z.object({ id: z.number().int().positive().optional(), code: z.string().trim().min(2).max(80), discountType: z.enum(["fixed", "percent"]), discountValue: z.number().min(0).max(10000000), minimumSubtotal: z.number().min(0).max(100000000), startsAt: z.coerce.date().nullable().optional(), endsAt: z.coerce.date().nullable().optional(), usageLimit: z.number().int().positive().nullable().optional(), enabled: z.boolean() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "settings.manage");
-    return savePromotionCoupon({ ...input, actorUserId: ctx.user.id });
+    return savePromotionCoupon({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
   }),
   byId: protectedProcedure.input(z.object({ orderId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "orders.view");
-    return getOperationalOrder(input.orderId);
+    return getOperationalOrder(input.orderId, requireOperationalStoreId(ctx.operationalStore));
   }),
   transition: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), nextStatus: orderStatus, note: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, requiredPermissionForStatus(input.nextStatus));
-    return transitionOrderStatus({ ...input, actorUserId: ctx.user.id });
+    return transitionOrderStatus({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
   }),
   addContactEvent: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), channel: z.enum(customerChannels), outcome: z.enum(contactOutcomes), note: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "orders.confirm");
-    return addOrderContactEvent({ ...input, actorUserId: ctx.user.id });
+    return addOrderContactEvent({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
   }),
 });

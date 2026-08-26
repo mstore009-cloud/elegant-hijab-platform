@@ -28,12 +28,59 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 /**
+ * Operational store boundary. V1 exposes one store per account, while this
+ * table is the durable parent for future store-scoped business data.
+ */
+export const stores = mysqlTable(
+  "stores",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    name: varchar("name", { length: 180 }).notNull(),
+    slug: varchar("slug", { length: 120 }).notNull().unique(),
+    status: mysqlEnum("status", ["active", "suspended"]).default("active").notNull(),
+    primaryOwnerUserId: int("primaryOwnerUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("stores_status_idx").on(table.status), index("stores_owner_idx").on(table.primaryOwnerUserId)],
+);
+
+export type Store = typeof stores.$inferSelect;
+
+/**
+ * Append-only audit evidence for sensitive operational changes. Metadata stays
+ * structured JSON at the application boundary and never stores secrets.
+ */
+export const auditEvents = mysqlTable(
+  "audit_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    actorUserId: int("actorUserId").references(() => users.id),
+    entityType: varchar("entityType", { length: 80 }).notNull(),
+    entityId: varchar("entityId", { length: 160 }).notNull(),
+    action: varchar("action", { length: 120 }).notNull(),
+    summary: varchar("summary", { length: 500 }).notNull(),
+    metadata: text("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("audit_store_created_idx").on(table.storeId, table.createdAt),
+    index("audit_entity_idx").on(table.entityType, table.entityId),
+    index("audit_actor_idx").on(table.actorUserId),
+  ],
+);
+
+export type AuditEvent = typeof auditEvents.$inferSelect;
+
+/**
  * Operational staff profile. Authentication stays on `users`; this table holds
  * the business identity that receives granular permissions.
  */
 export const employeeProfiles = mysqlTable("employee_profiles", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull().unique().references(() => users.id),
+  storeId: int("storeId").notNull().references(() => stores.id),
   displayName: varchar("displayName", { length: 160 }).notNull(),
   jobTitle: varchar("jobTitle", { length: 160 }),
   isActive: boolean("isActive").default(true).notNull(),
@@ -108,6 +155,7 @@ export const orders = mysqlTable(
   "orders",
   {
     id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
     orderNumber: varchar("orderNumber", { length: 40 }).notNull().unique(),
     status: mysqlEnum("status", orderStatuses).default("new").notNull(),
     source: mysqlEnum("source", ["storefront", "manual", "whatsapp"]).default("storefront").notNull(),
@@ -127,7 +175,7 @@ export const orders = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("orders_status_idx").on(table.status), index("orders_phone_idx").on(table.customerPhone), index("orders_created_idx").on(table.createdAt)],
+  table => [index("orders_store_created_idx").on(table.storeId, table.createdAt), index("orders_status_idx").on(table.status), index("orders_phone_idx").on(table.customerPhone), index("orders_created_idx").on(table.createdAt)],
 );
 
 /** Delivery fee configured by staff; a carrier integration can replace this source later. */
@@ -135,13 +183,14 @@ export const deliveryGovernorateRates = mysqlTable(
   "delivery_governorate_rates",
   {
     id: int("id").autoincrement().primaryKey(),
-    governorate: varchar("governorate", { length: 120 }).notNull().unique(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    governorate: varchar("governorate", { length: 120 }).notNull(),
     fee: decimal("fee", { precision: 12, scale: 2 }).default("0.00").notNull(),
     enabled: boolean("enabled").default(true).notNull(),
     updatedByUserId: int("updatedByUserId").references(() => users.id),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("delivery_governorate_rates_enabled_idx").on(table.enabled)],
+  table => [uniqueIndex("delivery_store_governorate_unique").on(table.storeId, table.governorate), index("delivery_governorate_rates_enabled_idx").on(table.enabled)],
 );
 
 /** Singleton-style operating settings for the public store. */
@@ -149,6 +198,7 @@ export const storeSettings = mysqlTable(
   "store_settings",
   {
     id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
     defaultLanguage: varchar("defaultLanguage", { length: 16 }).default("ar").notNull(),
     currencyCode: varchar("currencyCode", { length: 8 }).default("IQD").notNull(),
     defaultDeliveryFee: decimal("defaultDeliveryFee", { precision: 12, scale: 2 }).default("0.00").notNull(),
@@ -157,13 +207,15 @@ export const storeSettings = mysqlTable(
     updatedByUserId: int("updatedByUserId").references(() => users.id),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
+  table => [uniqueIndex("store_settings_store_unique").on(table.storeId)],
 );
 
 export const promotionCoupons = mysqlTable(
   "promotion_coupons",
   {
     id: int("id").autoincrement().primaryKey(),
-    code: varchar("code", { length: 80 }).notNull().unique(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    code: varchar("code", { length: 80 }).notNull(),
     discountType: mysqlEnum("discountType", ["fixed", "percent"]).notNull(),
     discountValue: decimal("discountValue", { precision: 12, scale: 2 }).notNull(),
     minimumSubtotal: decimal("minimumSubtotal", { precision: 12, scale: 2 }).default("0.00").notNull(),
@@ -176,7 +228,7 @@ export const promotionCoupons = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("promotion_coupons_enabled_idx").on(table.enabled)],
+  table => [uniqueIndex("promotion_coupon_store_code_unique").on(table.storeId, table.code), index("promotion_coupons_enabled_idx").on(table.enabled)],
 );
 
 /** Immutable selling snapshot; later product changes never rewrite an order item. */
@@ -274,6 +326,7 @@ export const contentPosts = mysqlTable(
   "content_posts",
   {
     id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
     productId: int("productId").references(() => products.id),
     status: mysqlEnum("status", ["draft"]).default("draft").notNull(),
     caption: text("caption"),
@@ -281,7 +334,7 @@ export const contentPosts = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("content_post_product_idx").on(table.productId), index("content_post_creator_idx").on(table.createdByUserId)],
+  table => [index("content_post_store_idx").on(table.storeId), index("content_post_product_idx").on(table.productId), index("content_post_creator_idx").on(table.createdByUserId)],
 );
 
 /**

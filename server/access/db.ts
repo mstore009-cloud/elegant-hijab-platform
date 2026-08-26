@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { employeePermissionGrants, employeeProfiles, users } from "../../drizzle/schema";
+import { employeePermissionGrants, employeeProfiles, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 
 export async function getEmployeePermissionCodesForUser(userId: number) {
@@ -22,6 +22,7 @@ export async function getEmployeeAccessSummary(userId: number) {
   const profiles = await db
     .select({
       id: employeeProfiles.id,
+      storeId: employeeProfiles.storeId,
       displayName: employeeProfiles.displayName,
       jobTitle: employeeProfiles.jobTitle,
       isActive: employeeProfiles.isActive,
@@ -40,6 +41,8 @@ export async function listStaffAccessSummaries() {
   const staff = await db
     .select({
       employeeId: employeeProfiles.id,
+      storeId: employeeProfiles.storeId,
+      storeName: stores.name,
       userId: users.id,
       name: users.name,
       displayName: employeeProfiles.displayName,
@@ -49,7 +52,8 @@ export async function listStaffAccessSummaries() {
       role: users.role,
     })
     .from(users)
-    .leftJoin(employeeProfiles, eq(users.id, employeeProfiles.userId));
+    .leftJoin(employeeProfiles, eq(users.id, employeeProfiles.userId))
+    .leftJoin(stores, eq(employeeProfiles.storeId, stores.id));
 
   const grantRows = await db.select().from(employeePermissionGrants);
   return staff.map(member => ({
@@ -67,6 +71,7 @@ export async function saveEmployeeAccess(input: {
   isActive: boolean;
   permissionCodes: string[];
   grantedByUserId: number;
+  storeId: number;
 }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
@@ -86,6 +91,7 @@ export async function saveEmployeeAccess(input: {
   } else {
     const result = await db.insert(employeeProfiles).values({
       userId: input.userId,
+      storeId: input.storeId,
       displayName: input.displayName,
       jobTitle: input.jobTitle ?? null,
       isActive: input.isActive,

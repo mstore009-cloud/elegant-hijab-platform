@@ -4,13 +4,13 @@ import { getDb } from "../db";
 import { createOperationalImageDerivative } from "../integrations/onedrive/operationalMedia";
 import { storageGetSignedUrl, storagePut } from "../storage";
 
-export async function listContentPostDrafts() {
+export async function listContentPostDrafts(storeId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(contentPosts).orderBy(desc(contentPosts.updatedAt));
+  return db.select().from(contentPosts).where(eq(contentPosts.storeId, storeId)).orderBy(desc(contentPosts.updatedAt));
 }
 
-export async function createContentPostDraft(input: { productId?: number; caption?: string; createdByUserId: number }) {
+export async function createContentPostDraft(input: { storeId: number; productId?: number; caption?: string; createdByUserId: number }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   if (input.productId) {
@@ -18,6 +18,7 @@ export async function createContentPostDraft(input: { productId?: number; captio
     if (!product[0]) throw new Error("المنتج المرتبط بالمنشور غير موجود.");
   }
   const result = await db.insert(contentPosts).values({
+    storeId: input.storeId,
     productId: input.productId ?? null,
     caption: input.caption?.trim() || null,
     createdByUserId: input.createdByUserId,
@@ -25,16 +26,17 @@ export async function createContentPostDraft(input: { productId?: number; captio
   return Number(result[0].insertId);
 }
 
-export async function getContentPostDraft(postId: number) {
+export async function getContentPostDraft(postId: number, storeId: number) {
   const db = await getDb();
   if (!db) return null;
-  const post = await db.select().from(contentPosts).where(eq(contentPosts.id, postId)).limit(1);
+  const post = await db.select().from(contentPosts).where(and(eq(contentPosts.id, postId), eq(contentPosts.storeId, storeId))).limit(1);
   if (!post[0]) return null;
   const media = await db.select().from(contentPostMedia).where(eq(contentPostMedia.postId, postId)).orderBy(contentPostMedia.id);
   return { post: post[0], media };
 }
 
 export async function saveContentPostMedia(input: {
+  storeId: number;
   postId: number;
   storageKey: string;
   originalFileName: string;
@@ -43,9 +45,15 @@ export async function saveContentPostMedia(input: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const post = await db.select({ id: contentPosts.id }).from(contentPosts).where(eq(contentPosts.id, input.postId)).limit(1);
+  const post = await db.select({ id: contentPosts.id }).from(contentPosts).where(and(eq(contentPosts.id, input.postId), eq(contentPosts.storeId, input.storeId))).limit(1);
   if (!post[0]) throw new Error("مسودة المنشور غير موجودة.");
-  const result = await db.insert(contentPostMedia).values(input);
+  const result = await db.insert(contentPostMedia).values({
+    postId: input.postId,
+    storageKey: input.storageKey,
+    originalFileName: input.originalFileName,
+    mimeType: input.mimeType,
+    byteSize: input.byteSize,
+  });
   return Number(result[0].insertId);
 }
 
@@ -53,9 +61,11 @@ export async function saveContentPostMedia(input: {
  * Explicitly converts a post-only image into a separate product WebP. The
  * original post media remains attached to the post and is never changed.
  */
-export async function attachContentPostMediaToProduct(input: { postId: number; postMediaId: number; productId: number }) {
+export async function attachContentPostMediaToProduct(input: { storeId: number; postId: number; postMediaId: number; productId: number }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [post] = await db.select({ id: contentPosts.id }).from(contentPosts).where(and(eq(contentPosts.id, input.postId), eq(contentPosts.storeId, input.storeId))).limit(1);
+  if (!post) throw new Error("مسودة المنشور غير موجودة ضمن المتجر الحالي.");
   const [media] = await db.select().from(contentPostMedia).where(and(eq(contentPostMedia.id, input.postMediaId), eq(contentPostMedia.postId, input.postId))).limit(1);
   if (!media) throw new Error("وسيط المنشور غير موجود ضمن هذه المسودة.");
   if (media.linkedProductMediaId) return { productMediaId: media.linkedProductMediaId, attached: false, postMediaRemainsIndependent: true as const };

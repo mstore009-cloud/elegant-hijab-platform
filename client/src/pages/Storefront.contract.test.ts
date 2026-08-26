@@ -6,7 +6,8 @@ describe("واجهة المتجر العامة", () => {
     const source = readFileSync(new URL("./Storefront.tsx", import.meta.url), "utf8");
     expect(source).toContain("trpc.products.publicList.useQuery");
     expect(source).toContain("trpc.products.publicByCode.useQuery");
-    expect(source).toContain("تمت إضافة اللون إلى السلة");
+    expect(source).toContain("StoreProductEnhancements");
+    expect(source).not.toContain("createRoot");
     expect(source).toContain("اختاري اللون");
     expect(source).toContain("أضف ");
     expect(source).toContain("تم ومتابعة الطلب");
@@ -17,6 +18,7 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("أجرة التوصيل");
     expect(source).toContain("الإجمالي النهائي");
     expect(source).toContain("موافق وإرسال الطلب");
+    expect(source).toContain("StoreProductEnhancements {...listEnhancementProps} />{cartOpen && cartDrawer}{checkoutOpen && checkout}");
     expect(source).toContain("trpc.orders.createFromStorefront.useMutation");
     expect(source).toContain("removeCoupon");
     expect(source).toContain("setAppliedCoupon(couponCode.trim().toUpperCase())");
@@ -39,8 +41,6 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("snap-x snap-mandatory");
     expect(source).toContain("quickAddSuggestion");
     expect(source).toContain("إضافة للسلة");
-    expect(source).toContain("شريط تقدم التوصيل المجاني في إشعار الإضافة");
-    expect(source).toContain("{Math.round(freeProgress)}% من هدف التوصيل المجاني");
     expect(source).toContain("السعر الأصلي قبل الخصم");
     expect(source).toContain("price(subtotal + deliveryFee)");
     expect(source).toContain("LoaderCircle");
@@ -50,7 +50,15 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("عرض سريع");
     expect(source).toContain("group-hover:scale-105");
     expect(source).toContain("يُطبّق الكود تلقائيًا ويُحدّث الإجمالي فورًا");
-    expect(source).toContain("يتبقى ${price(remainingForFreeDelivery)} للحصول على توصيل مجاني");
+    expect(source).toContain("أضيفي ${price(remainingForFreeDelivery)} للحصول على توصيل مجاني");
+    expect(source).toContain("ابحثي باسم الموديل أو الرمز");
+    expect(source).toContain("فلتر السعر");
+    expect(source).toContain("كل الألوان");
+    expect(source).toContain("filteredProducts");
+    expect(source).toContain("لا توجد منتجات مطابقة");
+    expect(source).toContain("elegant_hijab_favorite_products");
+    expect(source).toContain("منتجاتك المفضلة");
+    expect(source).toContain("منتجات شاهدتها مؤخرًا");
     expect(source).not.toContain("setAgreed");
     expect(source).not.toContain("form.governorate ? price(deliveryFee)");
     expect(source).not.toContain("الدفع الإلكتروني");

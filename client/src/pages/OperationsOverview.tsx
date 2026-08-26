@@ -51,9 +51,9 @@ export default function OperationsOverview() {
               <p className="text-xs text-[#c5d9d2]">مراجَع ومعتمد للبدء</p>
             </div>
             <div className="border-r border-white/10 pr-3">
-              <p className="text-xs text-[#c5d9d2]">الفرع النشط</p>
-              <p className="mt-1 text-lg font-semibold">الصلاحيات</p>
-              <p className="text-xs text-[#c5d9d2]">نواة التشغيل</p>
+              <p className="text-xs text-[#c5d9d2]">المتجر التشغيلي</p>
+              <p className="mt-1 truncate text-lg font-semibold">{profile.data?.store?.store.name ?? "جارٍ التحقق"}</p>
+              <p className="text-xs text-[#c5d9d2]">{profile.data?.store?.store.slug ? `/${profile.data.store.store.slug}` : "نواة التشغيل"}</p>
             </div>
           </div>
         </div>
@@ -103,6 +103,13 @@ export default function OperationsOverview() {
               <div className="rounded-xl bg-[#f4f7f4] p-4">
                 <p className="text-xs text-[#74817a]">عمليات ممنوحة</p>
                 <p className="mt-1 text-lg font-bold text-[#243a34]">{safePermissionCount} صلاحية تشغيلية</p>
+              </div>
+              <div className="sm:col-span-2 rounded-xl border border-[#dce9e1] bg-[#f5faf7] p-4">
+                <p className="text-xs text-[#74817a]">نطاق المتجر الحالي</p>
+                <p className="mt-1 text-lg font-bold text-[#243a34]">{profile.data?.store?.store.name ?? "لا يوجد متجر تشغيلي مخصص"}</p>
+                <p className="mt-1 text-xs text-[#74817a]">
+                  {profile.data?.store?.store.slug ? `تظهر مسودات المحتوى وسجل الصلاحيات ضمن /${profile.data.store.store.slug} فقط.` : "يتم منع الوصول التشغيلي حتى تحديد متجر صالح."}
+                </p>
               </div>
               <div className="sm:col-span-2 flex items-center justify-between rounded-xl border border-[#ece4d5] px-4 py-3">
                 <div className="flex items-center gap-3">
