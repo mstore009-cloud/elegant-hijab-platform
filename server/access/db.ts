@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { employeePermissionGrants, employeeProfiles, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 
-export async function getEmployeePermissionCodesForUser(userId: number) {
+export async function getEmployeePermissionCodesForUser(userId: number, storeId?: number) {
   const db = await getDb();
   if (!db) return [];
 
@@ -10,12 +10,12 @@ export async function getEmployeePermissionCodesForUser(userId: number) {
     .select({ permissionCode: employeePermissionGrants.permissionCode })
     .from(employeeProfiles)
     .innerJoin(employeePermissionGrants, eq(employeePermissionGrants.employeeId, employeeProfiles.id))
-    .where(eq(employeeProfiles.userId, userId));
+    .where(storeId ? and(eq(employeeProfiles.userId, userId), eq(employeeProfiles.storeId, storeId)) : eq(employeeProfiles.userId, userId));
 
   return rows.map(row => row.permissionCode);
 }
 
-export async function getEmployeeAccessSummary(userId: number) {
+export async function getEmployeeAccessSummary(userId: number, storeId?: number) {
   const db = await getDb();
   if (!db) return null;
 
@@ -28,13 +28,13 @@ export async function getEmployeeAccessSummary(userId: number) {
       isActive: employeeProfiles.isActive,
     })
     .from(employeeProfiles)
-    .where(eq(employeeProfiles.userId, userId))
+    .where(storeId ? and(eq(employeeProfiles.userId, userId), eq(employeeProfiles.storeId, storeId)) : eq(employeeProfiles.userId, userId))
     .limit(1);
 
   return profiles[0] ?? null;
 }
 
-export async function listStaffAccessSummaries() {
+export async function listStaffAccessSummaries(storeId: number) {
   const db = await getDb();
   if (!db) return [];
 
@@ -52,8 +52,9 @@ export async function listStaffAccessSummaries() {
       role: users.role,
     })
     .from(users)
-    .leftJoin(employeeProfiles, eq(users.id, employeeProfiles.userId))
-    .leftJoin(stores, eq(employeeProfiles.storeId, stores.id));
+    .innerJoin(employeeProfiles, eq(users.id, employeeProfiles.userId))
+    .innerJoin(stores, eq(employeeProfiles.storeId, stores.id))
+    .where(eq(employeeProfiles.storeId, storeId));
 
   const grantRows = await db.select().from(employeePermissionGrants);
   return staff.map(member => ({
@@ -62,6 +63,22 @@ export async function listStaffAccessSummaries() {
       .filter(grant => grant.employeeId === member.employeeId)
       .map(grant => grant.permissionCode),
   }));
+}
+
+export async function listAssignableStaffUsers() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select({
+      userId: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+    })
+    .from(users)
+    .leftJoin(employeeProfiles, eq(users.id, employeeProfiles.userId))
+    .where(isNull(employeeProfiles.id));
 }
 
 export async function saveEmployeeAccess(input: {
@@ -84,6 +101,8 @@ export async function saveEmployeeAccess(input: {
 
   let employeeId = existing[0]?.id;
   if (employeeId) {
+    const [existingProfile] = await db.select({ storeId: employeeProfiles.storeId }).from(employeeProfiles).where(eq(employeeProfiles.id, employeeId)).limit(1);
+    if (!existingProfile || existingProfile.storeId !== input.storeId) throw new Error("لا يمكن تعديل ملف موظف تابع لمتجر تشغيلي آخر.");
     await db
       .update(employeeProfiles)
       .set({ displayName: input.displayName, jobTitle: input.jobTitle ?? null, isActive: input.isActive })

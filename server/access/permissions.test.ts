@@ -31,4 +31,21 @@ describe("نواة الصلاحيات الحبيبية", () => {
       }),
     ).toBe(true);
   });
+
+  it("لا يمنح إدارة الموظفين إلا بالتصريح التشغيلي الصريح", () => {
+    expect(
+      hasPermission({
+        isPlatformAdmin: false,
+        grantedPermissionCodes: ["products.edit"],
+        permissionCode: "staff.manage",
+      }),
+    ).toBe(false);
+    expect(
+      hasPermission({
+        isPlatformAdmin: false,
+        grantedPermissionCodes: ["staff.manage"],
+        permissionCode: "staff.manage",
+      }),
+    ).toBe(true);
+  });
 });

@@ -1,29 +1,46 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
-import { getEmployeeAccessSummary, getEmployeePermissionCodesForUser, listStaffAccessSummaries, saveEmployeeAccess } from "../access/db";
+import { protectedProcedure, router } from "../_core/trpc";
+import { getEmployeeAccessSummary, getEmployeePermissionCodesForUser, listAssignableStaffUsers, listStaffAccessSummaries, saveEmployeeAccess } from "../access/db";
 import { canViewSensitiveFinancialData, permissionCatalog, permissionCodes } from "../access/permissions";
-import { getOperationalStoreContext } from "../stores/db";
 import { recordAuditEvent } from "../audit/db";
+import { listRecentAuditEvents } from "../audit/db";
+import { assertPermission } from "../access/authorization";
 
 const permissionCodeSchema = z.enum(permissionCodes as [string, ...string[]]);
 
 export const accessRouter = router({
   myProfile: protectedProcedure.query(async ({ ctx }) => {
-    const grantedPermissionCodes = await getEmployeePermissionCodesForUser(ctx.user.id);
+    const grantedPermissionCodes = await getEmployeePermissionCodesForUser(ctx.user.id, ctx.operationalStore?.id);
     const isPlatformAdmin = ctx.user.role === "admin";
-    const store = await getOperationalStoreContext(ctx.user);
     return {
       user: { id: ctx.user.id, name: ctx.user.name, role: ctx.user.role },
-      profile: await getEmployeeAccessSummary(ctx.user.id),
-      store,
+      profile: await getEmployeeAccessSummary(ctx.user.id, ctx.operationalStore?.id),
+      store: ctx.operationalStore ? { source: "request_context" as const, store: ctx.operationalStore } : null,
       permissions: isPlatformAdmin ? permissionCodes : grantedPermissionCodes,
       canViewSensitiveFinancialData: canViewSensitiveFinancialData({ isPlatformAdmin, grantedPermissionCodes }),
     };
   }),
-  catalog: adminProcedure.query(() => permissionCatalog),
-  listStaff: adminProcedure.query(() => listStaffAccessSummaries()),
-  saveStaffAccess: adminProcedure
+  catalog: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "staff.manage");
+    return permissionCatalog;
+  }),
+  listStaff: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "staff.manage");
+    if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
+    return listStaffAccessSummaries(ctx.operationalStore.id);
+  }),
+  listAssignableUsers: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "staff.manage");
+    if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
+    return listAssignableStaffUsers();
+  }),
+  recentAudit: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "staff.manage");
+    if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
+    return listRecentAuditEvents(ctx.operationalStore.id, 20);
+  }),
+  saveStaffAccess: protectedProcedure
     .input(
       z.object({
         userId: z.number().int().positive(),
@@ -34,14 +51,14 @@ export const accessRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      if (input.userId === ctx.user.id && !input.permissionCodes.includes("settings.manage")) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إزالة صلاحية إدارة الإعدادات من المدير الحالي عبر هذه العملية." });
+      await assertPermission(ctx.user, "staff.manage");
+      if (input.userId === ctx.user.id && !input.permissionCodes.includes("staff.manage")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إزالة صلاحية إدارة الموظفين من حسابك عبر هذه العملية." });
       }
-      const store = await getOperationalStoreContext(ctx.user);
-      if (!store) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للمدير الحالي." });
-      const saved = await saveEmployeeAccess({ ...input, grantedByUserId: ctx.user.id, storeId: store.store.id });
+      if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
+      const saved = await saveEmployeeAccess({ ...input, grantedByUserId: ctx.user.id, storeId: ctx.operationalStore.id });
       await recordAuditEvent({
-        storeId: store.store.id,
+        storeId: ctx.operationalStore.id,
         actorUserId: ctx.user.id,
         entityType: "employee_access",
         entityId: saved.employeeId,

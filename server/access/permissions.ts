@@ -16,6 +16,7 @@ export const permissionCatalog = [
   { code: "bot.training.manage", group: "البريد الوارد", label: "تدريب البوت" },
   { code: "marketing.manage", group: "التسويق", label: "إدارة التسويق والإعلانات" },
   { code: "analytics.view", group: "التحليلات", label: "مشاهدة التقارير التشغيلية" },
+  { code: "staff.manage", group: "الإدارة التشغيلية", label: "إدارة موظفي المتجر وصلاحياتهم" },
   { code: "settings.manage", group: "الإعدادات", label: "إدارة الإعدادات والتكاملات" },
   { code: "finance.view_sensitive", group: "البيانات الحساسة", label: "مشاهدة التكلفة والهامش وصافي الربح" },
 ] as const;
