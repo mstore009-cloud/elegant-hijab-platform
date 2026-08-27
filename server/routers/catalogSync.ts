@@ -6,7 +6,7 @@ import { assertPermission } from "../access/authorization";
 import { createHeartbeatJob, updateHeartbeatJob } from "../_core/heartbeat";
 import { protectedProcedure, router } from "../_core/trpc";
 import { listDeletedCatalogProducts, restoreDeletedCatalogProduct, scanCatalogForOwner } from "../products/catalogAutomation";
-import { getOrCreateCatalogSyncSettings, markCatalogSyncCompleted, markCatalogSyncFailed, markCatalogSyncStarted, persistCatalogSyncTask } from "../products/catalogSyncSettings";
+import { getOrCreateCatalogSyncSettings, markCatalogSyncCompleted, markCatalogSyncFailed, markCatalogSyncProgress, markCatalogSyncStarted, persistCatalogSyncTask } from "../products/catalogSyncSettings";
 
 const cronSchema = z.string().trim().regex(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+$/, "اكتب التكرار بصيغة ستة أجزاء (ثانية، دقيقة، ساعة، يوم، شهر، أسبوع). ");
 
@@ -18,13 +18,17 @@ function requireOperationalStoreId(storeId: number | null | undefined) {
 async function runAndRecord(input: { ownerUserId: number; storeId: number }) {
   const setting = await getOrCreateCatalogSyncSettings(input);
   await markCatalogSyncStarted(setting.id);
+  const startedAt = Date.now();
   try {
-    const summary = await scanCatalogForOwner(input);
-    await markCatalogSyncCompleted({ settingId: setting.id, summary });
+    const summary = await scanCatalogForOwner({
+      ...input,
+      onProgress: progress => markCatalogSyncProgress({ settingId: setting.id, ...progress }),
+    });
+    await markCatalogSyncCompleted({ settingId: setting.id, summary, durationMs: Date.now() - startedAt });
     return summary;
   } catch (error) {
     const message = error instanceof Error ? error.message : "تعذر فحص Catalog.";
-    await markCatalogSyncFailed({ settingId: setting.id, error: message });
+    await markCatalogSyncFailed({ settingId: setting.id, error: message, durationMs: Date.now() - startedAt });
     throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message });
   }
 }

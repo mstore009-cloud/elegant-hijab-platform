@@ -18,6 +18,25 @@ export type CatalogAutomationSummary = {
   operationalCopiesCreated: number;
 };
 
+export type CatalogScanProgress = {
+  stage: "discovering_folders" | "reading_product" | "copying_operational_media" | "analyzing_colors" | "processing_folders";
+  processedFolders: number;
+  totalFolders: number;
+  currentProduct?: string | null;
+};
+
+async function mapWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(1, limit), items.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor];
+      cursor += 1;
+      if (item !== undefined) await worker(item);
+    }
+  }));
+}
+
 function sourceReference(groupName: string, productCode: string) {
   return `Catalog/${groupName}/${productCode}`;
 }
@@ -171,7 +190,7 @@ async function copyCatalogVideosSafely(input: { db: NonNullable<Awaited<ReturnTy
  * Deterministic, idempotent scanner. It only reads Catalog and writes platform
  * records; it never changes files, folders, permissions, or source data in OneDrive.
  */
-export async function scanCatalogForOwner(input: { ownerUserId: number; storeId: number }): Promise<CatalogAutomationSummary> {
+export async function scanCatalogForOwner(input: { ownerUserId: number; storeId: number; onProgress?: (progress: CatalogScanProgress) => Promise<void> | void }): Promise<CatalogAutomationSummary> {
   const connection = await getUsableCatalogConnection(input.ownerUserId);
   if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) {
     throw new Error("مرجع Catalog المفوض غير جاهز للفحص التلقائي.");
@@ -182,77 +201,77 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
   const knownProducts = await db.select({ id: products.id, productCode: products.productCode }).from(products).where(eq(products.storeId, input.storeId));
   const productByCode = new Map(knownProducts.map(product => [product.productCode, product]));
   const groups = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId })).filter(item => item.kind === "folder");
-
-  for (const group of groups) {
-    const folders = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: group.id })).filter(item => item.kind === "folder");
-    for (const folder of folders) {
-      summary.discovered += 1;
-      const source = sourceReference(group.name, folder.name);
-      try {
-        const contents = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: folder.id });
-        const images = contents.filter(isImage);
-        const videos = contents.filter(isVideo);
-        const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
-        const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
-        const existingProduct = productByCode.get(folder.name);
-        const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
-        if (!existingProduct && priorFolder?.lastError === "deleted_by_user") {
-          await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
-          summary.existing += 1;
-          continue;
-        }
-        if (existingProduct) {
-          const preserveDraftState = priorFolder?.linkedProductId === existingProduct.id;
-          await upsertFolderObservation({
-            storeId: input.storeId,
-            ownerUserId: input.ownerUserId,
-            productFolderId: folder.id,
-            groupName: group.name,
-            productCode: folder.name,
-            source,
-            state: preserveDraftState ? "draft_created" : "already_exists",
-            linkedProductId: existingProduct.id,
-            imageCount: images.length,
-            missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [],
-          });
-          await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
-          const imageCopies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: existingProduct.id });
-          summary.operationalCopiesCreated += imageCopies.created.length;
-          const videoCopies = await copyCatalogVideosSafely({ db, productId: existingProduct.id, actorUserId: input.ownerUserId });
-          summary.operationalCopiesCreated += videoCopies.created.length;
-          await ensureAutomaticColorSuggestion({ db, productId: existingProduct.id, actorUserId: input.ownerUserId });
-          summary.existing += 1;
-          continue;
-        }
-        const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadataText });
-        productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
-        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
-        summary.draftsCreated += 1;
-        if (images.length > 0) {
-          const copies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: created.productId });
-          summary.operationalCopiesCreated += copies.created.length;
-        }
-        if (videos.length > 0) {
-          const copies = await copyCatalogVideosSafely({ db, productId: created.productId, actorUserId: input.ownerUserId });
-          summary.operationalCopiesCreated += copies.created.length;
-        }
-        await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: input.ownerUserId });
-      } catch (error) {
-        summary.failed += 1;
-        await upsertFolderObservation({
-          storeId: input.storeId,
-          ownerUserId: input.ownerUserId,
-          productFolderId: folder.id,
-          groupName: group.name,
-          productCode: folder.name,
-          source,
-          state: "failed",
-          imageCount: 0,
-          lastError: error instanceof Error ? error.message : "تعذر فحص مجلد المنتج.",
-        });
-      }
+  const groupedFolders: Array<{ group: CatalogDriveItem; folders: CatalogDriveItem[] }> = [];
+  await mapWithConcurrency(groups, 2, async group => {
+    const folders = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId: group.id })).filter(item => item.kind === "folder");
+    groupedFolders.push({ group, folders });
+  });
+  const workItems = groupedFolders.flatMap(({ group, folders }) => folders.map(folder => ({ group, folder })));
+  let processedFolders = 0;
+  const report = async (stage: CatalogScanProgress["stage"], currentProduct: string | null = null) => {
+    if (!input.onProgress) return;
+    try {
+      await input.onProgress({ stage, processedFolders, totalFolders: workItems.length, currentProduct });
+    } catch {
+      // Progress visibility must never interrupt a successful Catalog scan.
     }
-  }
+  };
+
+  await report("discovering_folders");
+  await mapWithConcurrency(workItems, 2, async ({ group, folder }) => {
+    summary.discovered += 1;
+    const source = sourceReference(group.name, folder.name);
+    await report("reading_product", folder.name);
+    try {
+      const contents = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId: folder.id });
+      const images = contents.filter(isImage);
+      const videos = contents.filter(isVideo);
+      const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
+      const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, fileId: metadataFile.id }) : null;
+      const existingProduct = productByCode.get(folder.name);
+      const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
+      if (!existingProduct && priorFolder?.lastError === "deleted_by_user") {
+        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
+        summary.existing += 1;
+        return;
+      }
+      if (existingProduct) {
+        const preserveDraftState = priorFolder?.linkedProductId === existingProduct.id;
+        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: preserveDraftState ? "draft_created" : "already_exists", linkedProductId: existingProduct.id, imageCount: images.length, missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [] });
+        await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
+        await report("copying_operational_media", folder.name);
+        const imageCopies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: existingProduct.id });
+        summary.operationalCopiesCreated += imageCopies.created.length;
+        const videoCopies = await copyCatalogVideosSafely({ db, productId: existingProduct.id, actorUserId: input.ownerUserId });
+        summary.operationalCopiesCreated += videoCopies.created.length;
+        await report("analyzing_colors", folder.name);
+        await ensureAutomaticColorSuggestion({ db, productId: existingProduct.id, actorUserId: input.ownerUserId });
+        summary.existing += 1;
+        return;
+      }
+      const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadataText });
+      productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
+      await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
+      summary.draftsCreated += 1;
+      await report("copying_operational_media", folder.name);
+      if (images.length > 0) {
+        const copies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: created.productId });
+        summary.operationalCopiesCreated += copies.created.length;
+      }
+      if (videos.length > 0) {
+        const copies = await copyCatalogVideosSafely({ db, productId: created.productId, actorUserId: input.ownerUserId });
+        summary.operationalCopiesCreated += copies.created.length;
+      }
+      await report("analyzing_colors", folder.name);
+      await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: input.ownerUserId });
+    } catch (error) {
+      summary.failed += 1;
+      await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "failed", imageCount: 0, lastError: error instanceof Error ? error.message : "تعذر فحص مجلد المنتج." });
+    } finally {
+      processedFolders += 1;
+      await report("processing_folders", folder.name);
+    }
+  });
   return summary;
 }
 

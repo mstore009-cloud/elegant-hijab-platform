@@ -44,6 +44,7 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     const productCode = `TST-INCOMPLETE-${randomUUID().slice(0, 10)}`;
     const folderId = `folder-${productCode}`;
     let productId: number | null = null;
+    const progressEvents: Array<{ stage: string; processedFolders: number; totalFolders: number; currentProduct?: string | null }> = [];
     catalogMocks.getConnection.mockResolvedValue({
       status: "catalog_selected",
       selectedDriveId: "drive-test",
@@ -58,8 +59,13 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     });
 
     try {
-      const summary = await scanCatalogForOwner({ ownerUserId: owner.id, storeId: store.id });
+      const summary = await scanCatalogForOwner({ ownerUserId: owner.id, storeId: store.id, onProgress: progress => { progressEvents.push(progress); } });
       expect(summary).toMatchObject({ discovered: 1, draftsCreated: 1, existing: 0, failed: 0, operationalCopiesCreated: 0 });
+      expect(progressEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: "discovering_folders", processedFolders: 0, totalFolders: 1 }),
+        expect.objectContaining({ stage: "reading_product", currentProduct: productCode, totalFolders: 1 }),
+        expect.objectContaining({ stage: "processing_folders", processedFolders: 1, totalFolders: 1 }),
+      ]));
 
       const [draft] = await db.select().from(products).where(and(eq(products.storeId, store.id), eq(products.productCode, productCode))).limit(1);
       expect(draft).toMatchObject({

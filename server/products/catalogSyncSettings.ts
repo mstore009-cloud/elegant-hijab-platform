@@ -23,19 +23,57 @@ export async function getCatalogSyncSettingsByTaskUid(taskUid: string) {
 export async function markCatalogSyncStarted(settingId: number) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  await db.update(catalogSyncSettings).set({ lastStartedAt: new Date(), lastError: null }).where(eq(catalogSyncSettings.id, settingId));
+  await db.update(catalogSyncSettings).set({
+    lastStartedAt: new Date(),
+    lastError: null,
+    isRunning: true,
+    lastRunStage: "discovering_catalog",
+    lastRunProcessedFolders: 0,
+    lastRunTotalFolders: 0,
+    lastRunCurrentProduct: null,
+    lastRunDurationMs: null,
+    lastRunUpdatedAt: new Date(),
+  }).where(eq(catalogSyncSettings.id, settingId));
 }
 
-export async function markCatalogSyncCompleted(input: { settingId: number; summary: unknown }) {
+export async function markCatalogSyncProgress(input: { settingId: number; stage: string; processedFolders: number; totalFolders: number; currentProduct?: string | null }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  await db.update(catalogSyncSettings).set({ lastCompletedAt: new Date(), lastSummary: JSON.stringify(input.summary), lastError: null }).where(eq(catalogSyncSettings.id, input.settingId));
+  await db.update(catalogSyncSettings).set({
+    lastRunStage: input.stage.slice(0, 80),
+    lastRunProcessedFolders: Math.max(0, input.processedFolders),
+    lastRunTotalFolders: Math.max(0, input.totalFolders),
+    lastRunCurrentProduct: input.currentProduct?.slice(0, 180) ?? null,
+    lastRunUpdatedAt: new Date(),
+  }).where(eq(catalogSyncSettings.id, input.settingId));
 }
 
-export async function markCatalogSyncFailed(input: { settingId: number; error: string }) {
+export async function markCatalogSyncCompleted(input: { settingId: number; summary: unknown; durationMs?: number }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  await db.update(catalogSyncSettings).set({ lastError: input.error.slice(0, 2000) }).where(eq(catalogSyncSettings.id, input.settingId));
+  await db.update(catalogSyncSettings).set({
+    lastCompletedAt: new Date(),
+    lastSummary: JSON.stringify(input.summary),
+    lastError: null,
+    isRunning: false,
+    lastRunStage: "completed",
+    lastRunCurrentProduct: null,
+    lastRunDurationMs: input.durationMs ?? null,
+    lastRunUpdatedAt: new Date(),
+  }).where(eq(catalogSyncSettings.id, input.settingId));
+}
+
+export async function markCatalogSyncFailed(input: { settingId: number; error: string; durationMs?: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  await db.update(catalogSyncSettings).set({
+    lastError: input.error.slice(0, 2000),
+    isRunning: false,
+    lastRunStage: "failed",
+    lastRunCurrentProduct: null,
+    lastRunDurationMs: input.durationMs ?? null,
+    lastRunUpdatedAt: new Date(),
+  }).where(eq(catalogSyncSettings.id, input.settingId));
 }
 
 export async function persistCatalogSyncTask(input: { settingId: number; taskUid: string }) {
