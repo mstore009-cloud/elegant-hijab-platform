@@ -10,7 +10,7 @@ vi.mock("../integrations/onedrive/operationalMedia", () => ({
   createOperationalImageDerivative: vi.fn(async () => ({ bytes: Buffer.from("webp"), metadata: { format: "webp", outputBytes: 4 } })),
 }));
 
-import { contentPostMedia, contentPosts, productMedia, products, stores, users } from "../../drizzle/schema";
+import { contentPostActivities, contentPostMedia, contentPosts, productMedia, products, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { attachContentPostMediaToProduct, createContentPostDraft, getContentPostDraft, saveContentPostMedia } from "./db";
 
@@ -61,6 +61,7 @@ describe("وسيط المنشور الاختياري للمنتج", () => {
       expect(productCopy[0]).toMatchObject({ productId, source: "manual", mediaType: "image", storageKey: "products/test/copied-image.webp", colorVerified: false });
     } finally {
       if (postMediaId) await db.delete(contentPostMedia).where(eq(contentPostMedia.id, postMediaId));
+      if (postId) await db.delete(contentPostActivities).where(eq(contentPostActivities.postId, postId));
       if (postId) await db.delete(contentPosts).where(eq(contentPosts.id, postId));
       if (linkedProductMediaId) await db.delete(productMedia).where(eq(productMedia.id, linkedProductMediaId));
       if (productId) await db.delete(products).where(eq(products.id, productId));

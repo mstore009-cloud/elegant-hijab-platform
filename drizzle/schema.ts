@@ -649,13 +649,26 @@ export const contentPosts = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     storeId: int("storeId").notNull().references(() => stores.id),
     productId: int("productId").references(() => products.id),
-    status: mysqlEnum("status", ["draft"]).default("draft").notNull(),
+    status: mysqlEnum("status", ["draft", "needs_review", "approved", "changes_requested", "archived"]).default("draft").notNull(),
+    title: varchar("title", { length: 200 }),
+    contentType: mysqlEnum("contentType", ["feed_post", "story", "reel", "catalog", "other"]).default("feed_post").notNull(),
+    channelPlan: mysqlEnum("channelPlan", ["general", "facebook", "instagram", "tiktok", "whatsapp"]).default("general").notNull(),
+    plannedFor: timestamp("plannedFor"),
     caption: text("caption"),
     createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    reviewedByUserId: int("reviewedByUserId").references(() => users.id),
+    reviewedAt: timestamp("reviewedAt"),
+    reviewNote: text("reviewNote"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("content_post_store_idx").on(table.storeId), index("content_post_product_idx").on(table.productId), index("content_post_creator_idx").on(table.createdByUserId)],
+  table => [
+    index("content_post_store_idx").on(table.storeId),
+    index("content_post_product_idx").on(table.productId),
+    index("content_post_creator_idx").on(table.createdByUserId),
+    index("content_post_store_status_idx").on(table.storeId, table.status),
+    index("content_post_store_planned_idx").on(table.storeId, table.plannedFor),
+  ],
 );
 
 /**
@@ -675,6 +688,22 @@ export const contentPostMedia = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [index("content_post_media_post_idx").on(table.postId), index("content_post_media_product_media_idx").on(table.linkedProductMediaId)],
+);
+
+/** Append-only collaboration history for a content draft. */
+export const contentPostActivities = mysqlTable(
+  "content_post_activities",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    postId: int("postId").notNull().references(() => contentPosts.id),
+    actorUserId: int("actorUserId").references(() => users.id),
+    action: mysqlEnum("action", ["created", "updated", "review_requested", "approved", "changes_requested", "archived"]).notNull(),
+    note: text("note"),
+    metadata: text("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("content_activity_store_idx").on(table.storeId), index("content_activity_post_idx").on(table.postId), index("content_activity_post_time_idx").on(table.postId, table.createdAt)],
 );
 
 export const productImportJobs = mysqlTable(
