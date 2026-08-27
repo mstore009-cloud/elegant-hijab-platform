@@ -5,8 +5,9 @@ import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { listLLMModels } from "../_core/llm";
 import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, updateCustomerBotSettings } from "../customerBot/db";
+import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "../customerBot/knowledge";
 
-async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage") {
+async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
   await assertPermission(ctx.user, permission, ctx.operationalStore.id);
   return ctx.operationalStore;
@@ -16,6 +17,7 @@ const settingsInput = z.object({
   enabled: z.boolean(), mode: z.enum(botModes), fastModel: z.string().trim().min(1).max(80), escalationModel: z.string().trim().min(1).max(80),
   minimumConfidence: z.number().int().min(1).max(100), maxDailyReplies: z.number().int().min(1).max(1000), maxDailyEscalations: z.number().int().min(1).max(500),
 });
+const knowledgeInput = z.object({ title: z.string().trim().min(3).max(240), kind: z.enum(knowledgeKinds), body: z.string().trim().min(12).max(12000) });
 
 export const customerBotRouter = router({
   settings: protectedProcedure.query(async ({ ctx }) => getCustomerBotSettings((await requireStore(ctx, "bot.manage")).id)),
@@ -45,5 +47,46 @@ export const customerBotRouter = router({
     const store = await requireStore(ctx, "inbox.reply");
     await dismissCustomerBotRun({ ...input, storeId: store.id });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_run", entityId: input.runId, action: "bot.draft_dismissed", summary: "رُفضت مسودة البوت قبل اعتمادها أو إرسالها." });
+  }),
+  qualitySummary: protectedProcedure.query(async ({ ctx }) => getCustomerBotQualitySummary((await requireStore(ctx, "bot.manage")).id)),
+  reviewQueue: protectedProcedure.query(async ({ ctx }) => listCustomerBotReviewQueue((await requireStore(ctx, "bot.manage")).id)),
+  reviewRun: protectedProcedure.input(z.object({ runId: z.number().int().positive(), outcome: z.enum(reviewOutcomes), finalReply: z.string().trim().max(1800).nullable().optional(), feedback: z.string().trim().max(3000).nullable().optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const review = await reviewCustomerBotRun({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_run", entityId: input.runId, action: "bot.run_reviewed", summary: `تمت مراجعة مسودة البوت: ${input.outcome}.` });
+    return review;
+  }),
+  knowledge: protectedProcedure.input(z.object({ status: z.enum(knowledgeStatuses).optional() }).optional()).query(async ({ ctx, input }) => listCustomerBotKnowledge((await requireStore(ctx, "bot.manage")).id, input?.status)),
+  createKnowledge: protectedProcedure.input(knowledgeInput.extend({ source: z.enum(["manual", "review_feedback", "historical_candidate"]).optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const article = await createCustomerBotKnowledge({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_knowledge", entityId: article.id, action: "bot.knowledge_created", summary: `أُنشئت بطاقة معرفة مسودة: ${article.title}.` });
+    return article;
+  }),
+  updateKnowledge: protectedProcedure.input(knowledgeInput.extend({ articleId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const article = await updateCustomerBotKnowledge({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_knowledge", entityId: article.id, action: "bot.knowledge_updated", summary: `حُدّثت بطاقة المعرفة: ${article.title}.` });
+    return article;
+  }),
+  setKnowledgeStatus: protectedProcedure.input(z.object({ articleId: z.number().int().positive(), status: z.enum(["approved", "archived"]) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.knowledge.approve");
+    const article = await setCustomerBotKnowledgeStatus({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_knowledge", entityId: article.id, action: `bot.knowledge_${input.status}`, summary: `${input.status === "approved" ? "اعتمدت" : "أرشفت"} بطاقة المعرفة: ${article.title}.` });
+    return article;
+  }),
+  knowledgeSources: protectedProcedure.input(z.object({ runId: z.number().int().positive() })).query(async ({ ctx, input }) => listCustomerBotKnowledgeSources((await requireStore(ctx, "bot.manage")).id, input.runId)),
+  knowledgeGaps: protectedProcedure.input(z.object({ status: z.enum(gapStatuses).optional() }).optional()).query(async ({ ctx, input }) => listCustomerBotKnowledgeGaps((await requireStore(ctx, "bot.manage")).id, input?.status)),
+  createKnowledgeGap: protectedProcedure.input(z.object({ runId: z.number().int().positive().nullable().optional(), category: z.enum(gapCategories), title: z.string().trim().min(3).max(240), questionSnapshot: z.string().trim().max(4000).nullable().optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const gap = await createCustomerBotKnowledgeGap({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_gap", entityId: gap.id, action: "bot.knowledge_gap_created", summary: `فُتحت فجوة معرفة: ${gap.title}.` });
+    return gap;
+  }),
+  resolveKnowledgeGap: protectedProcedure.input(z.object({ gapId: z.number().int().positive(), status: z.enum(["resolved", "dismissed"]), resolutionNote: z.string().trim().max(3000).nullable().optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const gap = await resolveCustomerBotKnowledgeGap({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_gap", entityId: gap.id, action: `bot.knowledge_gap_${input.status}`, summary: `${input.status === "resolved" ? "حُلّت" : "استُبعدت"} فجوة المعرفة: ${gap.title}.` });
+    return gap;
   }),
 });

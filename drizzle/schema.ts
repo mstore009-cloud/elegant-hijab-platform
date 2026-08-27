@@ -378,11 +378,97 @@ export const customerBotUsageCounters = mysqlTable(
   table => [uniqueIndex("bot_usage_store_date_unique").on(table.storeId, table.usageDate)],
 );
 
+/** Human-curated knowledge. Only approved articles can be provided to the customer assistant. */
+export const customerBotKnowledgeArticles = mysqlTable(
+  "customer_bot_knowledge_articles",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    title: varchar("title", { length: 240 }).notNull(),
+    kind: mysqlEnum("kind", ["faq", "policy", "style_guidance", "product_guidance"]).default("faq").notNull(),
+    body: text("body").notNull(),
+    status: mysqlEnum("status", ["draft", "approved", "archived"]).default("draft").notNull(),
+    source: mysqlEnum("source", ["manual", "review_feedback", "historical_candidate"]).default("manual").notNull(),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    approvedByUserId: int("approvedByUserId").references(() => users.id),
+    approvedAt: timestamp("approvedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    index("bot_knowledge_store_status_time").on(table.storeId, table.status, table.updatedAt),
+    index("bot_knowledge_store_kind_time").on(table.storeId, table.kind, table.updatedAt),
+  ],
+);
+
+/** A single staff review records how a bot proposal was handled without mutating the original run. */
+export const customerBotRunReviews = mysqlTable(
+  "customer_bot_run_reviews",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    runId: int("runId").notNull().references(() => customerBotRuns.id),
+    outcome: mysqlEnum("outcome", ["approved_as_is", "approved_edited", "rejected", "human_handoff", "knowledge_gap"]).notNull(),
+    finalReply: text("finalReply"),
+    feedback: text("feedback"),
+    reviewedByUserId: int("reviewedByUserId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("bot_run_review_unique").on(table.runId),
+    index("bot_review_store_outcome_time").on(table.storeId, table.outcome, table.updatedAt),
+  ],
+);
+
+/** Exact approved knowledge candidates provided as context for a particular bot run. */
+export const customerBotRunKnowledgeSources = mysqlTable(
+  "customer_bot_run_knowledge_sources",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    runId: int("runId").notNull().references(() => customerBotRuns.id),
+    knowledgeArticleId: int("knowledgeArticleId").notNull().references(() => customerBotKnowledgeArticles.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("bot_run_knowledge_unique").on(table.runId, table.knowledgeArticleId),
+    index("bot_knowledge_source_store_run").on(table.storeId, table.runId),
+  ],
+);
+
+/** An explicit, reviewable knowledge or process gap. It never creates knowledge automatically. */
+export const customerBotKnowledgeGaps = mysqlTable(
+  "customer_bot_knowledge_gaps",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    runId: int("runId").references(() => customerBotRuns.id),
+    category: mysqlEnum("category", ["knowledge", "policy", "handoff", "experience", "action"]).default("knowledge").notNull(),
+    title: varchar("title", { length: 240 }).notNull(),
+    questionSnapshot: text("questionSnapshot"),
+    status: mysqlEnum("status", ["open", "resolved", "dismissed"]).default("open").notNull(),
+    resolutionNote: text("resolutionNote"),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    resolvedByUserId: int("resolvedByUserId").references(() => users.id),
+    resolvedAt: timestamp("resolvedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    index("bot_gap_store_status_time").on(table.storeId, table.status, table.updatedAt),
+    index("bot_gap_store_run_idx").on(table.storeId, table.runId),
+  ],
+);
+
 export type CustomerProfile = typeof customerProfiles.$inferSelect;
 export type InboxConversation = typeof inboxConversations.$inferSelect;
 export type InboxMessage = typeof inboxMessages.$inferSelect;
 export type CustomerBotSettings = typeof customerBotSettings.$inferSelect;
 export type CustomerBotRun = typeof customerBotRuns.$inferSelect;
+export type CustomerBotKnowledgeArticle = typeof customerBotKnowledgeArticles.$inferSelect;
+export type CustomerBotRunReview = typeof customerBotRunReviews.$inferSelect;
+export type CustomerBotKnowledgeGap = typeof customerBotKnowledgeGaps.$inferSelect;
 
 /** Customer request created from the public store or future staff/WhatsApp channels. */
 export const orders = mysqlTable(

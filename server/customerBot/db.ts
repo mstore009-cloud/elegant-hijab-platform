@@ -3,6 +3,8 @@ import {
   customerBotRuns,
   customerBotSettings,
   customerBotUsageCounters,
+  customerBotKnowledgeArticles,
+  customerBotRunKnowledgeSources,
   inboxConversations,
   inboxMessages,
   orders,
@@ -35,6 +37,7 @@ export type BotFacts = {
   store: { currencyCode: string; defaultDeliveryFee: string; freeDeliveryEnabled: boolean; freeDeliveryThreshold: string | null };
   conversation: { id: number; subject: string | null; channel: string; customerName: string | null; order: { orderNumber: string; status: string; statusLabel: string; total: string } | null };
   products: Array<{ productCode: string; name: string; category: string; sellingPrice: string; description: string | null; colors: Array<{ colorName: string; sizes: Array<{ size: string | null; available: boolean }> }> }>;
+  knowledge: Array<{ id: number; title: string; kind: string; body: string }>;
   recentMessages: Array<{ direction: "inbound" | "outbound"; body: string }>;
 };
 
@@ -113,6 +116,7 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
   ]);
   const terms = extractTerms(sourceBody);
   const productFilters = terms.flatMap(term => [like(products.name, `%${term}%`), like(products.productCode, `%${term}%`), like(products.category, `%${term}%`)]);
+  const knowledgeFilters = terms.flatMap(term => [like(customerBotKnowledgeArticles.title, `%${term}%`), like(customerBotKnowledgeArticles.body, `%${term}%`)]);
   type SafeProduct = { id: number; productCode: string; name: string; category: string; sellingPrice: string; description: string | null };
   type SafeVariant = { productId: number; colorName: string; sizeLabel: string; inventoryQuantity: number; availability: "available" | "low_stock" | "out_of_stock" };
   const matchingProducts: SafeProduct[] = productFilters.length
@@ -120,6 +124,9 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
     : [];
   const variants: SafeVariant[] = matchingProducts.length
     ? await db.select({ productId: productVariants.productId, colorName: productVariants.colorName, sizeLabel: productVariants.sizeLabel, inventoryQuantity: productVariants.inventoryQuantity, availability: productVariants.availability }).from(productVariants).where(inArray(productVariants.productId, matchingProducts.map(product => product.id)))
+    : [];
+  const approvedKnowledge: Array<{ id: number; title: string; kind: string; body: string }> = knowledgeFilters.length
+    ? await db.select({ id: customerBotKnowledgeArticles.id, title: customerBotKnowledgeArticles.title, kind: customerBotKnowledgeArticles.kind, body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "approved"), or(...knowledgeFilters)!)).orderBy(desc(customerBotKnowledgeArticles.updatedAt)).limit(5)
     : [];
   const [linkedOrder] = conversation.orderId
     ? await db.select({ orderNumber: orders.orderNumber, status: orders.status, total: orders.total }).from(orders).where(and(eq(orders.storeId, storeId), eq(orders.id, conversation.orderId))).limit(1)
@@ -135,6 +142,7 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
       });
       return { ...product, colors: Array.from(colorGroups.values()) };
     }),
+    knowledge: approvedKnowledge,
     recentMessages: messages.reverse().map((message: { direction: "inbound" | "outbound"; body: string }) => ({ direction: message.direction, body: message.body })),
   };
 }
@@ -142,7 +150,7 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
 function assistantPrompt(input: { facts: BotFacts; incoming: string; stronger: boolean }) {
   return [
     "أنت مساعد مبيعات عربي لمتجر حجابات. اكتب جواباً طبيعياً موجزاً للعميلة.",
-    "استخدم الحقائق المرفقة فقط. لا تخترع سعراً أو لوناً أو توفرًا أو خصماً. لا تذكر أسماء النماذج أو التحويل الداخلي أو محتوى الملاحظات الداخلية.",
+    "استخدم الحقائق المرفقة فقط. لا تخترع سعراً أو لوناً أو توفرًا أو خصماً. حقائق المنتجات والتوصيل الحية مقدمة على أي بطاقة معرفة. لا تذكر أسماء النماذج أو التحويل الداخلي أو محتوى الملاحظات الداخلية.",
     "لا توافق على تعديل سعر أو مخزون أو طلب أو خصم أو إلغاء أو إرجاع؛ يجب أن تطلب متابعة الموظف في هذه الحالات.",
     input.stronger ? "هذه حالة مركبة؛ ساعد في المقارنة بوضوح، لكن اعتمد حصراً على المنتجات المرفقة." : "هذه محاولة المسار السريع؛ إذا لم تكف الحقائق فاطلب توضيحاً ولا تخمّن.",
     "أعد JSON فقط بالشكل: {\"reply\": string, \"confidence\": number من 0 إلى 100, \"needsEscalation\": boolean, \"escalationReason\": string أو null}.",
@@ -158,7 +166,9 @@ async function createRun(db: any, input: { storeId: number; conversationId: numb
     escalationReason: input.escalationReason ?? null, factsSnapshot: JSON.stringify(input.facts), replyDraft: input.replyDraft ?? null,
     errorSummary: input.errorSummary ?? null, promptTokens: input.usage?.prompt_tokens ?? null, completionTokens: input.usage?.completion_tokens ?? null,
   });
-  return Number(result[0].insertId);
+  const runId = Number(result[0].insertId);
+  if (input.facts.knowledge.length) await db.insert(customerBotRunKnowledgeSources).values(input.facts.knowledge.map(article => ({ storeId: input.storeId, runId, knowledgeArticleId: article.id })));
+  return runId;
 }
 
 export async function getCustomerBotSettings(storeId: number) {
