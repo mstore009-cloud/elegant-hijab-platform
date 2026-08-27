@@ -77,4 +77,10 @@ describe("نواة الصلاحيات الحبيبية", () => {
     expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["loyalty.manage"], permissionCode: "loyalty.approve" })).toBe(false);
     expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["loyalty.approve"], permissionCode: "loyalty.approve" })).toBe(true);
   });
+
+  it("يفصل إنشاء مسودة مساعد الموظفين عن مراجعتها وإعدادها", () => {
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["employee_bot.use"], permissionCode: "employee_bot.use" })).toBe(true);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["employee_bot.use"], permissionCode: "employee_bot.review" })).toBe(false);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["employee_bot.review"], permissionCode: "employee_bot.manage" })).toBe(false);
+  });
 });

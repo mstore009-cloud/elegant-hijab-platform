@@ -935,6 +935,100 @@ export const notificationPreferences = mysqlTable(
   table => [uniqueIndex("notification_preferences_store_user_unique").on(table.storeId, table.userId)],
 );
 
+/** A staff command interpreted into a reviewable operational draft. It never mutates business records itself. */
+export const employeeBotCommands = mysqlTable(
+  "employee_bot_commands",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    requestedByUserId: int("requestedByUserId").notNull().references(() => users.id),
+    rawCommand: text("rawCommand").notNull(),
+    intent: mysqlEnum("intent", ["inventory_set", "selling_price_set", "order_status_transition", "clarification", "unsupported"]).notNull(),
+    status: mysqlEnum("status", ["needs_review", "needs_clarification", "approved", "rejected", "executed", "execution_failed", "expired"]).default("needs_review").notNull(),
+    productId: int("productId").references(() => products.id),
+    orderId: int("orderId").references(() => orders.id),
+    targetLabel: varchar("targetLabel", { length: 220 }),
+    proposedChanges: text("proposedChanges").notNull(),
+    factsSnapshot: text("factsSnapshot").notNull(),
+    model: varchar("model", { length: 120 }),
+    confidence: int("confidence"),
+    escalationReason: text("escalationReason"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    index("employee_bot_command_store_status_idx").on(table.storeId, table.status, table.createdAt),
+    index("employee_bot_command_requester_idx").on(table.requestedByUserId, table.createdAt),
+    index("employee_bot_command_product_idx").on(table.productId),
+    index("employee_bot_command_order_idx").on(table.orderId),
+  ],
+);
+
+/** The review decision is separate from the immutable command and includes the execution outcome. */
+export const employeeBotCommandReviews = mysqlTable(
+  "employee_bot_command_reviews",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    commandId: int("commandId").notNull().references(() => employeeBotCommands.id),
+    reviewerUserId: int("reviewerUserId").notNull().references(() => users.id),
+    decision: mysqlEnum("decision", ["approved", "rejected", "needs_clarification"]).notNull(),
+    finalChanges: text("finalChanges"),
+    note: text("note"),
+    executedAt: timestamp("executedAt"),
+    executionError: text("executionError"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [uniqueIndex("employee_bot_review_command_unique").on(table.commandId), index("employee_bot_review_store_time_idx").on(table.storeId, table.createdAt)],
+);
+
+/** A small audit snapshot of the safe facts used to prepare an EmployeeBot-E1 draft. */
+export const employeeBotCommandSources = mysqlTable(
+  "employee_bot_command_sources",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    commandId: int("commandId").notNull().references(() => employeeBotCommands.id),
+    sourceType: mysqlEnum("sourceType", ["product", "product_color", "order"]).notNull(),
+    sourceId: int("sourceId").notNull(),
+    snapshot: text("snapshot").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("employee_bot_source_command_idx").on(table.commandId), index("employee_bot_source_store_entity_idx").on(table.storeId, table.sourceType, table.sourceId)],
+);
+
+/** Store-local model and quota controls for EmployeeBot-E1 drafts. They never enable direct mutation. */
+export const employeeBotSettings = mysqlTable(
+  "employee_bot_settings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    enabled: boolean("enabled").default(true).notNull(),
+    fastModel: varchar("fastModel", { length: 120 }).default("gpt-5-mini").notNull(),
+    escalationModel: varchar("escalationModel", { length: 120 }).default("gpt-5").notNull(),
+    minimumConfidence: int("minimumConfidence").default(80).notNull(),
+    maxDailyCommands: int("maxDailyCommands").default(80).notNull(),
+    maxDailyEscalations: int("maxDailyEscalations").default(20).notNull(),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("employee_bot_settings_store_unique").on(table.storeId), index("employee_bot_settings_updater_idx").on(table.updatedByUserId)],
+);
+
+/** Daily reservation counters prevent unbounded LLM usage when many staff commands arrive together. */
+export const employeeBotUsageCounters = mysqlTable(
+  "employee_bot_usage_counters",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    usageDate: varchar("usageDate", { length: 10 }).notNull(),
+    fastCommandCount: int("fastCommandCount").default(0).notNull(),
+    escalationCount: int("escalationCount").default(0).notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("employee_bot_usage_store_date_unique").on(table.storeId, table.usageDate)],
+);
+
 export const productImportJobs = mysqlTable(
   "product_import_jobs",
   {

@@ -22,7 +22,7 @@ import {
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import { trpc } from "@/lib/trpc";
-import { Award, BarChart3, Bell, Bot, Boxes, ClipboardList, ImagePlus, KeyRound, LayoutDashboard, LogOut, Megaphone, MessageCircleMore, PanelLeft, Settings2, UsersRound } from "lucide-react";
+import { Award, BarChart3, Bell, Bot, Boxes, ClipboardList, ImagePlus, KeyRound, LayoutDashboard, LogOut, Megaphone, MessageCircleMore, PanelLeft, Settings2, UserCog, UsersRound } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -37,6 +37,7 @@ const menuItems = [
   { icon: Award, label: "برنامج الولاء", path: "/loyalty" },
   { icon: MessageCircleMore, label: "Inbox المحادثات", path: "/inbox" },
   { icon: Bot, label: "مركز البوت", path: "/customer-bot" },
+  { icon: UserCog, label: "مساعد الموظفين", path: "/employee-bot" },
   { icon: Bell, label: "مركز التنبيهات", path: "/notifications" },
   { icon: Settings2, label: "إعدادات المتجر", path: "/settings/store" },
   { icon: ImagePlus, label: "مسودات المحتوى", path: "/content-posts" },
