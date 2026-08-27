@@ -5,6 +5,7 @@ import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
 import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
+import { recordInitialProductFinancialValues } from "../financials/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
 import { listCatalogChildren, readCatalogImageDataUrl } from "../integrations/onedrive/catalog";
@@ -196,11 +197,15 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
-    const canViewFinancials = await viewerFinancialAccess(ctx.user);
-    if (!canViewFinancials && (input.costPrice || input.targetMarginPercent)) {
+    const hasFinancialValues = input.costPrice !== undefined || input.targetMarginPercent !== undefined;
+    if (hasFinancialValues) {
+      await assertPermission(ctx.user, "finance.manage_sensitive", storeId);
+    }
+    if (!await viewerFinancialAccess(ctx.user) && hasFinancialValues) {
       throw new TRPCError({ code: "FORBIDDEN", message: "لا يمكنك إدخال تكلفة أو هامش الربح." });
     }
     const productId = await createProduct({ ...input, storeId, createdByUserId: ctx.user.id });
+    await recordInitialProductFinancialValues({ ...input, storeId, productId, actorUserId: ctx.user.id });
     return { productId };
   }),
   updateInventory: protectedProcedure.input(z.object({ variantId: z.number().int().positive(), inventoryQuantity: z.number().int().min(0).max(100000) })).mutation(async ({ ctx, input }) => {

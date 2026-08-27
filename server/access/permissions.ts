@@ -37,6 +37,7 @@ export const permissionCatalog = [
   { code: "staff.manage", group: "الإدارة التشغيلية", label: "إدارة موظفي المتجر وصلاحياتهم" },
   { code: "settings.manage", group: "الإعدادات", label: "إدارة الإعدادات والتكاملات" },
   { code: "finance.view_sensitive", group: "البيانات الحساسة", label: "مشاهدة التكلفة والهامش وصافي الربح" },
+  { code: "finance.manage_sensitive", group: "البيانات الحساسة", label: "تعديل تكلفة المنتج والهامش المستهدف" },
 ] as const;
 
 export type PermissionCode = (typeof permissionCatalog)[number]["code"];
@@ -54,7 +55,8 @@ export function canViewSensitiveFinancialData(input: {
   isPlatformAdmin: boolean;
   grantedPermissionCodes: readonly string[];
 }) {
-  return getEffectivePermissionSet(input).has("finance.view_sensitive");
+  const effectivePermissions = getEffectivePermissionSet(input);
+  return effectivePermissions.has("finance.view_sensitive") || effectivePermissions.has("finance.manage_sensitive");
 }
 
 export function hasPermission(input: {

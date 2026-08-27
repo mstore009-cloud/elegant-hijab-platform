@@ -20,6 +20,12 @@ describe("نواة الصلاحيات الحبيبية", () => {
     ).toBe(true);
   });
 
+  it("يفصل عرض بيانات التكلفة عن تعديلها، ويتيح تصريح التعديل رؤية القيم اللازمة للمراجعة", () => {
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["finance.view_sensitive"], permissionCode: "finance.manage_sensitive" })).toBe(false);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["finance.manage_sensitive"], permissionCode: "finance.manage_sensitive" })).toBe(true);
+    expect(canViewSensitiveFinancialData({ isPlatformAdmin: false, grantedPermissionCodes: ["finance.manage_sensitive"] })).toBe(true);
+  });
+
   it("يعامل المدير كصاحب صلاحيات كاملة دون الحاجة إلى منح صفوف مكررة", () => {
     const permissions = getEffectivePermissionSet({ isPlatformAdmin: true, grantedPermissionCodes: [] });
     expect(permissions.has("finance.view_sensitive")).toBe(true);

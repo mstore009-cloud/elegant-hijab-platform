@@ -1187,12 +1187,34 @@ export const productOperations = mysqlTable(
   table => [index("product_operations_product_idx").on(table.productId), index("product_operations_source_idx").on(table.source)],
 );
 
+/** Immutable, store-scoped history for sensitive product-cost and margin changes. */
+export const productFinancialChangeEvents = mysqlTable(
+  "product_financial_change_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    productId: int("productId").notNull().references(() => products.id),
+    actorUserId: int("actorUserId").notNull().references(() => users.id),
+    priorCostPrice: decimal("priorCostPrice", { precision: 12, scale: 2 }),
+    nextCostPrice: decimal("nextCostPrice", { precision: 12, scale: 2 }),
+    priorTargetMarginPercent: decimal("priorTargetMarginPercent", { precision: 5, scale: 2 }),
+    nextTargetMarginPercent: decimal("nextTargetMarginPercent", { precision: 5, scale: 2 }),
+    reason: varchar("reason", { length: 360 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("fin_change_store_created_idx").on(table.storeId, table.createdAt),
+    index("fin_change_product_created_idx").on(table.productId, table.createdAt),
+  ],
+);
+
 export type Product = typeof products.$inferSelect;
 export type ProductVariant = typeof productVariants.$inferSelect;
 export type ProductImportJob = typeof productImportJobs.$inferSelect;
 export type CatalogSyncSetting = typeof catalogSyncSettings.$inferSelect;
 export type CatalogFolderImport = typeof catalogFolderImports.$inferSelect;
 export type ProductOperation = typeof productOperations.$inferSelect;
+export type ProductFinancialChangeEvent = typeof productFinancialChangeEvents.$inferSelect;
 export type ProductMediaLifecycleEvent = typeof productMediaLifecycleEvents.$inferSelect;
 export type ContentPost = typeof contentPosts.$inferSelect;
 export type ContentPostMedia = typeof contentPostMedia.$inferSelect;

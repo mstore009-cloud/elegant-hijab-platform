@@ -20,6 +20,7 @@ import Analytics from "./pages/Analytics";
 import Loyalty from "./pages/Loyalty";
 import Notifications from "./pages/Notifications";
 import EmployeeBot from "./pages/EmployeeBot";
+import Financials from "./pages/Financials";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -30,6 +31,7 @@ function Router() {
       <Route path={"/"} component={OperationsOverview} />
       <Route path={"/permissions"} component={AccessControl} />
       <Route path={"/products"} component={Products} />
+      <Route path={"/financials"} component={Financials} />
       <Route path={"/orders"} component={Orders} />
       <Route path={"/crm"} component={CRM} />
       <Route path={"/loyalty"} component={Loyalty} />
