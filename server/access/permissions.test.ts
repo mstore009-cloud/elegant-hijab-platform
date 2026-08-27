@@ -48,4 +48,10 @@ describe("نواة الصلاحيات الحبيبية", () => {
       }),
     ).toBe(true);
   });
+
+  it("يفصل عرض ملفات العملاء عن إدارتها", () => {
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["crm.view"], permissionCode: "crm.view" })).toBe(true);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["crm.view"], permissionCode: "crm.manage" })).toBe(false);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["crm.manage"], permissionCode: "crm.manage" })).toBe(true);
+  });
 });

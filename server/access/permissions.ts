@@ -10,6 +10,8 @@ export const permissionCatalog = [
   { code: "orders.delivery.submit", group: "الطلبات", label: "رفع الطلب لشركة التوصيل" },
   { code: "orders.cancel", group: "الطلبات", label: "إلغاء الطلبات" },
   { code: "orders.returns.manage", group: "الطلبات", label: "إدارة المشاكل والإرجاع" },
+  { code: "crm.view", group: "إدارة العملاء", label: "عرض ملفات العملاء وسجلهم" },
+  { code: "crm.manage", group: "إدارة العملاء", label: "تعديل ملفات العملاء ووسومهم ومهامهم" },
   { code: "inbox.read", group: "البريد الوارد", label: "قراءة الرسائل" },
   { code: "inbox.reply", group: "البريد الوارد", label: "الرد على العملاء" },
   { code: "inbox.takeover", group: "البريد الوارد", label: "التدخل بدل البوت" },

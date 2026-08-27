@@ -156,6 +156,95 @@ export const productVariants = mysqlTable(
   ],
 );
 
+/** Retail CRM is customer-centric: one profile per normalized phone in each store. */
+export const customerProfiles = mysqlTable(
+  "customer_profiles",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    displayName: varchar("displayName", { length: 160 }).notNull(),
+    phoneNormalized: varchar("phoneNormalized", { length: 40 }).notNull(),
+    phoneDisplay: varchar("phoneDisplay", { length: 40 }).notNull(),
+    governorate: varchar("governorate", { length: 120 }),
+    lastAddress: text("lastAddress"),
+    relationshipStage: mysqlEnum("relationshipStage", ["new", "active", "repeat", "needs_followup", "inactive"]).default("new").notNull(),
+    firstChannel: mysqlEnum("firstChannel", ["storefront", "whatsapp", "instagram", "messenger", "manual"]).default("storefront").notNull(),
+    lastChannel: mysqlEnum("lastChannel", ["storefront", "whatsapp", "instagram", "messenger", "manual"]).default("storefront").notNull(),
+    firstOrderAt: timestamp("firstOrderAt"),
+    lastOrderAt: timestamp("lastOrderAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("customer_store_phone_unique").on(table.storeId, table.phoneNormalized),
+    index("customer_store_stage_idx").on(table.storeId, table.relationshipStage),
+    index("customer_store_last_order_idx").on(table.storeId, table.lastOrderAt),
+  ],
+);
+
+export const customerTags = mysqlTable(
+  "customer_tags",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    name: varchar("name", { length: 80 }).notNull(),
+    color: varchar("color", { length: 24 }).default("slate").notNull(),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [uniqueIndex("customer_tag_store_name_unique").on(table.storeId, table.name), index("customer_tag_store_idx").on(table.storeId)],
+);
+
+export const customerTagAssignments = mysqlTable(
+  "customer_tag_assignments",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    customerId: int("customerId").notNull().references(() => customerProfiles.id),
+    tagId: int("tagId").notNull().references(() => customerTags.id),
+    assignedByUserId: int("assignedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [uniqueIndex("customer_tag_assignment_unique").on(table.customerId, table.tagId), index("customer_tag_assignment_customer_idx").on(table.customerId), index("customer_tag_assignment_tag_idx").on(table.tagId)],
+);
+
+export const customerTasks = mysqlTable(
+  "customer_tasks",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    customerId: int("customerId").notNull().references(() => customerProfiles.id),
+    title: varchar("title", { length: 220 }).notNull(),
+    note: text("note"),
+    status: mysqlEnum("status", ["open", "completed", "cancelled"]).default("open").notNull(),
+    dueAt: timestamp("dueAt"),
+    assigneeEmployeeId: int("assigneeEmployeeId").references(() => employeeProfiles.id),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    completedAt: timestamp("completedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("customer_task_store_status_idx").on(table.storeId, table.status), index("customer_task_customer_idx").on(table.customerId), index("customer_task_assignee_idx").on(table.assigneeEmployeeId)],
+);
+
+export const customerActivities = mysqlTable(
+  "customer_activities",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    customerId: int("customerId").notNull().references(() => customerProfiles.id),
+    type: mysqlEnum("type", ["profile_created", "profile_updated", "order_created", "order_status_changed", "note", "tag_added", "tag_removed", "task_created", "task_completed", "inbox_message"]).notNull(),
+    title: varchar("title", { length: 240 }).notNull(),
+    body: text("body"),
+    actorUserId: int("actorUserId").references(() => users.id),
+    orderId: int("orderId"),
+    taskId: int("taskId"),
+    occurredAt: timestamp("occurredAt").defaultNow().notNull(),
+  },
+  table => [index("customer_activity_store_customer_idx").on(table.storeId, table.customerId, table.occurredAt), index("customer_activity_order_idx").on(table.orderId), index("customer_activity_task_idx").on(table.taskId)],
+);
+
+export type CustomerProfile = typeof customerProfiles.$inferSelect;
+
 /** Customer request created from the public store or future staff/WhatsApp channels. */
 export const orders = mysqlTable(
   "orders",
@@ -168,6 +257,7 @@ export const orders = mysqlTable(
     customerChannel: mysqlEnum("customerChannel", ["storefront", "whatsapp", "instagram", "messenger", "manual"]).default("storefront").notNull(),
     customerName: varchar("customerName", { length: 160 }).notNull(),
     customerPhone: varchar("customerPhone", { length: 40 }).notNull(),
+    customerId: int("customerId").references(() => customerProfiles.id),
     governorate: varchar("governorate", { length: 120 }).notNull(),
     address: text("address").notNull(),
     customerNote: text("customerNote"),
@@ -181,7 +271,7 @@ export const orders = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("orders_store_created_idx").on(table.storeId, table.createdAt), index("orders_status_idx").on(table.status), index("orders_phone_idx").on(table.customerPhone), index("orders_created_idx").on(table.createdAt)],
+  table => [index("orders_store_created_idx").on(table.storeId, table.createdAt), index("orders_status_idx").on(table.status), index("orders_phone_idx").on(table.customerPhone), index("orders_customer_idx").on(table.customerId), index("orders_created_idx").on(table.createdAt)],
 );
 
 /** Delivery fee configured by staff; a carrier integration can replace this source later. */

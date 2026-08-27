@@ -3,8 +3,8 @@ import type { User } from "../../drizzle/schema";
 import { getEmployeePermissionCodesForUser } from "./db";
 import { hasPermission, type PermissionCode } from "./permissions";
 
-export async function assertPermission(user: User, permissionCode: PermissionCode) {
-  const grantedPermissionCodes = await getEmployeePermissionCodesForUser(user.id);
+export async function assertPermission(user: User, permissionCode: PermissionCode, storeId?: number) {
+  const grantedPermissionCodes = await getEmployeePermissionCodesForUser(user.id, storeId);
   const allowed = hasPermission({
     isPlatformAdmin: user.role === "admin",
     grantedPermissionCodes,

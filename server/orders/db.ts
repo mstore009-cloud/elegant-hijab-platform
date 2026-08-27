@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { deliveryGovernorateRates, orderContactEvents, orderItems, orders, orderStatusEvents, productMedia, productVariants, products, promotionCoupons, storeSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
+import { recordOrderCustomerActivity, recordOrderStatusCustomerActivity, resolveCustomerForOrder } from "../crm/db";
 
 export const orderStatuses = ["new", "needs_contact", "confirmed", "preparing", "out_for_delivery", "completed", "cancelled"] as const;
 export type OrderStatus = (typeof orderStatuses)[number];
@@ -39,7 +40,7 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   const requested = Array.from(grouped.values());
   if (!requested.length) throw new Error("أضيفي منتجًا واحدًا على الأقل إلى السلة.");
   const productCodes = Array.from(new Set(requested.map(item => item.productCode)));
-  const activeProducts = await db.select().from(products).where(and(inArray(products.productCode, productCodes), eq(products.status, "active")));
+  const activeProducts = await db.select().from(products).where(and(eq(products.storeId, storeId), inArray(products.productCode, productCodes), eq(products.status, "active")));
   if (activeProducts.length !== productCodes.length) throw new Error("أحد المنتجات لم يعد متاحًا للطلب.");
   const variants = await db.select().from(productVariants).where(inArray(productVariants.productId, activeProducts.map(product => product.id)));
   const media = await db.select().from(productMedia).where(inArray(productMedia.productId, activeProducts.map(product => product.id)));
@@ -56,6 +57,15 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   const deliveryFee = deliveryTerms(settings, subtotalNumber).fee;
   const orderNumber = createOrderNumber();
   return db.transaction(async tx => {
+    const customer = await resolveCustomerForOrder(tx, {
+      storeId,
+      customerName: input.customerName,
+      customerPhone: input.customerPhone,
+      governorate: input.governorate,
+      address: input.address,
+      channel: "storefront",
+      orderAt: new Date(),
+    });
     const couponCode = input.couponCode?.trim().toUpperCase() || null;
     let couponDiscount = 0;
     if (couponCode) {
@@ -68,10 +78,11 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
       const usageUpdate = await tx.update(promotionCoupons).set({ usageCount: sql`${promotionCoupons.usageCount} + 1` }).where(and(eq(promotionCoupons.id, coupon.id), coupon.usageLimit === null ? sql`1 = 1` : sql`${promotionCoupons.usageCount} < ${coupon.usageLimit}`));
       if (Number(usageUpdate[0].affectedRows) !== 1) throw new Error("وصلت القسيمة إلى حد الاستخدام.");
     }
-    const created = await tx.insert(orders).values({ storeId, orderNumber, status: "new", source: "storefront", customerChannel: "storefront", customerName: input.customerName.trim(), customerPhone: input.customerPhone.trim(), governorate: input.governorate.trim(), address: input.address.trim(), customerNote: input.customerNote?.trim() || null, paymentMethod: "cash_on_delivery", subtotal, deliveryFee: money(deliveryFee), manualDiscount: money(couponDiscount), total: money(Math.max(0, subtotalNumber - couponDiscount + deliveryFee)) });
+    const created = await tx.insert(orders).values({ storeId, customerId: customer.customerId, orderNumber, status: "new", source: "storefront", customerChannel: "storefront", customerName: input.customerName.trim(), customerPhone: input.customerPhone.trim(), governorate: input.governorate.trim(), address: input.address.trim(), customerNote: input.customerNote?.trim() || null, paymentMethod: "cash_on_delivery", subtotal, deliveryFee: money(deliveryFee), manualDiscount: money(couponDiscount), total: money(Math.max(0, subtotalNumber - couponDiscount + deliveryFee)) });
     const orderId = Number(created[0].insertId);
     await tx.insert(orderItems).values(resolved.map(item => ({ orderId, productId: item.product.id, variantId: item.variant.id, productCodeSnapshot: item.product.productCode, productNameSnapshot: item.product.name, colorNameSnapshot: item.variant.colorName, imageStorageKeySnapshot: item.imageStorageKeySnapshot, unitPriceSnapshot: item.product.sellingPrice, quantity: item.quantity })));
     await tx.insert(orderStatusEvents).values({ orderId, fromStatus: null, toStatus: "new", actorUserId: null, source: "storefront", note: "طلب جديد من المتجر" });
+    await recordOrderCustomerActivity(tx, { storeId, customerId: customer.customerId, orderId, orderNumber, created: customer.created });
     return { orderId, orderNumber, status: "new" as const };
   });
 }
@@ -192,6 +203,7 @@ export async function transitionOrderStatus(input: { storeId: number; orderId: n
     const inventoryDeductedAt = input.nextStatus === "confirmed" ? new Date() : input.nextStatus === "cancelled" && order.inventoryDeductedAt ? null : order.inventoryDeductedAt;
     await tx.update(orders).set({ status: input.nextStatus, inventoryDeductedAt, confirmedByUserId: input.nextStatus === "confirmed" ? input.actorUserId : order.confirmedByUserId }).where(eq(orders.id, order.id));
     await tx.insert(orderStatusEvents).values({ orderId: order.id, fromStatus: order.status, toStatus: input.nextStatus, actorUserId: input.actorUserId, source: "orders_ui", note: input.note?.trim() || null });
+    await recordOrderStatusCustomerActivity(tx, { storeId: input.storeId, customerId: order.customerId, orderId: order.id, nextStatus: input.nextStatus, actorUserId: input.actorUserId, note: input.note });
     return { status: input.nextStatus };
   });
 }

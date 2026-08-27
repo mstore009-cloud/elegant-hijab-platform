@@ -12,6 +12,7 @@ import Products from "./pages/Products";
 import Storefront from "./pages/Storefront";
 import Orders from "./pages/Orders";
 import StoreSettings from "./pages/StoreSettings";
+import CRM from "./pages/CRM";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -23,6 +24,7 @@ function Router() {
       <Route path={"/permissions"} component={AccessControl} />
       <Route path={"/products"} component={Products} />
       <Route path={"/orders"} component={Orders} />
+      <Route path={"/crm"} component={CRM} />
       <Route path={"/settings/store"} component={StoreSettings} />
       <Route path={"/settings/delivery"} component={StoreSettings} />
       <Route path={"/content-posts"} component={ContentPosts} />

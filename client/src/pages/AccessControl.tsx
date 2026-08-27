@@ -21,11 +21,11 @@ export default function AccessControl() {
   const [draftActive, setDraftActive] = useState(true);
 
   const catalogItems = (catalog.data ?? []) as CatalogPermission[];
-  const grouped = catalogItems.reduce<Record<string, CatalogPermission[]>>((acc, permission) => {
+  const grouped = useMemo(() => catalogItems.reduce<Record<string, CatalogPermission[]>>((acc, permission) => {
     acc[permission.group] = [...(acc[permission.group] ?? []), permission];
     return acc;
-  }, {});
-  const members = [
+  }, {}), [catalogItems]);
+  const members = useMemo(() => [
     ...(staff.data ?? []),
     ...(assignableUsers.data ?? []).map(user => ({
       employeeId: null,
@@ -40,7 +40,7 @@ export default function AccessControl() {
       role: user.role,
       permissions: [] as string[],
     })),
-  ];
+  ], [staff.data, assignableUsers.data]);
   const selectedMember = useMemo(
     () => members.find(member => member.userId === selectedUserId) ?? null,
     [members, selectedUserId],
