@@ -10,6 +10,7 @@ import {
   marketingCampaigns,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { notifyPermissionHolders } from "../notifications/db";
 
 export type CampaignStatus = "draft" | "needs_approval" | "approved" | "changes_requested" | "archived";
 export type CampaignObjective = "product_launch" | "reengagement" | "promotion" | "awareness" | "other";
@@ -248,6 +249,11 @@ export async function requestCampaignApproval(input: { storeId: number; campaign
   if (!links.length || links.some(link => link.post.storeId !== input.storeId || link.post.status !== "approved")) throw new Error("اربطي بالحملة مسودة محتوى واحدة معتمدة على الأقل قبل طلب الاعتماد.");
   await db.update(marketingCampaigns).set({ status: "needs_approval", approvedByUserId: null, approvedAt: null, approvalNote: null }).where(eq(marketingCampaigns.id, input.campaignId));
   await recordCampaignActivity({ storeId: input.storeId, campaignId: input.campaignId, actorUserId: input.actorUserId, action: "approval_requested", note: input.note });
+  try {
+    await notifyPermissionHolders({ storeId: input.storeId, permissionCode: "marketing.approve", type: "marketing_approval_requested", priority: "action", title: `حملة بانتظار الاعتماد: ${campaign.name}`, body: input.note?.trim() || "راجعي الهدف والجمهور والمحتوى والميزانية التخطيطية قبل اتخاذ القرار.", entityType: "marketing_campaign", entityId: campaign.id, route: `/marketing?campaign=${campaign.id}` });
+  } catch (error) {
+    console.warn("[Notifications] تعذر إنشاء تنبيه اعتماد حملة:", error);
+  }
   return { status: "needs_approval" as const };
 }
 

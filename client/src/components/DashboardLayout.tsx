@@ -21,7 +21,8 @@ import {
 } from "@/components/ui/sidebar";
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { Award, BarChart3, Bot, Boxes, ClipboardList, ImagePlus, KeyRound, LayoutDashboard, LogOut, Megaphone, MessageCircleMore, PanelLeft, Settings2, UsersRound } from "lucide-react";
+import { trpc } from "@/lib/trpc";
+import { Award, BarChart3, Bell, Bot, Boxes, ClipboardList, ImagePlus, KeyRound, LayoutDashboard, LogOut, Megaphone, MessageCircleMore, PanelLeft, Settings2, UsersRound } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -36,6 +37,7 @@ const menuItems = [
   { icon: Award, label: "برنامج الولاء", path: "/loyalty" },
   { icon: MessageCircleMore, label: "Inbox المحادثات", path: "/inbox" },
   { icon: Bot, label: "مركز البوت", path: "/customer-bot" },
+  { icon: Bell, label: "مركز التنبيهات", path: "/notifications" },
   { icon: Settings2, label: "إعدادات المتجر", path: "/settings/store" },
   { icon: ImagePlus, label: "مسودات المحتوى", path: "/content-posts" },
   { icon: Megaphone, label: "الحملات التسويقية", path: "/marketing" },
@@ -123,6 +125,8 @@ function DashboardLayoutContent({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const activeMenuItem = menuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
+  const { data: notificationSummary } = trpc.notifications.summary.useQuery(undefined, { retry: false });
+  const unreadNotifications = notificationSummary?.unreadCount ?? 0;
 
   useEffect(() => {
     if (isCollapsed) {
@@ -264,8 +268,13 @@ function DashboardLayoutContent({
                 </div>
               </div>
             </div>
+            <button onClick={() => setLocation("/notifications")} className="relative flex h-9 w-9 items-center justify-center rounded-lg border bg-background text-foreground transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="فتح مركز التنبيهات">
+              <Bell className="h-4 w-4" />
+              {unreadNotifications > 0 ? <span className="absolute -left-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 text-primary-foreground">{unreadNotifications > 9 ? "9+" : unreadNotifications}</span> : null}
+            </button>
           </div>
         )}
+        {!isMobile ? <div className="flex h-14 items-center justify-end border-b bg-background/80 px-4 backdrop-blur" dir="rtl"><button onClick={() => setLocation("/notifications")} className="relative flex h-9 w-9 items-center justify-center rounded-lg border bg-background text-foreground transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="فتح مركز التنبيهات"><Bell className="h-4 w-4" />{unreadNotifications > 0 ? <span className="absolute -left-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 text-primary-foreground">{unreadNotifications > 9 ? "9+" : unreadNotifications}</span> : null}</button></div> : null}
         <main className="min-w-0 flex-1 p-4">{children}</main>
       </SidebarInset>
     </>

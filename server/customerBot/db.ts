@@ -14,6 +14,7 @@ import {
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { invokeLLM, type InvokeParams, type InvokeResult } from "../_core/llm";
+import { notifyEmployee, notifyPermissionHolders } from "../notifications/db";
 
 export const botModes = ["draft_only", "auto_reply"] as const;
 export type BotMode = (typeof botModes)[number];
@@ -205,6 +206,28 @@ export async function dismissCustomerBotRun(input: { storeId: number; conversati
   await db.update(customerBotRuns).set({ status: "dismissed" }).where(eq(customerBotRuns.id, run.id));
 }
 
+async function notifyHumanHandoffSafely(input: { storeId: number; conversation: any; reason: string }) {
+  const notification = {
+    storeId: input.storeId,
+    type: "bot_handoff" as const,
+    priority: "urgent" as const,
+    title: `البوت يحتاج تدخلاً بشرياً: ${input.conversation.contactNameSnapshot}`,
+    body: input.reason.slice(0, 1000),
+    entityType: "inbox_conversation",
+    entityId: input.conversation.id,
+    route: `/inbox?conversation=${input.conversation.id}`,
+  };
+  try {
+    if (input.conversation.assignedEmployeeId) {
+      await notifyEmployee({ ...notification, employeeId: input.conversation.assignedEmployeeId });
+    } else {
+      await notifyPermissionHolders({ ...notification, permissionCode: "inbox.takeover" });
+    }
+  } catch (error) {
+    console.warn("[Notifications] تعذر إنشاء تنبيه تحويل البوت:", error);
+  }
+}
+
 export async function generateCustomerBotDraft(input: { storeId: number; actorUserId: number; conversationId: number; sourceMessageId?: number; llm?: LlmInvoker }) {
   const db = await requireDb();
   const settings = await getSettings(db, input.storeId);
@@ -219,6 +242,7 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
   if (immediateHandoff) {
     const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "human_handoff", status: "handoff", escalationReason: "طلب حساس يحتاج موظفاً مخولاً", facts });
     await db.update(inboxConversations).set({ priority: true, status: "open", snoozedUntil: null, closedAt: null }).where(eq(inboxConversations.id, conversation.id));
+    await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason: "طلب حساس يحتاج موظفاً مخولاً" });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: null, escalationReason: "طلب حساس يحتاج موظفاً مخولاً" };
   }
   const llm = input.llm ?? invokeLLM;
@@ -226,6 +250,7 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
   const fastReserved = await reserveUsage({ db, storeId: input.storeId, kind: "fast", limit: settings.maxDailyReplies });
   if (!fastReserved) {
     const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "human_handoff", status: "handoff", escalationReason: "تجاوز حد الردود اليومية للمسار السريع", facts });
+    await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason: "تجاوز حد الردود اليومية للمسار السريع" });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: null, escalationReason: "تجاوز حد الردود اليومية للمسار السريع" };
   }
   try {
@@ -250,12 +275,16 @@ async function generateEscalatedDraft(input: { db: any; settings: any; facts: Bo
   const reserved = await reserveUsage({ db: input.db, storeId: input.storeId, kind: "escalation", limit: input.settings.maxDailyEscalations });
   if (!reserved) {
     const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "human_handoff", status: "handoff", escalationReason: "تجاوز حد التصعيد اليومي", facts: input.facts });
+    const conversation = await getScopedConversation(input.db, input.storeId, input.conversationId);
+    await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason: "تجاوز حد التصعيد اليومي" });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: null, escalationReason: "تجاوز حد التصعيد اليومي" };
   }
   const result = await input.llm({ model: input.settings.escalationModel, messages: [{ role: "system", content: assistantPrompt({ facts: input.facts, incoming: input.sourceMessage.body, stronger: true }) }], outputSchema: { name: "customer_assistant_escalated_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
   const parsed = parseStructuredReply(responseText(result));
   if (parsed.needsEscalation || parsed.confidence < input.settings.minimumConfidence || !parsed.reply) {
     const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "human_handoff", status: "handoff", model: input.settings.escalationModel, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason, facts: input.facts, usage: result.usage });
+    const conversation = await getScopedConversation(input.db, input.storeId, input.conversationId);
+    await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason: parsed.escalationReason || input.reason });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason };
   }
   const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "escalated", status: "draft", model: input.settings.escalationModel, confidence: parsed.confidence, escalationReason: input.reason, facts: input.facts, replyDraft: parsed.reply, usage: result.usage });

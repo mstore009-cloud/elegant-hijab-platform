@@ -10,6 +10,7 @@ import {
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { appendCustomerActivity } from "../crm/db";
+import { notifyEmployee } from "../notifications/db";
 
 export const inboxChannels = ["manual", "whatsapp", "instagram", "messenger"] as const;
 export const inboxStatuses = ["open", "waiting_customer", "snoozed", "closed"] as const;
@@ -170,6 +171,13 @@ export async function assignInboxConversation(input: { storeId: number; conversa
   const employee = input.assigneeEmployeeId ? await requireActiveAssignee(db, input.storeId, input.assigneeEmployeeId) : null;
   await db.update(inboxConversations).set({ assignedEmployeeId: employee?.id ?? null }).where(eq(inboxConversations.id, conversation.id));
   await appendConversationEvent(db, { storeId: input.storeId, conversationId: conversation.id, type: "assigned", actorUserId: input.actorUserId, fromValue: conversation.assignedEmployeeId ? String(conversation.assignedEmployeeId) : null, toValue: employee ? String(employee.id) : null });
+  if (employee && conversation.assignedEmployeeId !== employee.id) {
+    try {
+      await notifyEmployee({ storeId: input.storeId, employeeId: employee.id, type: "inbox_assigned", priority: "action", title: `أُسندت إليك محادثة: ${conversation.contactNameSnapshot}`, body: "افتحي المحادثة للاطلاع والرد أو المتابعة.", entityType: "inbox_conversation", entityId: conversation.id, route: `/inbox?conversation=${conversation.id}` });
+    } catch (error) {
+      console.warn("[Notifications] تعذر إنشاء تنبيه تعيين محادثة:", error);
+    }
+  }
   return employee;
 }
 

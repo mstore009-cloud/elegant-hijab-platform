@@ -892,6 +892,49 @@ export const loyaltyActivities = mysqlTable(
   table => [index("loyalty_activity_store_time_idx").on(table.storeId, table.createdAt), index("loyalty_activity_program_time_idx").on(table.programId, table.createdAt), index("loyalty_activity_membership_idx").on(table.membershipId)],
 );
 
+/** A private, in-app notification. It only points to operational work and never carries channel delivery state. */
+export const workNotifications = mysqlTable(
+  "work_notifications",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    recipientUserId: int("recipientUserId").notNull().references(() => users.id),
+    type: mysqlEnum("type", ["inbox_assigned", "bot_handoff", "crm_task_assigned", "content_review_requested", "marketing_approval_requested", "loyalty_reward_review_requested", "order_created"]).notNull(),
+    priority: mysqlEnum("priority", ["info", "action", "urgent"]).default("info").notNull(),
+    title: varchar("title", { length: 220 }).notNull(),
+    body: text("body"),
+    entityType: varchar("entityType", { length: 80 }).notNull(),
+    entityId: int("entityId").notNull(),
+    route: varchar("route", { length: 500 }).notNull(),
+    dedupeKey: varchar("dedupeKey", { length: 160 }),
+    readAt: timestamp("readAt"),
+    archivedAt: timestamp("archivedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("notification_store_user_dedupe_unique").on(table.storeId, table.recipientUserId, table.dedupeKey),
+    index("notification_recipient_inbox_idx").on(table.storeId, table.recipientUserId, table.archivedAt, table.readAt, table.createdAt),
+    index("notification_entity_idx").on(table.storeId, table.entityType, table.entityId),
+  ],
+);
+
+/** Per-user display preferences for the internal notification centre. There are no delivery-channel preferences in Notifications-A. */
+export const notificationPreferences = mysqlTable(
+  "notification_preferences",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    userId: int("userId").notNull().references(() => users.id),
+    inboxAssignments: boolean("inboxAssignments").default(true).notNull(),
+    botHandoffs: boolean("botHandoffs").default(true).notNull(),
+    crmTasks: boolean("crmTasks").default(true).notNull(),
+    reviewRequests: boolean("reviewRequests").default(true).notNull(),
+    orderUpdates: boolean("orderUpdates").default(true).notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("notification_preferences_store_user_unique").on(table.storeId, table.userId)],
+);
+
 export const productImportJobs = mysqlTable(
   "product_import_jobs",
   {

@@ -2,6 +2,7 @@ import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { contentPostActivities, contentPostMedia, contentPosts, productMedia, products } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { createOperationalImageDerivative } from "../integrations/onedrive/operationalMedia";
+import { notifyPermissionHolders } from "../notifications/db";
 import { storageGetSignedUrl, storagePut } from "../storage";
 
 type ContentStatus = "draft" | "needs_review" | "approved" | "changes_requested" | "archived";
@@ -178,6 +179,11 @@ export async function requestContentPostReview(input: { storeId: number; postId:
   if (post.status !== "draft" && post.status !== "changes_requested") throw new Error("لا يمكن طلب المراجعة في الحالة الحالية للمسودة.");
   await db.update(contentPosts).set({ status: "needs_review", reviewedByUserId: null, reviewedAt: null, reviewNote: null }).where(eq(contentPosts.id, input.postId));
   await recordContentActivity({ storeId: input.storeId, postId: input.postId, actorUserId: input.actorUserId, action: "review_requested", note: input.note });
+  try {
+    await notifyPermissionHolders({ storeId: input.storeId, permissionCode: "content.approve", type: "content_review_requested", priority: "action", title: `مسودة محتوى بانتظار المراجعة: ${post.title || "بلا عنوان"}`, body: input.note?.trim() || "راجعي المسودة قبل اعتمادها.", entityType: "content_post", entityId: post.id, route: `/content-posts?post=${post.id}` });
+  } catch (error) {
+    console.warn("[Notifications] تعذر إنشاء تنبيه مراجعة محتوى:", error);
+  }
   return { status: "needs_review" as const };
 }
 

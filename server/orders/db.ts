@@ -3,6 +3,7 @@ import { deliveryGovernorateRates, orderContactEvents, orderItems, orders, order
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
 import { recordOrderCustomerActivity, recordOrderStatusCustomerActivity, resolveCustomerForOrder } from "../crm/db";
+import { notifyPermissionHolders } from "../notifications/db";
 
 export const orderStatuses = ["new", "needs_contact", "confirmed", "preparing", "out_for_delivery", "completed", "cancelled"] as const;
 export type OrderStatus = (typeof orderStatuses)[number];
@@ -56,7 +57,7 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   const [settings] = await db.select().from(storeSettings).where(eq(storeSettings.storeId, storeId)).limit(1);
   const deliveryFee = deliveryTerms(settings, subtotalNumber).fee;
   const orderNumber = createOrderNumber();
-  return db.transaction(async tx => {
+  const createdOrder = await db.transaction(async tx => {
     const customer = await resolveCustomerForOrder(tx, {
       storeId,
       customerName: input.customerName,
@@ -85,6 +86,12 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
     await recordOrderCustomerActivity(tx, { storeId, customerId: customer.customerId, orderId, orderNumber, created: customer.created });
     return { orderId, orderNumber, status: "new" as const };
   });
+  try {
+    await notifyPermissionHolders({ storeId, permissionCode: "orders.confirm", type: "order_created", priority: "action", title: `طلب جديد: ${createdOrder.orderNumber}`, body: "يوجد طلب جديد بحاجة إلى مراجعة وتأكيد.", entityType: "order", entityId: createdOrder.orderId, route: `/orders?order=${createdOrder.orderId}` });
+  } catch (error) {
+    console.warn("[Notifications] تعذر إنشاء تنبيه طلب جديد:", error);
+  }
+  return createdOrder;
 }
 
 export async function getPublicDeliveryFee(subtotal = 0) {

@@ -9,6 +9,7 @@ import {
   loyaltyTiers,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { notifyPermissionHolders } from "../notifications/db";
 
 export const loyaltyProgramStatuses = ["draft", "active", "paused", "archived"] as const;
 export const loyaltyMembershipStatuses = ["active", "paused", "removed"] as const;
@@ -255,6 +256,11 @@ export async function requestLoyaltyRewardApproval(input: { storeId: number; rew
   if (reward.status !== "draft") throw new Error("لا يمكن طلب اعتماد المكافأة في حالتها الحالية.");
   await db.update(loyaltyRewards).set({ status: "needs_approval", decisionNote: null, approvedByUserId: null, approvedAt: null }).where(eq(loyaltyRewards.id, input.rewardId));
   await recordLoyaltyActivity(db, { storeId: input.storeId, programId: reward.programId, membershipId: reward.membershipId, rewardId: reward.id, actorUserId: input.actorUserId, type: "reward_approval_requested", note: input.note || "طُلب اعتماد مكافأة داخلية." });
+  try {
+    await notifyPermissionHolders({ storeId: input.storeId, permissionCode: "loyalty.approve", type: "loyalty_reward_review_requested", priority: "action", title: `مكافأة ولاء بانتظار الاعتماد: ${reward.title}`, body: input.note?.trim() || "راجعي المكافأة الداخلية؛ اعتمادها لا ينشئ خصماً أو قسيمة.", entityType: "loyalty_reward", entityId: reward.id, route: `/loyalty?reward=${reward.id}` });
+  } catch (error) {
+    console.warn("[Notifications] تعذر إنشاء تنبيه اعتماد مكافأة:", error);
+  }
   return { status: "needs_approval" as const };
 }
 

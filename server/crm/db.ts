@@ -9,6 +9,7 @@ import {
   orders,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { notifyEmployee } from "../notifications/db";
 
 export const customerRelationshipStages = ["new", "active", "repeat", "needs_followup", "inactive"] as const;
 export const customerTaskStatuses = ["open", "completed", "cancelled"] as const;
@@ -250,6 +251,13 @@ export async function createCustomerTask(input: { storeId: number; customerId: n
   const result = await db.insert(customerTasks).values({ storeId: input.storeId, customerId: input.customerId, title: input.title.trim(), note: input.note?.trim() || null, dueAt: input.dueAt ?? null, assigneeEmployeeId: input.assigneeEmployeeId ?? null, createdByUserId: input.actorUserId });
   const taskId = Number(result[0].insertId);
   await appendCustomerActivity(db, { storeId: input.storeId, customerId: input.customerId, type: "task_created", title: `مهمة متابعة: ${input.title.trim()}`, body: input.note, actorUserId: input.actorUserId, taskId });
+  if (input.assigneeEmployeeId) {
+    try {
+      await notifyEmployee({ storeId: input.storeId, employeeId: input.assigneeEmployeeId, type: "crm_task_assigned", priority: "action", title: `أُسندت إليك مهمة عميل: ${input.title.trim()}`, body: input.note?.trim() || "راجعي ملف العميل لإكمال المتابعة.", entityType: "customer_task", entityId: taskId, route: `/crm?customer=${input.customerId}` });
+    } catch (error) {
+      console.warn("[Notifications] تعذر إنشاء تنبيه مهمة CRM:", error);
+    }
+  }
   return { taskId };
 }
 

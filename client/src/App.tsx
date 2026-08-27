@@ -18,6 +18,7 @@ import CustomerBot from "./pages/CustomerBot";
 import Marketing from "./pages/Marketing";
 import Analytics from "./pages/Analytics";
 import Loyalty from "./pages/Loyalty";
+import Notifications from "./pages/Notifications";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -38,6 +39,7 @@ function Router() {
       <Route path={"/content-posts"} component={ContentPosts} />
       <Route path={"/marketing"} component={Marketing} />
       <Route path={"/analytics"} component={Analytics} />
+      <Route path={"/notifications"} component={Notifications} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

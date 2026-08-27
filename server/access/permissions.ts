@@ -26,6 +26,8 @@ export const permissionCatalog = [
   { code: "marketing.manage", group: "التسويق", label: "إنشاء وتحرير وأرشفة الحملات الداخلية" },
   { code: "marketing.approve", group: "التسويق", label: "اعتماد الحملات الداخلية أو طلب تعديلها" },
   { code: "analytics.view", group: "التحليلات", label: "مشاهدة التقارير التشغيلية" },
+  { code: "notifications.view", group: "التنبيهات", label: "عرض مركز التنبيهات الداخلي" },
+  { code: "notifications.manage", group: "التنبيهات", label: "إدارة قراءة وأرشفة وتفضيلات التنبيهات الشخصية" },
   { code: "loyalty.view", group: "الولاء", label: "عرض برنامج الولاء والأعضاء ودفتر النقاط" },
   { code: "loyalty.manage", group: "الولاء", label: "إدارة العضويات والمستويات وحركات النقاط والمكافآت" },
   { code: "loyalty.approve", group: "الولاء", label: "تفعيل برنامج الولاء واعتماد مكافآته الداخلية" },
