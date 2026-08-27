@@ -587,6 +587,76 @@ export const orderStatusEvents = mysqlTable(
   table => [index("order_events_order_idx").on(table.orderId), index("order_events_status_idx").on(table.toStatus)],
 );
 
+/**
+ * Manual fulfilment remains separate from the commercial order. It records who
+ * prepares a confirmed order and never recalculates price, coupon, or stock.
+ */
+export const orderFulfillments = mysqlTable(
+  "order_fulfillments",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    orderId: int("orderId").notNull().references(() => orders.id),
+    stage: mysqlEnum("stage", ["unstarted", "picking", "packing", "ready", "dispatched", "delivered", "blocked"]).default("unstarted").notNull(),
+    assignedEmployeeId: int("assignedEmployeeId").references(() => employeeProfiles.id),
+    exceptionNote: text("exceptionNote"),
+    startedAt: timestamp("startedAt"),
+    packedAt: timestamp("packedAt"),
+    readyAt: timestamp("readyAt"),
+    dispatchedAt: timestamp("dispatchedAt"),
+    deliveredAt: timestamp("deliveredAt"),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("fulfillment_order_unique").on(table.orderId),
+    index("fulfillment_store_stage_idx").on(table.storeId, table.stage),
+    index("fulfillment_store_assignee_idx").on(table.storeId, table.assignedEmployeeId, table.stage),
+  ],
+);
+
+/** Each immutable order item is checked for picking and packing without changing its quantity. */
+export const orderFulfillmentItemChecks = mysqlTable(
+  "order_fulfillment_item_checks",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    fulfillmentId: int("fulfillmentId").notNull().references(() => orderFulfillments.id),
+    orderItemId: int("orderItemId").notNull().references(() => orderItems.id),
+    pickedAt: timestamp("pickedAt"),
+    pickedByUserId: int("pickedByUserId").references(() => users.id),
+    packedAt: timestamp("packedAt"),
+    packedByUserId: int("packedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("fulfill_check_item_unique").on(table.fulfillmentId, table.orderItemId),
+    index("fulfill_check_fulfillment_idx").on(table.fulfillmentId),
+  ],
+);
+
+/** Append-only evidence of assignment, item checks, exceptions, and manual hand-off. */
+export const orderFulfillmentEvents = mysqlTable(
+  "order_fulfillment_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    fulfillmentId: int("fulfillmentId").notNull().references(() => orderFulfillments.id),
+    orderItemId: int("orderItemId").references(() => orderItems.id),
+    type: mysqlEnum("type", ["created", "assigned", "picking_started", "item_picked", "item_packed", "ready", "dispatched", "delivered", "exception_recorded", "note_added"]).notNull(),
+    fromStage: varchar("fromStage", { length: 32 }),
+    toStage: varchar("toStage", { length: 32 }),
+    note: text("note"),
+    actorUserId: int("actorUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("fulfill_event_store_time_idx").on(table.storeId, table.createdAt),
+    index("fulfill_event_fulfill_time_idx").on(table.fulfillmentId, table.createdAt),
+  ],
+);
+
 /** Internal record of contact attempts; the external channel integration is added separately. */
 export const orderContactEvents = mysqlTable(
   "order_contact_events",
@@ -1126,6 +1196,8 @@ export type ProductOperation = typeof productOperations.$inferSelect;
 export type ProductMediaLifecycleEvent = typeof productMediaLifecycleEvents.$inferSelect;
 export type ContentPost = typeof contentPosts.$inferSelect;
 export type ContentPostMedia = typeof contentPostMedia.$inferSelect;
+export type OrderFulfillment = typeof orderFulfillments.$inferSelect;
+export type OrderFulfillmentItemCheck = typeof orderFulfillmentItemChecks.$inferSelect;
 
 export const oneDriveOAuthStates = mysqlTable(
   "onedrive_oauth_states",

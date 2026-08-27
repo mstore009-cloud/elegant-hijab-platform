@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { assertPermission } from "../access/authorization";
 import { addOrderContactEvent, contactOutcomes, createStorefrontOrder, customerChannels, getOperationalOrder, getPublicDeliveryFee, getPublicStoreSettings, getStoreSettingsForStaff, listDeliveryRates, listOperationalOrders, listPromotionCoupons, orderStatuses, saveDeliveryRate, savePromotionCoupon, saveStoreSettings, transitionOrderStatus, validatePublicCoupon } from "../orders/db";
+import { addFulfillmentNote, assignFulfillment, deliverFulfillment, dispatchFulfillment, ensureOrderFulfillment, getFulfillmentDetail, listFulfillmentAssignees, listFulfillmentQueue, markFulfillmentReady, recordFulfillmentException, setFulfillmentItemCheck, startPicking } from "../orders/fulfillment";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 
 const orderStatus = z.enum(orderStatuses);
@@ -70,5 +71,53 @@ export const ordersRouter = router({
   addContactEvent: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), channel: z.enum(customerChannels), outcome: z.enum(contactOutcomes), note: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "orders.confirm");
     return addOrderContactEvent({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
+  }),
+  fulfillmentQueue: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "orders.view");
+    return listFulfillmentQueue(requireOperationalStoreId(ctx.operationalStore));
+  }),
+  fulfillmentDetail: protectedProcedure.input(z.object({ orderId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.view");
+    return getFulfillmentDetail({ storeId: requireOperationalStoreId(ctx.operationalStore), orderId: input.orderId });
+  }),
+  fulfillmentAssignees: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return listFulfillmentAssignees(requireOperationalStoreId(ctx.operationalStore));
+  }),
+  startFulfillment: protectedProcedure.input(z.object({ orderId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return ensureOrderFulfillment({ storeId: requireOperationalStoreId(ctx.operationalStore), orderId: input.orderId, actorUserId: ctx.user.id });
+  }),
+  assignFulfillment: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), employeeId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return assignFulfillment({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
+  }),
+  startPicking: protectedProcedure.input(z.object({ orderId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return startPicking({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
+  }),
+  setFulfillmentItemCheck: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), orderItemId: z.number().int().positive(), field: z.enum(["picked", "packed"]), checked: z.boolean() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return setFulfillmentItemCheck({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
+  }),
+  markFulfillmentReady: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), note: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return markFulfillmentReady({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
+  }),
+  dispatchFulfillment: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), note: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.delivery.submit");
+    return dispatchFulfillment({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
+  }),
+  deliverFulfillment: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), note: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return deliverFulfillment({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
+  }),
+  recordFulfillmentException: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), note: z.string().trim().min(2).max(2000) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return recordFulfillmentException({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
+  }),
+  addFulfillmentNote: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), note: z.string().trim().min(2).max(2000) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "orders.fulfill");
+    return addFulfillmentNote({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore), actorUserId: ctx.user.id });
   }),
 });
