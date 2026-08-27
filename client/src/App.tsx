@@ -14,6 +14,7 @@ import Orders from "./pages/Orders";
 import StoreSettings from "./pages/StoreSettings";
 import CRM from "./pages/CRM";
 import Inbox from "./pages/Inbox";
+import CustomerBot from "./pages/CustomerBot";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -27,6 +28,7 @@ function Router() {
       <Route path={"/orders"} component={Orders} />
       <Route path={"/crm"} component={CRM} />
       <Route path={"/inbox"} component={Inbox} />
+      <Route path={"/customer-bot"} component={CustomerBot} />
       <Route path={"/settings/store"} component={StoreSettings} />
       <Route path={"/settings/delivery"} component={StoreSettings} />
       <Route path={"/content-posts"} component={ContentPosts} />

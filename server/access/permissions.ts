@@ -17,6 +17,7 @@ export const permissionCatalog = [
   { code: "inbox.manage", group: "البريد الوارد", label: "إدارة التعيين والحالة والمتابعة" },
   { code: "inbox.takeover", group: "البريد الوارد", label: "التدخل بدل البوت" },
   { code: "bot.training.manage", group: "البريد الوارد", label: "تدريب البوت" },
+  { code: "bot.manage", group: "المساعد الذكي", label: "إدارة إعدادات وحدود بوت العملاء" },
   { code: "marketing.manage", group: "التسويق", label: "إدارة التسويق والإعلانات" },
   { code: "analytics.view", group: "التحليلات", label: "مشاهدة التقارير التشغيلية" },
   { code: "staff.manage", group: "الإدارة التشغيلية", label: "إدارة موظفي المتجر وصلاحياتهم" },

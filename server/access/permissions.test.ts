@@ -60,4 +60,9 @@ describe("نواة الصلاحيات الحبيبية", () => {
     expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["inbox.read"], permissionCode: "inbox.manage" })).toBe(false);
     expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["inbox.manage"], permissionCode: "inbox.manage" })).toBe(true);
   });
+
+  it("يفصل إعدادات وحدود البوت الهجين عن قراءة الرسائل والرد اليدوي", () => {
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["inbox.reply"], permissionCode: "bot.manage" })).toBe(false);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["bot.manage"], permissionCode: "bot.manage" })).toBe(true);
+  });
 });

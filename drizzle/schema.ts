@@ -318,9 +318,71 @@ export const inboxConversationEvents = mysqlTable(
   ],
 );
 
+/** Store-scoped controls for the hybrid customer assistant. Automated sending stays disabled by default. */
+export const customerBotSettings = mysqlTable(
+  "customer_bot_settings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    enabled: boolean("enabled").default(false).notNull(),
+    mode: mysqlEnum("mode", ["draft_only", "auto_reply"]).default("draft_only").notNull(),
+    fastModel: varchar("fastModel", { length: 80 }).default("gpt-5-mini").notNull(),
+    escalationModel: varchar("escalationModel", { length: 80 }).default("gpt-5").notNull(),
+    minimumConfidence: int("minimumConfidence").default(75).notNull(),
+    maxDailyReplies: int("maxDailyReplies").default(100).notNull(),
+    maxDailyEscalations: int("maxDailyEscalations").default(15).notNull(),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("bot_settings_store_unique").on(table.storeId)],
+);
+
+/** Immutable evidence of a proposed reply, escalation decision, or human handoff. */
+export const customerBotRuns = mysqlTable(
+  "customer_bot_runs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    conversationId: int("conversationId").notNull().references(() => inboxConversations.id),
+    sourceMessageId: int("sourceMessageId").references(() => inboxMessages.id),
+    route: mysqlEnum("route", ["fast", "escalated", "human_handoff"]).notNull(),
+    status: mysqlEnum("status", ["draft", "handoff", "failed", "dismissed"]).notNull(),
+    model: varchar("model", { length: 80 }),
+    confidence: int("confidence"),
+    escalationReason: varchar("escalationReason", { length: 120 }),
+    factsSnapshot: text("factsSnapshot"),
+    replyDraft: text("replyDraft"),
+    errorSummary: varchar("errorSummary", { length: 500 }),
+    promptTokens: int("promptTokens"),
+    completionTokens: int("completionTokens"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("bot_runs_store_conversation_time").on(table.storeId, table.conversationId, table.createdAt),
+    index("bot_runs_store_route_time").on(table.storeId, table.route, table.createdAt),
+    index("bot_runs_source_message_idx").on(table.sourceMessageId),
+  ],
+);
+
+/** Daily store-scoped caps so a misconfigured bot cannot create unbounded model usage. */
+export const customerBotUsageCounters = mysqlTable(
+  "customer_bot_usage_counters",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    usageDate: varchar("usageDate", { length: 10 }).notNull(),
+    fastReplyCount: int("fastReplyCount").default(0).notNull(),
+    escalationCount: int("escalationCount").default(0).notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("bot_usage_store_date_unique").on(table.storeId, table.usageDate)],
+);
+
 export type CustomerProfile = typeof customerProfiles.$inferSelect;
 export type InboxConversation = typeof inboxConversations.$inferSelect;
 export type InboxMessage = typeof inboxMessages.$inferSelect;
+export type CustomerBotSettings = typeof customerBotSettings.$inferSelect;
+export type CustomerBotRun = typeof customerBotRuns.$inferSelect;
 
 /** Customer request created from the public store or future staff/WhatsApp channels. */
 export const orders = mysqlTable(
