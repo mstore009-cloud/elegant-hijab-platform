@@ -14,6 +14,7 @@ export const permissionCatalog = [
   { code: "crm.manage", group: "إدارة العملاء", label: "تعديل ملفات العملاء ووسومهم ومهامهم" },
   { code: "inbox.read", group: "البريد الوارد", label: "قراءة الرسائل" },
   { code: "inbox.reply", group: "البريد الوارد", label: "الرد على العملاء" },
+  { code: "inbox.manage", group: "البريد الوارد", label: "إدارة التعيين والحالة والمتابعة" },
   { code: "inbox.takeover", group: "البريد الوارد", label: "التدخل بدل البوت" },
   { code: "bot.training.manage", group: "البريد الوارد", label: "تدريب البوت" },
   { code: "marketing.manage", group: "التسويق", label: "إدارة التسويق والإعلانات" },

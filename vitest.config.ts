@@ -15,5 +15,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["server/**/*.test.ts", "server/**/*.spec.ts", "client/**/*.test.{ts,tsx}", "client/**/*.spec.{ts,tsx}"],
+    // Integration specs use the same managed database and clean their own rows.
+    // Running files in parallel can make one spec delete a fixture another still uses.
+    fileParallelism: false,
   },
 });

@@ -162,6 +162,13 @@
       "when": 1787800263065,
       "tag": "0022_neat_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1787801439092,
+      "tag": "0023_clammy_stingray",
+      "breakpoints": true
     }
   ]
 }

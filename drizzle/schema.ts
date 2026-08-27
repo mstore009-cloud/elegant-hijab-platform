@@ -243,7 +243,84 @@ export const customerActivities = mysqlTable(
   table => [index("customer_activity_store_customer_idx").on(table.storeId, table.customerId, table.occurredAt), index("customer_activity_order_idx").on(table.orderId), index("customer_activity_task_idx").on(table.taskId)],
 );
 
+/**
+ * A store-scoped shared conversation. Channel identifiers remain nullable until
+ * a verified external connector is enabled; manual operational records never
+ * claim to have sent a message through an external provider.
+ */
+export const inboxConversations = mysqlTable(
+  "inbox_conversations",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    customerId: int("customerId").references(() => customerProfiles.id),
+    orderId: int("orderId").references(() => orders.id),
+    channel: mysqlEnum("channel", ["manual", "whatsapp", "instagram", "messenger"]).default("manual").notNull(),
+    externalConversationId: varchar("externalConversationId", { length: 255 }),
+    contactNameSnapshot: varchar("contactNameSnapshot", { length: 160 }),
+    contactPhoneSnapshot: varchar("contactPhoneSnapshot", { length: 40 }),
+    subject: varchar("subject", { length: 240 }),
+    status: mysqlEnum("status", ["open", "waiting_customer", "snoozed", "closed"]).default("open").notNull(),
+    priority: boolean("priority").default(false).notNull(),
+    assignedEmployeeId: int("assignedEmployeeId").references(() => employeeProfiles.id),
+    lastMessageAt: timestamp("lastMessageAt"),
+    snoozedUntil: timestamp("snoozedUntil"),
+    closedAt: timestamp("closedAt"),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("inbox_external_conversation_unique").on(table.storeId, table.channel, table.externalConversationId),
+    index("inbox_store_status_recent_idx").on(table.storeId, table.status, table.lastMessageAt),
+    index("inbox_store_assignee_status_idx").on(table.storeId, table.assignedEmployeeId, table.status),
+    index("inbox_store_customer_idx").on(table.storeId, table.customerId),
+    index("inbox_store_order_idx").on(table.storeId, table.orderId),
+  ],
+);
+
+/** Append-only message record. Internal notes are stored separately from customer-facing traffic. */
+export const inboxMessages = mysqlTable(
+  "inbox_messages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    conversationId: int("conversationId").notNull().references(() => inboxConversations.id),
+    direction: mysqlEnum("direction", ["inbound", "outbound", "internal_note", "system"]).notNull(),
+    body: text("body").notNull(),
+    externalMessageId: varchar("externalMessageId", { length: 255 }),
+    actorUserId: int("actorUserId").references(() => users.id),
+    occurredAt: timestamp("occurredAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("inbox_external_message_unique").on(table.conversationId, table.externalMessageId),
+    index("inbox_message_conversation_time_idx").on(table.conversationId, table.occurredAt),
+    index("inbox_message_actor_idx").on(table.actorUserId),
+  ],
+);
+
+/** Append-only operational evidence for changes to a conversation. */
+export const inboxConversationEvents = mysqlTable(
+  "inbox_conversation_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    conversationId: int("conversationId").notNull().references(() => inboxConversations.id),
+    type: mysqlEnum("type", ["created", "assigned", "status_changed", "priority_changed", "snoozed", "customer_linked", "order_linked", "message_recorded", "internal_note_added"]).notNull(),
+    actorUserId: int("actorUserId").references(() => users.id),
+    fromValue: varchar("fromValue", { length: 255 }),
+    toValue: varchar("toValue", { length: 255 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("inbox_event_store_conversation_time_idx").on(table.storeId, table.conversationId, table.createdAt),
+    index("inbox_event_conversation_idx").on(table.conversationId),
+  ],
+);
+
 export type CustomerProfile = typeof customerProfiles.$inferSelect;
+export type InboxConversation = typeof inboxConversations.$inferSelect;
+export type InboxMessage = typeof inboxMessages.$inferSelect;
 
 /** Customer request created from the public store or future staff/WhatsApp channels. */
 export const orders = mysqlTable(
