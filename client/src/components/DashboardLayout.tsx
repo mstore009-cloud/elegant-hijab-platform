@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { BarChart3, Bot, Boxes, ClipboardList, ImagePlus, KeyRound, LayoutDashboard, LogOut, Megaphone, MessageCircleMore, PanelLeft, Settings2, UsersRound } from "lucide-react";
+import { Award, BarChart3, Bot, Boxes, ClipboardList, ImagePlus, KeyRound, LayoutDashboard, LogOut, Megaphone, MessageCircleMore, PanelLeft, Settings2, UsersRound } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -33,6 +33,7 @@ const menuItems = [
   { icon: Boxes, label: "المنتجات", path: "/products" },
   { icon: ClipboardList, label: "الطلبات", path: "/orders" },
   { icon: UsersRound, label: "إدارة العملاء", path: "/crm" },
+  { icon: Award, label: "برنامج الولاء", path: "/loyalty" },
   { icon: MessageCircleMore, label: "Inbox المحادثات", path: "/inbox" },
   { icon: Bot, label: "مركز البوت", path: "/customer-bot" },
   { icon: Settings2, label: "إعدادات المتجر", path: "/settings/store" },

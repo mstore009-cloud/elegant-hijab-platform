@@ -71,4 +71,10 @@ describe("نواة الصلاحيات الحبيبية", () => {
     expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["marketing.manage"], permissionCode: "marketing.approve" })).toBe(false);
     expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["marketing.approve"], permissionCode: "marketing.approve" })).toBe(true);
   });
+
+  it("يفصل عرض الولاء وإدارة دفتره واعتماد مكافآته", () => {
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["loyalty.view"], permissionCode: "loyalty.manage" })).toBe(false);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["loyalty.manage"], permissionCode: "loyalty.approve" })).toBe(false);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["loyalty.approve"], permissionCode: "loyalty.approve" })).toBe(true);
+  });
 });

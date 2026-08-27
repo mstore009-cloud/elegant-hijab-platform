@@ -780,6 +780,118 @@ export const marketingCampaignActivities = mysqlTable(
   table => [index("marketing_activity_store_idx").on(table.storeId), index("marketing_activity_campaign_time_idx").on(table.campaignId, table.createdAt)],
 );
 
+/** One internal, store-scoped loyalty program. It has no monetary conversion in Loyalty-A. */
+export const loyaltyPrograms = mysqlTable(
+  "loyalty_programs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    name: varchar("name", { length: 180 }).notNull(),
+    pointsLabel: varchar("pointsLabel", { length: 80 }).default("نقطة").notNull(),
+    status: mysqlEnum("status", ["draft", "active", "paused", "archived"]).default("draft").notNull(),
+    description: text("description"),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    activatedByUserId: int("activatedByUserId").references(() => users.id),
+    activatedAt: timestamp("activatedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("loyalty_program_store_unique").on(table.storeId), index("loyalty_program_store_status_idx").on(table.storeId, table.status)],
+);
+
+/** Informational store-local tiers. Loyalty-A never assigns a tier automatically. */
+export const loyaltyTiers = mysqlTable(
+  "loyalty_tiers",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    programId: int("programId").notNull().references(() => loyaltyPrograms.id),
+    name: varchar("name", { length: 120 }).notNull(),
+    rank: int("rank").notNull(),
+    thresholdPoints: int("thresholdPoints").default(0).notNull(),
+    benefitsSummary: text("benefitsSummary"),
+    isBase: boolean("isBase").default(false).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("loyalty_tier_program_rank_unique").on(table.programId, table.rank), uniqueIndex("loyalty_tier_program_name_unique").on(table.programId, table.name), index("loyalty_tier_program_idx").on(table.programId)],
+);
+
+/** A membership joins an existing CRM customer to a single program in the same store. */
+export const loyaltyMemberships = mysqlTable(
+  "loyalty_memberships",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    programId: int("programId").notNull().references(() => loyaltyPrograms.id),
+    customerId: int("customerId").notNull().references(() => customerProfiles.id),
+    currentTierId: int("currentTierId").references(() => loyaltyTiers.id),
+    pointsBalance: int("pointsBalance").default(0).notNull(),
+    status: mysqlEnum("status", ["active", "paused", "removed"]).default("active").notNull(),
+    joinedAt: timestamp("joinedAt").defaultNow().notNull(),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("loyalty_membership_program_customer_unique").on(table.programId, table.customerId), index("loyalty_membership_store_status_idx").on(table.storeId, table.status), index("loyalty_membership_customer_idx").on(table.customerId)],
+);
+
+/** A reviewable, non-redeemable promise. Approval never creates a coupon, discount, or order mutation. */
+export const loyaltyRewards = mysqlTable(
+  "loyalty_rewards",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    programId: int("programId").notNull().references(() => loyaltyPrograms.id),
+    membershipId: int("membershipId").notNull().references(() => loyaltyMemberships.id),
+    title: varchar("title", { length: 180 }).notNull(),
+    description: text("description"),
+    status: mysqlEnum("status", ["draft", "needs_approval", "approved", "archived"]).default("draft").notNull(),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    approvedByUserId: int("approvedByUserId").references(() => users.id),
+    approvedAt: timestamp("approvedAt"),
+    decisionNote: text("decisionNote"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("loyalty_reward_store_status_idx").on(table.storeId, table.status), index("loyalty_reward_membership_idx").on(table.membershipId)],
+);
+
+/** Immutable balance movement. A balance can only change through one of these records. */
+export const loyaltyPointLedger = mysqlTable(
+  "loyalty_point_ledger",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    programId: int("programId").notNull().references(() => loyaltyPrograms.id),
+    membershipId: int("membershipId").notNull().references(() => loyaltyMemberships.id),
+    direction: mysqlEnum("direction", ["credit", "debit"]).notNull(),
+    pointsDelta: int("pointsDelta").notNull(),
+    balanceAfter: int("balanceAfter").notNull(),
+    reason: mysqlEnum("reason", ["manual_award", "manual_deduction", "correction"]).notNull(),
+    note: text("note").notNull(),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("loyalty_ledger_store_time_idx").on(table.storeId, table.createdAt), index("loyalty_ledger_membership_time_idx").on(table.membershipId, table.createdAt)],
+);
+
+/** Append-only operational history distinct from the points source-of-truth ledger. */
+export const loyaltyActivities = mysqlTable(
+  "loyalty_activities",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    programId: int("programId").notNull().references(() => loyaltyPrograms.id),
+    membershipId: int("membershipId").references(() => loyaltyMemberships.id),
+    rewardId: int("rewardId").references(() => loyaltyRewards.id),
+    ledgerEntryId: int("ledgerEntryId").references(() => loyaltyPointLedger.id),
+    type: mysqlEnum("type", ["program_created", "program_status_changed", "tier_created", "membership_joined", "membership_status_changed", "tier_assigned", "points_recorded", "reward_created", "reward_approval_requested", "reward_approved", "reward_archived"]).notNull(),
+    note: text("note"),
+    actorUserId: int("actorUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("loyalty_activity_store_time_idx").on(table.storeId, table.createdAt), index("loyalty_activity_program_time_idx").on(table.programId, table.createdAt), index("loyalty_activity_membership_idx").on(table.membershipId)],
+);
+
 export const productImportJobs = mysqlTable(
   "product_import_jobs",
   {

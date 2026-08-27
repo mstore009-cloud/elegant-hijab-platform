@@ -17,6 +17,7 @@ import Inbox from "./pages/Inbox";
 import CustomerBot from "./pages/CustomerBot";
 import Marketing from "./pages/Marketing";
 import Analytics from "./pages/Analytics";
+import Loyalty from "./pages/Loyalty";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -29,6 +30,7 @@ function Router() {
       <Route path={"/products"} component={Products} />
       <Route path={"/orders"} component={Orders} />
       <Route path={"/crm"} component={CRM} />
+      <Route path={"/loyalty"} component={Loyalty} />
       <Route path={"/inbox"} component={Inbox} />
       <Route path={"/customer-bot"} component={CustomerBot} />
       <Route path={"/settings/store"} component={StoreSettings} />
