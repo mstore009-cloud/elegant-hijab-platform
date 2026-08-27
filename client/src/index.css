@@ -43,39 +43,39 @@
 }
 
 :root {
-  --primary: oklch(0.38 0.08 165);
-  --primary-foreground: oklch(0.98 0.01 95);
-  --sidebar-primary: oklch(0.38 0.08 165);
-  --sidebar-primary-foreground: oklch(0.98 0.01 95);
-  --chart-1: oklch(0.72 0.09 163);
-  --chart-2: oklch(0.61 0.11 164);
-  --chart-3: oklch(0.48 0.09 164);
-  --chart-4: oklch(0.72 0.1 82);
-  --chart-5: oklch(0.56 0.09 79);
-  --radius: 0.9rem;
-  --background: oklch(0.985 0.008 95);
-  --foreground: oklch(0.26 0.03 158);
-  --card: oklch(1 0.005 95);
-  --card-foreground: oklch(0.26 0.03 158);
-  --popover: oklch(1 0.005 95);
-  --popover-foreground: oklch(0.26 0.03 158);
-  --secondary: oklch(0.95 0.016 94);
-  --secondary-foreground: oklch(0.35 0.035 158);
-  --muted: oklch(0.955 0.01 110);
-  --muted-foreground: oklch(0.53 0.025 155);
-  --accent: oklch(0.93 0.025 155);
-  --accent-foreground: oklch(0.28 0.04 158);
+  --primary: oklch(0.72 0.09 10);
+  --primary-foreground: oklch(0.985 0.008 20);
+  --sidebar-primary: oklch(0.72 0.09 10);
+  --sidebar-primary-foreground: oklch(0.985 0.008 20);
+  --chart-1: oklch(0.72 0.09 10);
+  --chart-2: oklch(0.58 0.075 350);
+  --chart-3: oklch(0.45 0.05 350);
+  --chart-4: oklch(0.78 0.08 55);
+  --chart-5: oklch(0.64 0.1 28);
+  --radius: 0.875rem;
+  --background: oklch(0.975 0.012 20);
+  --foreground: oklch(0.32 0.035 350);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.32 0.035 350);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.32 0.035 350);
+  --secondary: oklch(0.94 0.02 15);
+  --secondary-foreground: oklch(0.39 0.045 350);
+  --muted: oklch(0.955 0.014 20);
+  --muted-foreground: oklch(0.55 0.025 350);
+  --accent: oklch(0.45 0.05 350);
+  --accent-foreground: oklch(0.97 0.015 20);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.9 0.012 104);
-  --input: oklch(0.9 0.012 104);
-  --ring: oklch(0.48 0.09 164);
-  --sidebar: oklch(0.99 0.006 95);
-  --sidebar-foreground: oklch(0.26 0.03 158);
-  --sidebar-accent: oklch(0.94 0.025 155);
-  --sidebar-accent-foreground: oklch(0.28 0.04 158);
-  --sidebar-border: oklch(0.9 0.012 104);
-  --sidebar-ring: oklch(0.48 0.09 164);
+  --border: oklch(0.9 0.02 15);
+  --input: oklch(0.9 0.02 15);
+  --ring: oklch(0.72 0.09 10);
+  --sidebar: oklch(0.355 0.045 350);
+  --sidebar-foreground: oklch(0.95 0.012 20);
+  --sidebar-accent: oklch(0.46 0.055 350);
+  --sidebar-accent-foreground: oklch(0.985 0.008 20);
+  --sidebar-border: oklch(0.58 0.055 350 / 0.45);
+  --sidebar-ring: oklch(0.78 0.09 10);
 }
 
 .dark {
@@ -121,6 +121,10 @@
     @apply bg-background text-foreground;
     font-family: "Tajawal", sans-serif;
     direction: rtl;
+    background-image:
+      radial-gradient(circle at 12% 8%, oklch(0.92 0.035 5 / 0.55), transparent 26rem),
+      linear-gradient(180deg, oklch(0.985 0.009 20), oklch(0.965 0.014 18));
+    background-attachment: fixed;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
@@ -136,6 +140,103 @@
 }
 
 @layer components {
+  .platform-shell {
+    --platform-plum: oklch(0.355 0.045 350);
+    --platform-plum-deep: oklch(0.29 0.042 350);
+    --platform-blush: oklch(0.94 0.032 10);
+    --platform-rose: oklch(0.72 0.09 10);
+    --platform-ink: oklch(0.32 0.035 350);
+    min-height: 100svh;
+    background: transparent;
+  }
+
+  .platform-shell [data-slot="sidebar-inner"] {
+    background:
+      radial-gradient(circle at 15% 6%, oklch(0.58 0.06 350 / 0.42), transparent 11rem),
+      linear-gradient(180deg, var(--platform-plum), var(--platform-plum-deep));
+    box-shadow: 18px 0 45px oklch(0.28 0.035 350 / 0.14);
+  }
+
+  .platform-shell [data-slot="sidebar-inset"] {
+    background: transparent;
+  }
+
+  .platform-shell [data-slot="card"],
+  .platform-shell article.bg-white,
+  .platform-shell section.bg-white {
+    border-color: oklch(0.9 0.02 15 / 0.82);
+    box-shadow: 0 14px 36px -28px oklch(0.34 0.05 350 / 0.5);
+  }
+
+  .platform-shell [data-slot="card"] {
+    border-radius: 1rem;
+    background-color: oklch(1 0 0 / 0.94);
+  }
+
+  .platform-shell input:not([type="checkbox"]):not([type="radio"]),
+  .platform-shell textarea,
+  .platform-shell select {
+    border-color: oklch(0.88 0.025 15);
+    background-color: oklch(1 0 0 / 0.92);
+  }
+
+  .platform-shell button,
+  .platform-shell a[href] {
+    transition-duration: 180ms;
+    transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  .platform-shell button:not(:disabled):active {
+    transform: scale(0.97);
+  }
+
+  .platform-shell :is([class~="bg-[#153d35]"], [class~="bg-[#153f36]"], [class~="bg-[#173f38]"], [class~="bg-[#183d35]"], [class~="bg-[#1d5a4d]"], [class~="bg-[#285f4e]"], [class~="bg-[#1f5b4f]"], [class~="bg-[#1c4b3d]"], [class~="bg-[#21624d]"]) {
+    background-color: var(--platform-plum) !important;
+  }
+
+  .platform-shell :is([class~="text-[#153d35]"], [class~="text-[#153f36]"], [class~="text-[#173f38]"], [class~="text-[#183d35]"], [class~="text-[#1d5a4d]"], [class~="text-[#285f4e]"], [class~="text-[#1f5b4f]"], [class~="text-[#1c4b3d]"], [class~="text-[#21624d]"]) {
+    color: var(--platform-plum) !important;
+  }
+
+  .platform-shell :is([class~="border-[#78aa99]"], [class~="border-[#d8e7df]"], [class~="border-[#c5d9d2]"], [class~="border-[#cfe4d9]"], [class~="border-[#dce9e1]"]) {
+    border-color: oklch(0.82 0.055 10) !important;
+  }
+
+  .platform-shell :is([class~="bg-[#edf5f1]"], [class~="bg-[#edf8f1]"], [class~="bg-[#e7f3ed]"], [class~="bg-[#e7f4ee]"], [class~="bg-[#f1f8f4]"], [class~="bg-[#f3faf6]"], [class~="bg-[#f5faf7]"]) {
+    background-color: var(--platform-blush) !important;
+  }
+
+  .platform-shell :is([class~="text-[#243a34]"], [class~="text-[#30473d]"], [class~="text-[#33463e]"], [class~="text-[#344840]"], [class~="text-[#364940]"], [class~="text-[#425148]"]) {
+    color: var(--platform-ink) !important;
+  }
+
+  .platform-shell :is([class~="text-[#68756e]"], [class~="text-[#6a746e]"], [class~="text-[#718077]"], [class~="text-[#718078]"], [class~="text-[#74817a]"], [class~="text-[#78867d]"], [class~="text-[#7a8880]"], [class~="text-[#7b8981]"]) {
+    color: oklch(0.55 0.025 350) !important;
+  }
+
+  .platform-shell :is([class~="border-[#e8e2d5]"], [class~="border-[#eee8da]"], [class~="border-[#eee9dd]"], [class~="border-[#e7e1d5]"], [class~="border-[#e6ded0]"], [class~="border-[#d9d0c1]"], [class~="border-[#ded7c8]"]) {
+    border-color: oklch(0.9 0.02 15) !important;
+  }
+
+  .platform-shell :is([class~="bg-[#f6f5f0]"], [class~="bg-[#faf8f2]"], [class~="bg-[#fbfaf6]"], [class~="bg-[#fcfaf5]"], [class~="bg-[#f5f3ed]"], [class~="bg-[#f8f6f0]"]) {
+    background-color: oklch(0.96 0.018 18) !important;
+  }
+
+  .platform-shell [class*="bg-[linear-gradient(115deg,#123e34,#1c5a49)]"] {
+    background-image: linear-gradient(115deg, oklch(0.31 0.045 350), oklch(0.46 0.06 350)) !important;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .platform-shell [data-platform-page] {
+      animation: platform-page-enter 260ms cubic-bezier(0.23, 1, 0.32, 1) both;
+    }
+  }
+
+  @keyframes platform-page-enter {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
   main[dir="rtl"] > section.mx-auto.max-w-6xl > .grid.gap-5 {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     gap: 0.75rem;
