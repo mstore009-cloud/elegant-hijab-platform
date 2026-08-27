@@ -706,6 +706,80 @@ export const contentPostActivities = mysqlTable(
   table => [index("content_activity_store_idx").on(table.storeId), index("content_activity_post_idx").on(table.postId), index("content_activity_post_time_idx").on(table.postId, table.createdAt)],
 );
 
+/** Internal marketing plans. Approval is never a permission to buy, publish, or send externally. */
+export const marketingCampaigns = mysqlTable(
+  "marketing_campaigns",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    name: varchar("name", { length: 180 }).notNull(),
+    objective: mysqlEnum("objective", ["product_launch", "reengagement", "promotion", "awareness", "other"]).notNull(),
+    description: text("description"),
+    status: mysqlEnum("status", ["draft", "needs_approval", "approved", "changes_requested", "archived"]).default("draft").notNull(),
+    audienceType: mysqlEnum("audienceType", ["all_customers", "customer_tag", "relationship_stage"]).default("all_customers").notNull(),
+    audienceTagId: int("audienceTagId").references(() => customerTags.id),
+    audienceStage: mysqlEnum("audienceStage", ["new", "active", "repeat", "needs_followup", "inactive"]),
+    budgetAmount: decimal("budgetAmount", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    budgetCurrency: varchar("budgetCurrency", { length: 12 }).default("IQD").notNull(),
+    approvalNote: text("approvalNote"),
+    approvedByUserId: int("approvedByUserId").references(() => users.id),
+    approvedAt: timestamp("approvedAt"),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    index("marketing_campaign_store_status_idx").on(table.storeId, table.status),
+    index("marketing_campaign_store_created_idx").on(table.storeId, table.createdAt),
+    index("marketing_campaign_tag_idx").on(table.audienceTagId),
+  ],
+);
+
+/** Explicit campaign-to-approved-content linkage. */
+export const marketingCampaignContent = mysqlTable(
+  "marketing_campaign_content",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    campaignId: int("campaignId").notNull().references(() => marketingCampaigns.id),
+    contentPostId: int("contentPostId").notNull().references(() => contentPosts.id),
+    linkedByUserId: int("linkedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [uniqueIndex("marketing_campaign_content_unique").on(table.campaignId, table.contentPostId), index("marketing_campaign_content_post_idx").on(table.contentPostId)],
+);
+
+/** Planned amounts only. Actual spend belongs to a future verified ads integration. */
+export const marketingCampaignBudgetItems = mysqlTable(
+  "marketing_campaign_budget_items",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    campaignId: int("campaignId").notNull().references(() => marketingCampaigns.id),
+    name: varchar("name", { length: 180 }).notNull(),
+    description: text("description"),
+    unitPrice: decimal("unitPrice", { precision: 12, scale: 2 }).notNull(),
+    quantity: int("quantity").default(1).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("marketing_budget_campaign_idx").on(table.campaignId)],
+);
+
+/** Append-only audit-friendly history for an internal marketing campaign. */
+export const marketingCampaignActivities = mysqlTable(
+  "marketing_campaign_activities",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    campaignId: int("campaignId").notNull().references(() => marketingCampaigns.id),
+    actorUserId: int("actorUserId").references(() => users.id),
+    action: mysqlEnum("action", ["created", "updated", "content_linked", "content_unlinked", "budget_updated", "approval_requested", "approved", "changes_requested", "archived"]).notNull(),
+    note: text("note"),
+    metadata: text("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("marketing_activity_store_idx").on(table.storeId), index("marketing_activity_campaign_time_idx").on(table.campaignId, table.createdAt)],
+);
+
 export const productImportJobs = mysqlTable(
   "product_import_jobs",
   {

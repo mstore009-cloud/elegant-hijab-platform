@@ -190,6 +190,13 @@
       "when": 1787808192319,
       "tag": "0026_quick_zuras",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "5",
+      "when": 1787808957012,
+      "tag": "0027_jazzy_wilson_fisk",
+      "breakpoints": true
     }
   ]
 }

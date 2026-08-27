@@ -15,6 +15,7 @@ import StoreSettings from "./pages/StoreSettings";
 import CRM from "./pages/CRM";
 import Inbox from "./pages/Inbox";
 import CustomerBot from "./pages/CustomerBot";
+import Marketing from "./pages/Marketing";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -32,6 +33,7 @@ function Router() {
       <Route path={"/settings/store"} component={StoreSettings} />
       <Route path={"/settings/delivery"} component={StoreSettings} />
       <Route path={"/content-posts"} component={ContentPosts} />
+      <Route path={"/marketing"} component={Marketing} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

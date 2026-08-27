@@ -65,4 +65,10 @@ describe("نواة الصلاحيات الحبيبية", () => {
     expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["inbox.reply"], permissionCode: "bot.manage" })).toBe(false);
     expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["bot.manage"], permissionCode: "bot.manage" })).toBe(true);
   });
+
+  it("يفصل عرض الحملة وتحريرها واعتمادها", () => {
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["marketing.view"], permissionCode: "marketing.manage" })).toBe(false);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["marketing.manage"], permissionCode: "marketing.approve" })).toBe(false);
+    expect(hasPermission({ isPlatformAdmin: false, grantedPermissionCodes: ["marketing.approve"], permissionCode: "marketing.approve" })).toBe(true);
+  });
 });
