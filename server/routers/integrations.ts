@@ -59,7 +59,12 @@ async function readSelectedCatalogProduct(userId: number, input: { groupId: stri
   return { group, productFolder, metadataFile, metadataText, images, documents };
 }
 
-async function previewSelectedCatalogGroup(userId: number, groupId: string) {
+function requireOperationalStoreId(storeId: number | null | undefined) {
+  if (!storeId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لا يوجد متجر تشغيلي نشط لحسابك." });
+  return storeId;
+}
+
+async function previewSelectedCatalogGroup(userId: number, storeId: number, groupId: string) {
   const connection = await requireSelectedCatalog(userId);
   const groups = await listCatalogChildren({
     encryptedAccessToken: connection.encryptedAccessToken,
@@ -70,7 +75,7 @@ async function previewSelectedCatalogGroup(userId: number, groupId: string) {
   if (!group) throw new TRPCError({ code: "BAD_REQUEST", message: "المجموعة المختارة ليست ضمن جذر Catalog المعتمد." });
   const [items, knownProducts] = await Promise.all([
     listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId: group.id }),
-    listProducts(),
+    listProducts(storeId),
   ]);
   const entries = await previewCatalogGroupProducts({
     groupName: group.name,
@@ -188,7 +193,7 @@ export const integrationsRouter = router({
   }),
   previewCatalogGroupProducts: protectedProcedure.input(z.object({ groupId: z.string().min(1) })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    return { mode: "group_preview" as const, ...(await previewSelectedCatalogGroup(ctx.user.id, input.groupId)) };
+    return { mode: "group_preview" as const, ...(await previewSelectedCatalogGroup(ctx.user.id, requireOperationalStoreId(ctx.operationalStore?.id), input.groupId)) };
   }),
   previewCatalogProduct: protectedProcedure.input(z.object({
     groupId: z.string().min(1),
@@ -210,6 +215,7 @@ export const integrationsRouter = router({
     productFolderId: z.string().min(1),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     const { group, productFolder, metadataFile, metadataText, images } = await readSelectedCatalogProduct(ctx.user.id, input);
     if (!metadataFile || !metadataText) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إنشاء المسودة من دون product.txt." });
@@ -221,6 +227,7 @@ export const integrationsRouter = router({
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "ملف product.txt غير صالح." });
     }
     const result = await createCatalogDraftProduct({
+      storeId,
       productCode: productFolder.name,
       name: metadata.name,
       category: group.name,
@@ -243,11 +250,13 @@ export const integrationsRouter = router({
     productFolderIds: z.array(z.string().min(1)).min(1).max(50).refine(ids => new Set(ids).size === ids.length, "لا تكرر المنتج نفسه ضمن الاختيار."),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const preview = await previewSelectedCatalogGroup(ctx.user.id, input.groupId);
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const preview = await previewSelectedCatalogGroup(ctx.user.id, storeId, input.groupId);
     const results = await createSelectedCatalogDrafts({
       entries: preview.entries,
       selectedFolderIds: input.productFolderIds,
       createDraft: entry => createCatalogDraftProduct({
+          storeId,
           productCode: entry.productCode,
           name: entry.metadata.name,
           category: preview.group.name,

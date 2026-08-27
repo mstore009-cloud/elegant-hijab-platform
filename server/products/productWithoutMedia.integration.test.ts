@@ -5,6 +5,7 @@ import { products, users } from "../../drizzle/schema";
 import type { TrpcContext } from "../_core/context";
 import { getDb } from "../db";
 import { appRouter } from "../routers";
+import { getPublicStore } from "../stores/db";
 
 describe("قائمة المنتجات بلا وسائط", () => {
   it("تعيد primaryImageUrl فارغًا لمنتج لا يملك أي مرجع أو نسخة تشغيلية", async () => {
@@ -12,11 +13,14 @@ describe("قائمة المنتجات بلا وسائط", () => {
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار المنتج بلا وسائط.");
     const owner = await db.select().from(users).limit(1);
     if (!owner[0]) throw new Error("لا يوجد مستخدم مخول لاختبار المنتج بلا وسائط.");
+    const store = await getPublicStore();
+    if (!store) throw new Error("لا يوجد متجر افتراضي لاختبار المنتج بلا وسائط.");
     const productCode = `TST-NOMEDIA-${randomUUID().slice(0, 12)}`;
     let productId: number | null = null;
 
     try {
       const created = await db.insert(products).values({
+        storeId: store.id,
         productCode,
         name: "منتج اختبار بلا وسائط",
         category: "اختبار",
@@ -29,6 +33,7 @@ describe("قائمة المنتجات بلا وسائط", () => {
 
       const ctx: TrpcContext = {
         user: { ...owner[0], role: "admin" },
+        operationalStore: store,
         req: { protocol: "https", headers: {} } as TrpcContext["req"],
         res: {} as TrpcContext["res"],
       };

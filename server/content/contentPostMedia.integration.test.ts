@@ -36,12 +36,12 @@ describe("وسيط المنشور الاختياري للمنتج", () => {
     let otherStoreId: number | null = null;
 
     try {
-      const product = await db.insert(products).values({ productCode, name: "منتج اختبار المحتوى", status: "draft", sellingPrice: "1.00", createdByUserId: owner.id });
-      productId = Number(product[0].insertId);
       const store = await db.insert(stores).values({ name: "متجر اختبار المحتوى", slug: `content-${randomUUID().slice(0, 12)}`, primaryOwnerUserId: owner.id });
       storeId = Number(store[0].insertId);
       const otherStore = await db.insert(stores).values({ name: "متجر اختبار آخر", slug: `content-other-${randomUUID().slice(0, 12)}`, primaryOwnerUserId: owner.id });
       otherStoreId = Number(otherStore[0].insertId);
+      const product = await db.insert(products).values({ storeId, productCode, name: "منتج اختبار المحتوى", status: "draft", sellingPrice: "1.00", createdByUserId: owner.id });
+      productId = Number(product[0].insertId);
       postId = await createContentPostDraft({ storeId, productId, caption: "مسودة اختبار", createdByUserId: owner.id });
       postMediaId = await saveContentPostMedia({ storeId, postId, storageKey: "content/posts/test/original.jpg", originalFileName: "external-high-quality.jpg", mimeType: "image/jpeg", byteSize: 128 });
 

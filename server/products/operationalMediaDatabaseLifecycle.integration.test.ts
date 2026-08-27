@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { getPublicStore } from "../stores/db";
 import { detachProductMediaReference, permanentlyDeleteProduct } from "./db";
 
 describe("التنفيذ التكاملـي لدورة حياة وسائط المنتج", () => {
@@ -12,6 +13,9 @@ describe("التنفيذ التكاملـي لدورة حياة وسائط ال�
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار دورة حياة الوسائط.");
     const owner = await db.select({ id: users.id }).from(users).limit(1);
     if (!owner[0]) throw new Error("لا يوجد مستخدم مخول لاختبار دورة حياة الوسائط.");
+    const store = await getPublicStore();
+    if (!store) throw new Error("لا يوجد متجر افتراضي لاختبار دورة حياة الوسائط.");
+    const storeId = store.id;
 
     const productCode = `TST-WEBP-${randomUUID().slice(0, 12)}`;
     let productId: number | null = null;
@@ -22,6 +26,7 @@ describe("التنفيذ التكاملـي لدورة حياة وسائط ال�
 
     try {
       const productResult = await db.insert(products).values({
+        storeId,
         productCode,
         name: "منتج اختبار دورة الوسائط",
         category: "اختبار",
@@ -81,6 +86,7 @@ describe("التنفيذ التكاملـي لدورة حياة وسائط ال�
       purgedMediaId = Number(secondMedia[0].insertId);
 
       const jobResult = await db.insert(productImportJobs).values({
+        storeId,
         source: "onedrive",
         sourceReference: "test-lifecycle",
         status: "needs_review",
@@ -89,7 +95,7 @@ describe("التنفيذ التكاملـي لدورة حياة وسائط ال�
       });
       importJobId = Number(jobResult[0].insertId);
       await db.insert(productOperations).values({ productId, actorUserId: owner[0].id, source: "products_ui", action: "test_before_delete", changes: "{}" });
-      await db.insert(catalogFolderImports).values({ ownerUserId: owner[0].id, productFolderId: `folder-${productCode}`, groupName: "اختبار", productCode, sourceReference: `Catalog/اختبار/${productCode}`, state: "draft_created", linkedProductId: productId, missingFields: "[]", imageCount: 2 });
+      await db.insert(catalogFolderImports).values({ storeId, ownerUserId: owner[0].id, productFolderId: `folder-${productCode}`, groupName: "اختبار", productCode, sourceReference: `Catalog/اختبار/${productCode}`, state: "draft_created", linkedProductId: productId, missingFields: "[]", imageCount: 2 });
 
       const deletion = await permanentlyDeleteProduct({ productId, expectedProductCode: productCode, createdByUserId: owner[0].id });
       expect(deletion).toEqual({ productId, releasedMediaReferences: 1, originalFilesModified: false });

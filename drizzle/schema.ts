@@ -115,7 +115,8 @@ export const products = mysqlTable(
   "products",
   {
     id: int("id").autoincrement().primaryKey(),
-    productCode: varchar("productCode", { length: 80 }).notNull().unique(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    productCode: varchar("productCode", { length: 80 }).notNull(),
     name: varchar("name", { length: 220 }).notNull(),
     category: varchar("category", { length: 120 }),
     description: text("description"),
@@ -128,7 +129,12 @@ export const products = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("product_status_idx").on(table.status), index("product_category_idx").on(table.category)],
+  table => [
+    uniqueIndex("product_store_code_unique").on(table.storeId, table.productCode),
+    index("product_store_status_idx").on(table.storeId, table.status),
+    index("product_status_idx").on(table.status),
+    index("product_category_idx").on(table.category),
+  ],
 );
 
 export const productVariants = mysqlTable(
@@ -360,6 +366,7 @@ export const productImportJobs = mysqlTable(
   "product_import_jobs",
   {
     id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
     source: mysqlEnum("source", ["onedrive", "manual"]).notNull(),
     sourceReference: varchar("sourceReference", { length: 512 }),
     status: mysqlEnum("status", ["pending", "processing", "needs_review", "completed", "failed"]).default("pending").notNull(),
@@ -370,7 +377,7 @@ export const productImportJobs = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("import_job_status_idx").on(table.status), index("import_job_product_idx").on(table.linkedProductId)],
+  table => [index("import_job_store_status_idx").on(table.storeId, table.status), index("import_job_status_idx").on(table.status), index("import_job_product_idx").on(table.linkedProductId)],
 );
 
 /** One background Catalog scan configuration per owner connection. */
@@ -378,7 +385,8 @@ export const catalogSyncSettings = mysqlTable(
   "catalog_sync_settings",
   {
     id: int("id").autoincrement().primaryKey(),
-    ownerUserId: int("ownerUserId").notNull().unique().references(() => users.id),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    ownerUserId: int("ownerUserId").notNull().references(() => users.id),
     scheduleCronTaskUid: varchar("scheduleCronTaskUid", { length: 65 }),
     cronExpression: varchar("cronExpression", { length: 80 }).default("0 */10 * * * *").notNull(),
     isEnabled: boolean("isEnabled").default(true).notNull(),
@@ -389,7 +397,7 @@ export const catalogSyncSettings = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("catalog_sync_enabled_idx").on(table.isEnabled)],
+  table => [uniqueIndex("catalog_sync_store_unique").on(table.storeId), index("catalog_sync_owner_idx").on(table.ownerUserId), index("catalog_sync_enabled_idx").on(table.isEnabled)],
 );
 
 /** A durable read-only observation of every Catalog product folder. */
@@ -397,6 +405,7 @@ export const catalogFolderImports = mysqlTable(
   "catalog_folder_imports",
   {
     id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
     ownerUserId: int("ownerUserId").notNull().references(() => users.id),
     productFolderId: varchar("productFolderId", { length: 255 }).notNull(),
     groupName: varchar("groupName", { length: 120 }).notNull(),
@@ -412,7 +421,8 @@ export const catalogFolderImports = mysqlTable(
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   table => [
-    uniqueIndex("catalog_folder_owner_unique").on(table.ownerUserId, table.productFolderId),
+    uniqueIndex("catalog_folder_store_unique").on(table.storeId, table.productFolderId),
+    index("catalog_folder_owner_idx").on(table.ownerUserId),
     index("catalog_folder_state_idx").on(table.state),
     index("catalog_folder_product_idx").on(table.linkedProductId),
   ],

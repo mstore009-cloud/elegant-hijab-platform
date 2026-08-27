@@ -7,19 +7,19 @@ import { createOperationalImageDerivative } from "../integrations/onedrive/opera
 import { analyzeStoredProductColors, type ProductColorSuggestion } from "./colorAnalysis";
 import { storagePut } from "../storage";
 
-export async function listProducts() {
+export async function listProducts(storeId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(products).orderBy(desc(products.updatedAt));
+  return db.select().from(products).where(eq(products.storeId, storeId)).orderBy(desc(products.updatedAt));
 }
 
-export async function listProductsWithPrimaryOperationalMedia() {
+export async function listProductsWithPrimaryOperationalMedia(storeId: number) {
   const db = await getDb();
   if (!db) return [];
   const [productList, mediaList, folderImports] = await Promise.all([
-    db.select().from(products).orderBy(desc(products.updatedAt)),
+    db.select().from(products).where(eq(products.storeId, storeId)).orderBy(desc(products.updatedAt)),
     db.select().from(productMedia).orderBy(productMedia.sortOrder),
-    db.select().from(catalogFolderImports),
+    db.select().from(catalogFolderImports).where(eq(catalogFolderImports.storeId, storeId)),
   ]);
   const primaryMediaByProductId = new Map<number, typeof mediaList[number]>();
   for (const media of mediaList) {
@@ -106,7 +106,7 @@ export function isPublicProductStatus(status: string) {
   return status === "active";
 }
 
-export async function listPublicProducts() {
+export async function listPublicProducts(storeId: number) {
   const db = await getDb();
   if (!db) return [];
   const publicProducts = await db
@@ -119,26 +119,26 @@ export async function listPublicProducts() {
       sellingPrice: products.sellingPrice,
     })
     .from(products)
-    .where(eq(products.status, "active"))
+    .where(and(eq(products.storeId, storeId), eq(products.status, "active")))
     .orderBy(desc(products.updatedAt));
   const variants = await db.select({ productId: productVariants.productId, colorName: productVariants.colorName }).from(productVariants).orderBy(productVariants.sortOrder);
   return publicProducts.map(product => ({ ...product, defaultColorName: variants.find(variant => variant.productId === product.id)?.colorName ?? null }));
 }
 
-export async function getPublicStoreProduct(productCode: string) {
+export async function getPublicStoreProduct(input: { storeId: number; productCode: string }) {
   const db = await getDb();
   if (!db) return null;
-  const [product] = await db.select().from(products).where(and(eq(products.productCode, productCode), eq(products.status, "active"))).limit(1);
+  const [product] = await db.select().from(products).where(and(eq(products.storeId, input.storeId), eq(products.productCode, input.productCode), eq(products.status, "active"))).limit(1);
   if (!product) return null;
   const variants = await db.select().from(productVariants).where(eq(productVariants.productId, product.id)).orderBy(productVariants.sortOrder);
   const media = await db.select().from(productMedia).where(eq(productMedia.productId, product.id)).orderBy(productMedia.sortOrder);
   return { product, variants, media };
 }
 
-export async function getProductWithVariants(productId: number) {
+export async function getProductWithVariants(productId: number, storeId?: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+  const result = await db.select().from(products).where(storeId ? and(eq(products.id, productId), eq(products.storeId, storeId)) : eq(products.id, productId)).limit(1);
   if (!result[0]) return null;
   const variants = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
   const [folderImport] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
@@ -157,6 +157,21 @@ export async function getProductWithVariants(productId: number) {
   }
   const reviewReadiness = await getProductReviewReadiness(productId);
   return { product: result[0], variants, missingFields, pendingColorSuggestion, reviewReadiness };
+}
+
+export async function getProductByIdInStore(productId: number, storeId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [product] = await db.select().from(products).where(and(eq(products.id, productId), eq(products.storeId, storeId))).limit(1);
+  return product ?? null;
+}
+
+export async function getProductForVariantInStore(variantId: number, storeId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [variant] = await db.select({ productId: productVariants.productId }).from(productVariants).where(eq(productVariants.id, variantId)).limit(1);
+  if (!variant) return null;
+  return getProductByIdInStore(variant.productId, storeId);
 }
 
 export async function generateAutomaticColorSuggestion(input: { productId: number; actorUserId: number; mediaIds?: number[] }) {
@@ -513,6 +528,7 @@ export async function getProductMedia(productId: number) {
 }
 
 export async function createProduct(input: {
+  storeId: number;
   productCode: string;
   name: string;
   category?: string;
@@ -527,6 +543,7 @@ export async function createProduct(input: {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const result = await db.insert(products).values({
+    storeId: input.storeId,
     productCode: input.productCode,
     name: input.name,
     category: input.category ?? null,
@@ -552,6 +569,7 @@ export async function createProduct(input: {
 }
 
 export async function createCatalogDraftProduct(input: {
+  storeId: number;
   productCode: string;
   name: string;
   category: string;
@@ -562,10 +580,11 @@ export async function createCatalogDraftProduct(input: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const existing = await db.select({ id: products.id }).from(products).where(eq(products.productCode, input.productCode)).limit(1);
+  const existing = await db.select({ id: products.id }).from(products).where(and(eq(products.storeId, input.storeId), eq(products.productCode, input.productCode))).limit(1);
   if (existing[0]) return { productId: existing[0].id, jobId: null, created: false };
 
   const productId = await createProduct({
+    storeId: input.storeId,
     productCode: input.productCode,
     name: input.name,
     category: input.category,
@@ -576,6 +595,7 @@ export async function createCatalogDraftProduct(input: {
     variants: [],
   });
   const job = await db.insert(productImportJobs).values({
+    storeId: input.storeId,
     source: "onedrive",
     sourceReference: input.sourceReference,
     status: "needs_review",
@@ -773,6 +793,7 @@ export async function updateVariantInventory(input: { variantId: number; invento
 }
 
 export async function createImportJob(input: {
+  storeId: number;
   source: "onedrive" | "manual";
   sourceReference?: string;
   createdByUserId: number;
@@ -780,6 +801,7 @@ export async function createImportJob(input: {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const result = await db.insert(productImportJobs).values({
+    storeId: input.storeId,
     source: input.source,
     sourceReference: input.sourceReference ?? null,
     createdByUserId: input.createdByUserId,
@@ -787,8 +809,8 @@ export async function createImportJob(input: {
   return Number(result[0].insertId);
 }
 
-export async function listImportJobs() {
+export async function listImportJobs(storeId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(productImportJobs).orderBy(desc(productImportJobs.createdAt));
+  return db.select().from(productImportJobs).where(eq(productImportJobs.storeId, storeId)).orderBy(desc(productImportJobs.createdAt));
 }

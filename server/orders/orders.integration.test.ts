@@ -33,7 +33,7 @@ describe("دورة الطلب", () => {
     if (!store) throw new Error("لا يوجد متجر عام للاختبار.");
     const storeId = store.id;
     const productCode = `TST-ORDER-${randomUUID().slice(0, 10)}`;
-    const productResult = await db.insert(products).values({ productCode, name: "منتج طلب تجريبي", status: "active", sellingPrice: "12000.00", createdByUserId: owner.id });
+    const productResult = await db.insert(products).values({ storeId, productCode, name: "منتج طلب تجريبي", status: "active", sellingPrice: "12000.00", createdByUserId: owner.id });
     const productId = Number(productResult[0].insertId);
     const variantResult = await db.insert(productVariants).values({ productId, colorName: "بيج", inventoryQuantity: 5, availability: "available" });
     const variantId = Number(variantResult[0].insertId);
@@ -75,7 +75,7 @@ describe("دورة الطلب", () => {
     const [owner] = await db.select({ id: users.id }).from(users).limit(1); if (!owner) throw new Error("لا يوجد مستخدم مخول للاختبار.");
     const store = await getPublicStore(); if (!store) throw new Error("لا يوجد متجر عام للاختبار.");
     const productCode = `TST-COUPON-${randomUUID().slice(0, 10)}`;
-    const productResult = await db.insert(products).values({ productCode, name: "منتج قسيمة تجريبي", status: "active", sellingPrice: "10000.00", createdByUserId: owner.id });
+    const productResult = await db.insert(products).values({ storeId: store.id, productCode, name: "منتج قسيمة تجريبي", status: "active", sellingPrice: "10000.00", createdByUserId: owner.id });
     const productId = Number(productResult[0].insertId);
     const variantResult = await db.insert(productVariants).values({ productId, colorName: "بيج", inventoryQuantity: 3, availability: "available" });
     const variantId = Number(variantResult[0].insertId);

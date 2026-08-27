@@ -9,6 +9,7 @@ vi.mock("../storage", () => ({
 
 import { productMedia, productOperations, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { getPublicStore } from "../stores/db";
 import { addManualProductImage } from "./db";
 
 describe("رفع صورة منتج يدويًا", () => {
@@ -17,11 +18,14 @@ describe("رفع صورة منتج يدويًا", () => {
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار رفع الصورة اليدوية.");
     const [owner] = await db.select({ id: users.id }).from(users).limit(1);
     if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار رفع الصورة اليدوية.");
+    const store = await getPublicStore();
+    if (!store) throw new Error("لا يوجد متجر افتراضي لاختبار رفع الصورة اليدوية.");
 
     const productCode = `TST-MANUAL-${randomUUID().slice(0, 10)}`;
     let productId: number | null = null;
     try {
       const created = await db.insert(products).values({
+        storeId: store.id,
         productCode,
         name: "منتج اختبار رفع يدوي",
         category: "اختبار",

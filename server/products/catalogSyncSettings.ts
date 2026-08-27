@@ -1,13 +1,13 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { catalogSyncSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 
-export async function getOrCreateCatalogSyncSettings(ownerUserId: number) {
+export async function getOrCreateCatalogSyncSettings(input: { ownerUserId: number; storeId: number }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const [existing] = await db.select().from(catalogSyncSettings).where(eq(catalogSyncSettings.ownerUserId, ownerUserId)).limit(1);
+  const [existing] = await db.select().from(catalogSyncSettings).where(eq(catalogSyncSettings.storeId, input.storeId)).limit(1);
   if (existing) return existing;
-  const result = await db.insert(catalogSyncSettings).values({ ownerUserId });
+  const result = await db.insert(catalogSyncSettings).values(input);
   const [created] = await db.select().from(catalogSyncSettings).where(eq(catalogSyncSettings.id, Number(result[0].insertId))).limit(1);
   if (!created) throw new Error("تعذر إنشاء إعدادات فحص Catalog.");
   return created;

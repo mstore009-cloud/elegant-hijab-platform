@@ -10,11 +10,16 @@ import { getOrCreateCatalogSyncSettings, markCatalogSyncCompleted, markCatalogSy
 
 const cronSchema = z.string().trim().regex(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+$/, "اكتب التكرار بصيغة ستة أجزاء (ثانية، دقيقة، ساعة، يوم، شهر، أسبوع). ");
 
-async function runAndRecord(ownerUserId: number) {
-  const setting = await getOrCreateCatalogSyncSettings(ownerUserId);
+function requireOperationalStoreId(storeId: number | null | undefined) {
+  if (!storeId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لا يوجد متجر تشغيلي نشط لحسابك." });
+  return storeId;
+}
+
+async function runAndRecord(input: { ownerUserId: number; storeId: number }) {
+  const setting = await getOrCreateCatalogSyncSettings(input);
   await markCatalogSyncStarted(setting.id);
   try {
-    const summary = await scanCatalogForOwner(ownerUserId);
+    const summary = await scanCatalogForOwner(input);
     await markCatalogSyncCompleted({ settingId: setting.id, summary });
     return summary;
   } catch (error) {
@@ -27,27 +32,27 @@ async function runAndRecord(ownerUserId: number) {
 export const catalogSyncRouter = router({
   status: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
-    return getOrCreateCatalogSyncSettings(ctx.user.id);
+    return getOrCreateCatalogSyncSettings({ ownerUserId: ctx.user.id, storeId: requireOperationalStoreId(ctx.operationalStore?.id) });
   }),
   runNow: protectedProcedure.mutation(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
-    return runAndRecord(ctx.user.id);
+    return runAndRecord({ ownerUserId: ctx.user.id, storeId: requireOperationalStoreId(ctx.operationalStore?.id) });
   }),
   deletedProducts: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
-    return listDeletedCatalogProducts(ctx.user.id);
+    return listDeletedCatalogProducts({ ownerUserId: ctx.user.id, storeId: requireOperationalStoreId(ctx.operationalStore?.id) });
   }),
   restoreDeletedProduct: protectedProcedure.input(z.object({ productFolderId: z.string().trim().min(1).max(255) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     try {
-      return await restoreDeletedCatalogProduct({ ownerUserId: ctx.user.id, productFolderId: input.productFolderId });
+      return await restoreDeletedCatalogProduct({ ownerUserId: ctx.user.id, storeId: requireOperationalStoreId(ctx.operationalStore?.id), productFolderId: input.productFolderId });
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذرت استعادة المنتج من Catalog." });
     }
   }),
   activate: protectedProcedure.input(z.object({ cronExpression: cronSchema.default("0 */10 * * * *") })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const setting = await getOrCreateCatalogSyncSettings(ctx.user.id);
+    const setting = await getOrCreateCatalogSyncSettings({ ownerUserId: ctx.user.id, storeId: requireOperationalStoreId(ctx.operationalStore?.id) });
     const sessionToken = parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "";
     if (!sessionToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "تحتاج إلى جلسة دخول صالحة لتفعيل الفحص الدوري." });
     if (setting.scheduleCronTaskUid) {

@@ -21,6 +21,7 @@ vi.mock("./operationalMediaService", () => ({
 
 import { catalogFolderImports, productImportJobs, productOperations, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { getPublicStore } from "../stores/db";
 import { scanCatalogForOwner } from "./catalogAutomation";
 import { updateProductDetails } from "./db";
 
@@ -37,6 +38,8 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار Catalog التلقائي.");
     const [owner] = await db.select({ id: users.id }).from(users).limit(1);
     if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار Catalog التلقائي.");
+    const store = await getPublicStore();
+    if (!store) throw new Error("لا يوجد متجر افتراضي لاختبار Catalog التلقائي.");
 
     const productCode = `TST-INCOMPLETE-${randomUUID().slice(0, 10)}`;
     const folderId = `folder-${productCode}`;
@@ -55,10 +58,10 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     });
 
     try {
-      const summary = await scanCatalogForOwner(owner.id);
+      const summary = await scanCatalogForOwner({ ownerUserId: owner.id, storeId: store.id });
       expect(summary).toMatchObject({ discovered: 1, draftsCreated: 1, existing: 0, failed: 0, operationalCopiesCreated: 0 });
 
-      const [draft] = await db.select().from(products).where(eq(products.productCode, productCode)).limit(1);
+      const [draft] = await db.select().from(products).where(and(eq(products.storeId, store.id), eq(products.productCode, productCode))).limit(1);
       expect(draft).toMatchObject({
         status: "draft",
         category: "حجابات اختبار",
@@ -66,7 +69,7 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
         sellingPrice: "0.00",
       });
       productId = draft!.id;
-      const [folder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, owner.id), eq(catalogFolderImports.productFolderId, folderId))).limit(1);
+      const [folder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, store.id), eq(catalogFolderImports.ownerUserId, owner.id), eq(catalogFolderImports.productFolderId, folderId))).limit(1);
       expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual(expect.arrayContaining(["product.txt", "images"]));
       expect(JSON.parse(folder!.missingFields ?? "[]")).not.toEqual(expect.arrayContaining(["colors", "inventory"]));
       const [job] = await db.select().from(productImportJobs).where(eq(productImportJobs.linkedProductId, productId)).limit(1);

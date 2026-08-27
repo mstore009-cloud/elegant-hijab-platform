@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { getPublicStore } from "../stores/db";
 import { addProductColor, assignProductMediaColor, deleteProductColor, renameProductColor, saveProductColorInventory, saveProductInventory } from "./db";
 
 describe("تدفق اللون والمخزون", () => {
@@ -11,12 +12,14 @@ describe("تدفق اللون والمخزون", () => {
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار اللون والمخزون.");
     const [owner] = await db.select({ id: users.id }).from(users).limit(1);
     if (!owner) throw new Error("لا يوجد مستخدم مخول للاختبار.");
+    const store = await getPublicStore();
+    if (!store) throw new Error("لا يوجد متجر افتراضي للاختبار.");
     const productCode = `TST-COLOR-${randomUUID().slice(0, 10)}`;
     let productId: number | null = null;
     try {
-      const created = await db.insert(products).values({ productCode, name: "منتج لون تجريبي", category: "اختبار", sizeLabels: JSON.stringify(["Medium", "Large"]), status: "draft", sellingPrice: "8500.00", createdByUserId: owner.id });
+      const created = await db.insert(products).values({ storeId: store.id, productCode, name: "منتج لون تجريبي", category: "اختبار", sizeLabels: JSON.stringify(["Medium", "Large"]), status: "draft", sellingPrice: "8500.00", createdByUserId: owner.id });
       productId = Number(created[0].insertId);
-      await db.insert(catalogFolderImports).values({ ownerUserId: owner.id, productFolderId: `folder-${productCode}`, groupName: "اختبار", productCode, sourceReference: `Catalog/اختبار/${productCode}`, state: "draft_created", linkedProductId: productId, missingFields: JSON.stringify(["colors", "inventory"]), imageCount: 1 });
+      await db.insert(catalogFolderImports).values({ storeId: store.id, ownerUserId: owner.id, productFolderId: `folder-${productCode}`, groupName: "اختبار", productCode, sourceReference: `Catalog/اختبار/${productCode}`, state: "draft_created", linkedProductId: productId, missingFields: JSON.stringify(["colors", "inventory"]), imageCount: 1 });
       const mediaResult = await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: "products/test/color.webp", originalFileName: "color.webp", colorVerified: false });
       const mediaId = Number(mediaResult[0].insertId);
 

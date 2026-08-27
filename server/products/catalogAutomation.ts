@@ -51,6 +51,7 @@ async function ensureAutomaticColorSuggestion(input: { db: NonNullable<Awaited<R
 }
 
 async function upsertFolderObservation(input: {
+  storeId: number;
   ownerUserId: number;
   productFolderId: string;
   groupName: string;
@@ -64,7 +65,7 @@ async function upsertFolderObservation(input: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const [existing] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, input.ownerUserId), eq(catalogFolderImports.productFolderId, input.productFolderId))).limit(1);
+  const [existing] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.productFolderId, input.productFolderId))).limit(1);
   const values = {
     groupName: input.groupName,
     productCode: input.productCode,
@@ -80,11 +81,12 @@ async function upsertFolderObservation(input: {
     await db.update(catalogFolderImports).set(values).where(eq(catalogFolderImports.id, existing.id));
     return existing;
   }
-  const result = await db.insert(catalogFolderImports).values({ ownerUserId: input.ownerUserId, productFolderId: input.productFolderId, ...values });
+  const result = await db.insert(catalogFolderImports).values({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: input.productFolderId, ...values });
   return { id: Number(result[0].insertId), linkedProductId: values.linkedProductId };
 }
 
 async function createDraftFromFolder(input: {
+  storeId: number;
   ownerUserId: number;
   groupName: string;
   folder: CatalogDriveItem;
@@ -99,6 +101,7 @@ async function createDraftFromFolder(input: {
   const source = sourceReference(input.groupName, input.folder.name);
   const result = await db.transaction(async tx => {
     const created = await tx.insert(products).values({
+      storeId: input.storeId,
       productCode: input.folder.name,
       name: metadata.name ?? `منتج يحتاج بيانات — ${input.folder.name}`,
       category: input.groupName,
@@ -112,6 +115,7 @@ async function createDraftFromFolder(input: {
     });
     const productId = Number(created[0].insertId);
     await tx.insert(productImportJobs).values({
+      storeId: input.storeId,
       source: "onedrive",
       sourceReference: source,
       status: "needs_review",
@@ -167,15 +171,15 @@ async function copyCatalogVideosSafely(input: { db: NonNullable<Awaited<ReturnTy
  * Deterministic, idempotent scanner. It only reads Catalog and writes platform
  * records; it never changes files, folders, permissions, or source data in OneDrive.
  */
-export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogAutomationSummary> {
-  const connection = await getUsableCatalogConnection(ownerUserId);
+export async function scanCatalogForOwner(input: { ownerUserId: number; storeId: number }): Promise<CatalogAutomationSummary> {
+  const connection = await getUsableCatalogConnection(input.ownerUserId);
   if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) {
     throw new Error("مرجع Catalog المفوض غير جاهز للفحص التلقائي.");
   }
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const summary: CatalogAutomationSummary = { discovered: 0, draftsCreated: 0, existing: 0, failed: 0, operationalCopiesCreated: 0 };
-  const knownProducts = await db.select({ id: products.id, productCode: products.productCode }).from(products);
+  const knownProducts = await db.select({ id: products.id, productCode: products.productCode }).from(products).where(eq(products.storeId, input.storeId));
   const productByCode = new Map(knownProducts.map(product => [product.productCode, product]));
   const groups = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId })).filter(item => item.kind === "folder");
 
@@ -191,16 +195,17 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
         const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
         const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
         const existingProduct = productByCode.get(folder.name);
-        const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, ownerUserId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
+        const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
         if (!existingProduct && priorFolder?.lastError === "deleted_by_user") {
-          await upsertFolderObservation({ ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
+          await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
           summary.existing += 1;
           continue;
         }
         if (existingProduct) {
           const preserveDraftState = priorFolder?.linkedProductId === existingProduct.id;
           await upsertFolderObservation({
-            ownerUserId,
+            storeId: input.storeId,
+            ownerUserId: input.ownerUserId,
             productFolderId: folder.id,
             groupName: group.name,
             productCode: folder.name,
@@ -211,31 +216,32 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
             missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [],
           });
           await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
-          const imageCopies = await generateOperationalMediaForProduct({ userId: ownerUserId, productId: existingProduct.id });
+          const imageCopies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: existingProduct.id });
           summary.operationalCopiesCreated += imageCopies.created.length;
-          const videoCopies = await copyCatalogVideosSafely({ db, productId: existingProduct.id, actorUserId: ownerUserId });
+          const videoCopies = await copyCatalogVideosSafely({ db, productId: existingProduct.id, actorUserId: input.ownerUserId });
           summary.operationalCopiesCreated += videoCopies.created.length;
-          await ensureAutomaticColorSuggestion({ db, productId: existingProduct.id, actorUserId: ownerUserId });
+          await ensureAutomaticColorSuggestion({ db, productId: existingProduct.id, actorUserId: input.ownerUserId });
           summary.existing += 1;
           continue;
         }
-        const created = await createDraftFromFolder({ ownerUserId, groupName: group.name, folder, images, videos, metadataText });
+        const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadataText });
         productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
-        await upsertFolderObservation({ ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
+        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
         summary.draftsCreated += 1;
         if (images.length > 0) {
-          const copies = await generateOperationalMediaForProduct({ userId: ownerUserId, productId: created.productId });
+          const copies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: created.productId });
           summary.operationalCopiesCreated += copies.created.length;
         }
         if (videos.length > 0) {
-          const copies = await copyCatalogVideosSafely({ db, productId: created.productId, actorUserId: ownerUserId });
+          const copies = await copyCatalogVideosSafely({ db, productId: created.productId, actorUserId: input.ownerUserId });
           summary.operationalCopiesCreated += copies.created.length;
         }
-        await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: ownerUserId });
+        await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: input.ownerUserId });
       } catch (error) {
         summary.failed += 1;
         await upsertFolderObservation({
-          ownerUserId,
+          storeId: input.storeId,
+          ownerUserId: input.ownerUserId,
           productFolderId: folder.id,
           groupName: group.name,
           productCode: folder.name,
@@ -250,7 +256,7 @@ export async function scanCatalogForOwner(ownerUserId: number): Promise<CatalogA
   return summary;
 }
 
-export async function listDeletedCatalogProducts(ownerUserId: number) {
+export async function listDeletedCatalogProducts(input: { ownerUserId: number; storeId: number }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   return db.select({
@@ -261,17 +267,17 @@ export async function listDeletedCatalogProducts(ownerUserId: number) {
     sourceReference: catalogFolderImports.sourceReference,
     imageCount: catalogFolderImports.imageCount,
     lastScannedAt: catalogFolderImports.lastScannedAt,
-  }).from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, ownerUserId), eq(catalogFolderImports.lastError, "deleted_by_user"))).orderBy(desc(catalogFolderImports.lastScannedAt));
+  }).from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.ownerUserId, input.ownerUserId), eq(catalogFolderImports.lastError, "deleted_by_user"))).orderBy(desc(catalogFolderImports.lastScannedAt));
 }
 
-export async function restoreDeletedCatalogProduct(input: { ownerUserId: number; productFolderId: string }) {
+export async function restoreDeletedCatalogProduct(input: { ownerUserId: number; storeId: number; productFolderId: string }) {
   const connection = await getUsableCatalogConnection(input.ownerUserId);
   if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) throw new Error("مرجع Catalog المفوض غير جاهز للاستعادة.");
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const [deleted] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.ownerUserId, input.ownerUserId), eq(catalogFolderImports.productFolderId, input.productFolderId), eq(catalogFolderImports.lastError, "deleted_by_user"))).limit(1);
+  const [deleted] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.ownerUserId, input.ownerUserId), eq(catalogFolderImports.productFolderId, input.productFolderId), eq(catalogFolderImports.lastError, "deleted_by_user"))).limit(1);
   if (!deleted) throw new Error("لا يوجد منتج محذوف قابل للاستعادة بهذا المرجع.");
-  const [existing] = await db.select().from(products).where(eq(products.productCode, deleted.productCode)).limit(1);
+  const [existing] = await db.select().from(products).where(and(eq(products.storeId, input.storeId), eq(products.productCode, deleted.productCode))).limit(1);
   if (existing) throw new Error("المنتج موجود بالفعل داخل المنصة؛ لا يحتاج إلى استعادة.");
 
   const groups = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId })).filter(item => item.kind === "folder");
@@ -285,8 +291,8 @@ export async function restoreDeletedCatalogProduct(input: { ownerUserId: number;
   const videos = contents.filter(isVideo);
   const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
   const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
-  const created = await createDraftFromFolder({ ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadataText });
-  await upsertFolderObservation({ ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source: sourceReference(group.name, folder.name), state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, lastError: null });
+  const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadataText });
+  await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source: sourceReference(group.name, folder.name), state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, lastError: null });
   let operationalCopiesCreated = 0;
   if (images.length > 0) {
     const copies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: created.productId });

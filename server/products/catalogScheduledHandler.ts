@@ -13,7 +13,7 @@ export async function handleScheduledCatalogScan(req: Request, res: Response) {
     const setting = await getCatalogSyncSettingsByTaskUid(taskUid);
     if (!setting || !setting.isEnabled) return res.json({ ok: true, skipped: "orphan_or_disabled" });
     await markCatalogSyncStarted(setting.id);
-    const summary = await scanCatalogForOwner(setting.ownerUserId);
+    const summary = await scanCatalogForOwner({ ownerUserId: setting.ownerUserId, storeId: setting.storeId });
     await markCatalogSyncCompleted({ settingId: setting.id, summary });
     return res.json({ ok: true, summary });
   } catch (error) {

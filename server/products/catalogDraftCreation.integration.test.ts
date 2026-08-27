@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { productImportJobs, productMedia, productVariants, products, users } from "../../drizzle/schema";
+import { productImportJobs, productMedia, productVariants, products, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { createCatalogDraftProduct } from "./db";
 
@@ -11,11 +11,14 @@ describe("إنشاء مسودة Catalog", () => {
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار مسودة Catalog.");
     const owner = await db.select({ id: users.id }).from(users).limit(1);
     if (!owner[0]) throw new Error("لا يوجد مستخدم مخول لاختبار مسودة Catalog.");
+    const store = await db.select({ id: stores.id }).from(stores).where(eq(stores.slug, "elegant-hijab")).limit(1);
+    if (!store[0]) throw new Error("لا يوجد متجر افتراضي لاختبار مسودة Catalog.");
     const productCode = `TST-CAT-${randomUUID().slice(0, 12)}`;
     let productId: number | null = null;
 
     try {
       const first = await createCatalogDraftProduct({
+        storeId: store[0].id,
         productCode,
         name: "مسودة اختبار Catalog",
         category: "اختبار",
@@ -28,13 +31,14 @@ describe("إنشاء مسودة Catalog", () => {
       expect(first.created).toBe(true);
 
       const createdProduct = await db.select().from(products).where(eq(products.id, productId)).limit(1);
-      expect(createdProduct[0]).toMatchObject({ productCode, status: "draft", category: "اختبار" });
+      expect(createdProduct[0]).toMatchObject({ storeId: store[0].id, productCode, status: "draft", category: "اختبار" });
       expect(await db.select().from(productVariants).where(eq(productVariants.productId, productId))).toEqual([]);
       expect(await db.select().from(productMedia).where(eq(productMedia.productId, productId))).toEqual([]);
       const importJob = await db.select().from(productImportJobs).where(eq(productImportJobs.linkedProductId, productId)).limit(1);
       expect(importJob[0]).toMatchObject({ source: "onedrive", status: "needs_review" });
 
       const duplicate = await createCatalogDraftProduct({
+        storeId: store[0].id,
         productCode,
         name: "اسم لا يجب حفظه",
         category: "اختبار",
