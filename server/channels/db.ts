@@ -9,7 +9,7 @@ import {
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 
-export const externalChannels = ["whatsapp", "instagram"] as const;
+export const externalChannels = ["whatsapp", "instagram", "messenger"] as const;
 export type ExternalChannel = (typeof externalChannels)[number];
 
 export type ExternalMediaReference = {
@@ -127,7 +127,7 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
           externalConversationId: input.externalConversationId,
           contactNameSnapshot: compactText(input.senderName, 160) || null,
           contactPhoneSnapshot: compactText(input.senderPhone, 40) || null,
-          subject: `رسائل ${input.channel === "whatsapp" ? "واتساب" : "إنستغرام"}`,
+          subject: `رسائل ${input.channel === "whatsapp" ? "واتساب" : input.channel === "instagram" ? "إنستغرام" : "Messenger"}`,
           status: "open",
           lastMessageAt: input.occurredAt,
         });

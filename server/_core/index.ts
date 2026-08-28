@@ -9,6 +9,7 @@ import { registerOneDriveOAuthRoutes } from "../integrations/onedrive/oauthRoute
 import { handleScheduledCatalogScan } from "../products/catalogScheduledHandler";
 import { registerCatalogVideoPlaybackRoute } from "../products/catalogVideoRoute";
 import { registerMetaWebhookRoutes } from "../channels/metaWebhook";
+import { registerMetaOAuthRoutes } from "../integrations/meta/oauthRoutes";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -42,6 +43,7 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerOneDriveOAuthRoutes(app);
+  registerMetaOAuthRoutes(app);
   registerCatalogVideoPlaybackRoute(app);
   app.post("/api/scheduled/catalog-scan", handleScheduledCatalogScan);
   // tRPC API

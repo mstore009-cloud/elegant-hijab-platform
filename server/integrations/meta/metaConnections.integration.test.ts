@@ -1,0 +1,87 @@
+import { randomUUID } from "node:crypto";
+import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { channelAccounts, metaAssets, metaConnections, metaOAuthStates, stores, users } from "../../../drizzle/schema";
+import { getDb } from "../../db";
+import { configureChannelAccount } from "../../channels/db";
+import { consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, listMetaConnectionOverview, selectMetaAsset, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
+import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext } from "./tokenCipher";
+
+const cleanupStoreIds: number[] = [];
+
+afterEach(async () => {
+  const db = await getDb();
+  if (!db) return;
+  for (const storeId of cleanupStoreIds.splice(0)) {
+    await db.delete(channelAccounts).where(eq(channelAccounts.storeId, storeId));
+    await db.delete(metaAssets).where(eq(metaAssets.storeId, storeId));
+    await db.delete(metaOAuthStates).where(eq(metaOAuthStates.storeId, storeId));
+    await db.delete(metaConnections).where(eq(metaConnections.storeId, storeId));
+    await db.delete(stores).where(eq(stores.id, storeId));
+  }
+});
+
+async function setup() {
+  const db = await getDb();
+  const [owner] = db ? await db.select({ id: users.id }).from(users).limit(1) : [];
+  if (!db || !owner) throw new Error("لا توجد بيانات تشغيلية لاختبار Meta.");
+  const created = await db.insert(stores).values({ name: "متجر اختبار Meta", slug: `meta-${randomUUID().slice(0, 12)}`, primaryOwnerUserId: owner.id });
+  const storeId = Number(created[0].insertId);
+  cleanupStoreIds.push(storeId);
+  return { db, owner, storeId };
+}
+
+describe("Meta Connection Center", () => {
+  it("يربط تشفير الرمز بسياق المتجر والغرض ولا يقبل فكّه في سياق آخر", async () => {
+    const { storeId } = await setup();
+    const context = metaConnectionTokenContext(storeId, "messaging");
+    const encrypted = encryptMetaToken("token-super-secret", context);
+    expect(encrypted).not.toContain("token-super-secret");
+    expect(decryptMetaToken(encrypted, context)).toBe("token-super-secret");
+    expect(() => decryptMetaToken(encrypted, metaConnectionTokenContext(storeId + 1, "messaging"))).toThrow();
+  });
+
+  it("يستهلك state صالحاً مرة واحدة ويرفض إعادة استخدامه", async () => {
+    const { owner, storeId } = await setup();
+    const state = randomUUID();
+    await createMetaOAuthState({ state, storeId, userId: owner.id, purpose: "messaging", requestedScopes: ["pages_messaging"], expiresAt: new Date(Date.now() + 60_000) });
+    const first = await consumeMetaOAuthState(state);
+    expect(first).toMatchObject({ storeId, userId: owner.id, purpose: "messaging", requestedScopes: "pages_messaging" });
+    expect(await consumeMetaOAuthState(state)).toBeNull();
+  });
+
+  it("يحفظ الرمز مشفراً ولا يعيده في ملخص الاتصال ويعزل الأصول حسب المتجر", async () => {
+    const first = await setup();
+    const second = await setup();
+    const connection = await upsertMetaConnection({ storeId: first.storeId, purpose: "messaging", accessToken: "live-meta-token", tokenExpiresAt: new Date(Date.now() + 3_600_000), grantedScopes: ["pages_messaging", "pages_show_list"], metaUserId: "meta-user-1", metaUserName: "مدير Meta", configurationId: "config-1", connectedByUserId: first.owner.id });
+    expect(connection.encryptedAccessToken).not.toBe("live-meta-token");
+    await upsertDiscoveredMetaAssets({ storeId: first.storeId, connectionId: connection.id, purpose: "messaging", assets: [
+      { assetType: "page", externalId: "page-1", displayName: "صفحة الاختبار", accessToken: "page-token-secret" },
+      { assetType: "instagram", externalId: "ig-1", displayName: "@meta_test", parentExternalId: "page-1" },
+    ] });
+    const overview = await listMetaConnectionOverview(first.storeId);
+    expect(overview.connections).toHaveLength(1);
+    expect(overview.connections[0]).not.toHaveProperty("encryptedAccessToken");
+    expect(JSON.stringify(overview)).not.toContain("live-meta-token");
+    expect(JSON.stringify(overview)).not.toContain("page-token-secret");
+    expect(overview.assets).toHaveLength(2);
+    expect(await listMetaConnectionOverview(second.storeId)).toEqual({ connections: [], assets: [] });
+  });
+
+  it("لا يختار أصلاً من متجر آخر ويعطل الرمز والاختيار عند الإبطال", async () => {
+    const first = await setup();
+    const second = await setup();
+    const connection = await upsertMetaConnection({ storeId: first.storeId, purpose: "messaging", accessToken: "token-1", tokenExpiresAt: null, grantedScopes: ["pages_messaging"], metaUserId: "user-1", metaUserName: null, configurationId: null, connectedByUserId: first.owner.id });
+    await upsertDiscoveredMetaAssets({ storeId: first.storeId, connectionId: connection.id, purpose: "messaging", assets: [{ assetType: "page", externalId: "page-select", displayName: "صفحة مختارة", accessToken: "page-token" }] });
+    const [asset] = (await listMetaConnectionOverview(first.storeId)).assets;
+    await expect(selectMetaAsset({ storeId: second.storeId, connectionId: connection.id, assetId: asset.id })).rejects.toThrow("لا ينتمي");
+    const selected = await selectMetaAsset({ storeId: first.storeId, connectionId: connection.id, assetId: asset.id });
+    expect(selected.isSelected).toBe(true);
+    await configureChannelAccount({ storeId: first.storeId, actorUserId: first.owner.id, channel: "messenger", providerAccountId: selected.externalId, providerDisplayName: selected.displayName, connectionStatus: "testing" });
+    expect(await disconnectMetaConnection(first.storeId, "messaging")).toBe(true);
+    const [savedConnection] = await first.db.select().from(metaConnections).where(eq(metaConnections.id, connection.id));
+    const [savedAsset] = await first.db.select().from(metaAssets).where(eq(metaAssets.id, asset.id));
+    expect(savedConnection).toMatchObject({ status: "revoked", encryptedAccessToken: null });
+    expect(savedAsset).toMatchObject({ isSelected: false, encryptedAccessToken: null });
+  });
+});

@@ -52,7 +52,7 @@ export const channelsRouter = router({
       entityType: "channel_account",
       entityId: account.id,
       action: "channel.account_configured",
-      summary: `تم تحديث حالة قناة ${input.channel === "whatsapp" ? "واتساب" : "إنستغرام"} إلى ${input.connectionStatus}.`,
+      summary: `تم تحديث حالة قناة ${input.channel === "whatsapp" ? "واتساب" : input.channel === "instagram" ? "إنستغرام" : "Messenger"} إلى ${input.connectionStatus}.`,
     });
     return account;
   }),

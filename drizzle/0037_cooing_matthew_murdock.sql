@@ -1,0 +1,1 @@
+ALTER TABLE `meta_assets` ADD `encryptedAccessToken` text;

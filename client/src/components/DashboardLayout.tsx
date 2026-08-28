@@ -30,6 +30,7 @@ import {
   BarChart3,
   Bell,
   Bot,
+  Cable,
   Boxes,
   ChevronLeft,
   ClipboardList,
@@ -96,6 +97,7 @@ const menuGroups: MenuGroup[] = [
       { icon: Banknote, label: "التكلفة والهامش", path: "/financials" },
       { icon: KeyRound, label: "الصلاحيات", path: "/permissions" },
       { icon: Settings2, label: "إعدادات المتجر", path: "/settings/store" },
+      { icon: Cable, label: "ربط Meta", path: "/meta-connections" },
     ],
   },
 ];
@@ -119,6 +121,7 @@ const pageDescriptions: Record<string, string> = {
   "/permissions": "صلاحيات دقيقة حسب العملية والمتجر",
   "/settings/store": "اللغة والعملة والتوصيل والقسائم",
   "/settings/delivery": "إعدادات التوصيل وقواعده",
+  "/meta-connections": "قنوات Meta والأصول والصلاحيات لكل متجر",
 };
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";

@@ -253,6 +253,20 @@
       "when": 1787879263040,
       "tag": "0035_real_the_captain",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1787942231768,
+      "tag": "0036_loving_darkhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "5",
+      "when": 1787942284026,
+      "tag": "0037_cooing_matthew_murdock",
+      "breakpoints": true
     }
   ]
 }

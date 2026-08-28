@@ -318,13 +318,85 @@ export const inboxConversationEvents = mysqlTable(
   ],
 );
 
-/** A verified external messaging identity, scoped to one operational store. Secrets remain in environment variables only. */
+/** A short-lived, single-use state for Facebook Login for Business. */
+export const metaOAuthStates = mysqlTable(
+  "meta_oauth_states",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    state: varchar("state", { length: 160 }).notNull().unique(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    userId: int("userId").notNull().references(() => users.id),
+    purpose: mysqlEnum("purpose", ["messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
+    requestedScopes: text("requestedScopes").notNull(),
+    returnTo: varchar("returnTo", { length: 255 }).default("/meta-connections").notNull(),
+    expiresAt: timestamp("expiresAt").notNull(),
+    usedAt: timestamp("usedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("meta_state_store_user_idx").on(table.storeId, table.userId),
+    index("meta_state_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+/** One encrypted delegated Meta connection per store and least-privilege purpose. */
+export const metaConnections = mysqlTable(
+  "meta_connections",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    purpose: mysqlEnum("purpose", ["messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
+    status: mysqlEnum("status", ["connected", "expired", "revoked", "failed", "disabled"]).default("connected").notNull(),
+    encryptedAccessToken: text("encryptedAccessToken"),
+    tokenExpiresAt: timestamp("tokenExpiresAt"),
+    grantedScopes: text("grantedScopes").notNull(),
+    metaUserId: varchar("metaUserId", { length: 255 }),
+    metaUserName: varchar("metaUserName", { length: 160 }),
+    configurationId: varchar("configurationId", { length: 255 }),
+    connectedByUserId: int("connectedByUserId").references(() => users.id),
+    connectedAt: timestamp("connectedAt").defaultNow().notNull(),
+    lastVerifiedAt: timestamp("lastVerifiedAt"),
+    revokedAt: timestamp("revokedAt"),
+    lastError: varchar("lastError", { length: 500 }),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_conn_store_purpose_unq").on(table.storeId, table.purpose),
+    index("meta_conn_store_status_idx").on(table.storeId, table.status),
+  ],
+);
+
+/** External assets discovered through one Meta connection and explicitly selected per store. */
+export const metaAssets = mysqlTable(
+  "meta_assets",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    connectionId: int("connectionId").notNull().references(() => metaConnections.id),
+    assetType: mysqlEnum("assetType", ["business", "page", "instagram", "whatsapp_business", "whatsapp_phone", "ad_account", "dataset", "pixel", "catalog"]).notNull(),
+    externalId: varchar("externalId", { length: 255 }).notNull(),
+    displayName: varchar("displayName", { length: 255 }),
+    parentExternalId: varchar("parentExternalId", { length: 255 }),
+    encryptedAccessToken: text("encryptedAccessToken"),
+    metadataJson: text("metadataJson"),
+    isSelected: boolean("isSelected").default(false).notNull(),
+    lastDiscoveredAt: timestamp("lastDiscoveredAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_asset_conn_type_ext_unq").on(table.connectionId, table.assetType, table.externalId),
+    index("meta_asset_store_type_sel_idx").on(table.storeId, table.assetType, table.isSelected),
+  ],
+);
+
+/** A verified external messaging identity, scoped to one operational store and backed by selected Meta assets. */
 export const channelAccounts = mysqlTable(
   "channel_accounts",
   {
     id: int("id").autoincrement().primaryKey(),
     storeId: int("storeId").notNull().references(() => stores.id),
-    channel: mysqlEnum("channel", ["whatsapp", "instagram"]).notNull(),
+    channel: mysqlEnum("channel", ["whatsapp", "instagram", "messenger"]).notNull(),
     providerAccountId: varchar("providerAccountId", { length: 255 }),
     providerDisplayName: varchar("providerDisplayName", { length: 160 }),
     connectionStatus: mysqlEnum("connectionStatus", ["disconnected", "testing", "connected", "disabled"]).default("disconnected").notNull(),
