@@ -26,6 +26,7 @@ export default function MetaConnections() {
   const refresh = trpc.metaConnections.refreshAssets.useMutation({ onSuccess: async data => { await overview.refetch(); toast.success(`تم تحديث الأصول: ${data.discovered}${data.warnings.length ? " مع تنبيهات تحتاج مراجعة" : ""}.`); }, onError: error => toast.error(error.message) });
   const select = trpc.metaConnections.selectAsset.useMutation({ onSuccess: async () => { await overview.refetch(); toast.success("تم اعتماد الأصل لهذا المتجر ووضع القناة في حالة اختبار."); }, onError: error => toast.error(error.message) });
   const disconnect = trpc.metaConnections.disconnect.useMutation({ onSuccess: async () => { await overview.refetch(); toast.success("تم إبطال الاتصال وحذف الرمز المشفر محلياً."); }, onError: error => toast.error(error.message) });
+  const retryEvents = trpc.metaConnections.retryFailedEvents.useMutation({ onSuccess: async data => { await overview.refetch(); toast.success(`تمت محاولة ${data.attempted} حدث وإعادة ${data.requeued} من dead-letter.`); }, onError: error => toast.error(error.message) });
 
   useEffect(() => {
     const result = new URLSearchParams(window.location.search).get("meta");
@@ -40,7 +41,17 @@ export default function MetaConnections() {
   if (!canManage) return <Forbidden />;
   if (overview.isLoading) return <PageSkeleton />;
   const data = overview.data;
-  const callbackUrl = data?.callbackUrl?.startsWith("/") ? `${window.location.origin}${data.callbackUrl}` : data?.callbackUrl || `${window.location.origin}/api/meta/oauth/callback`;
+  const callbackUrl = (() => {
+    const configuredUrl = data?.callbackUrl || "/api/meta/oauth/callback";
+    if (configuredUrl.startsWith("/")) return `${window.location.origin}${configuredUrl}`;
+    try {
+      const parsed = new URL(configuredUrl);
+      if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") return `${window.location.origin}${parsed.pathname}`;
+      return parsed.toString();
+    } catch {
+      return `${window.location.origin}/api/meta/oauth/callback`;
+    }
+  })();
 
   return <div dir="rtl" className="mx-auto max-w-6xl space-y-5 pb-10">
     <header className="overflow-hidden rounded-[1.8rem] border border-[#eadfe2] bg-[radial-gradient(circle_at_85%_10%,#f8e8eb,transparent_38%),linear-gradient(135deg,#fffdfc,#f7f1ed)] px-5 py-6 shadow-[0_14px_35px_rgba(82,48,60,0.07)] sm:px-7">
@@ -50,6 +61,8 @@ export default function MetaConnections() {
     {!data?.configured && <Alert className="border-amber-200 bg-amber-50/80 text-amber-950"><AlertTriangle className="h-4 w-4" /><AlertTitle>أكمل إعداد تطبيق Meta أولاً</AlertTitle><AlertDescription>أضف App ID وApp Secret وRedirect URI عبر الأسرار الآمنة. لن يطلب النظام أي رمز وصول داخل نموذج أو محادثة.</AlertDescription></Alert>}
 
     <Card className="border-border/80 bg-card/95"><CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" />حالة البنية الآمنة</CardTitle><CardDescription>Graph API {data?.graphVersion} · Callback لا يعرض code أو token للواجهة.</CardDescription></CardHeader><CardContent className="grid gap-3 text-sm sm:grid-cols-3"><StatusItem label="تشفير الرموز" value="AES-256-GCM حسب المتجر والغرض" /><StatusItem label="رابط callback" value={callbackUrl} mono /><StatusItem label="الإرسال والنشر" value="غير مفعّل في هذه المرحلة" /></CardContent></Card>
+
+    <Card className="border-border/80 bg-card/95"><CardHeader className="pb-3"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle className="flex items-center gap-2"><RefreshCw className="h-5 w-5 text-primary" />صحة Unified Webhook Gateway</CardTitle><CardDescription className="mt-1">الأحداث تحفظ مرة واحدة، وتُعاد محاولة الفشل عبر Heartbeat بدلاً من مؤقت داخل الخادم.</CardDescription></div><Button size="sm" variant="outline" disabled={retryEvents.isPending || (!data?.eventHealth.retryPending && !data?.eventHealth.deadLetters)} onClick={() => retryEvents.mutate({ includeDeadLetters: true })}><RefreshCw className={`ml-1.5 h-3.5 w-3.5 ${retryEvents.isPending ? "animate-spin" : ""}`} />إعادة المحاولة</Button></div></CardHeader><CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4"><StatusItem label="كل الأحداث" value={String(data?.eventHealth.total ?? 0)} /><StatusItem label="بانتظار retry" value={String(data?.eventHealth.retryPending ?? 0)} /><StatusItem label="Dead-letter" value={String(data?.eventHealth.deadLetters ?? 0)} /><StatusItem label="Heartbeat" value={data?.retryStatus?.scheduleCronTaskUid ? "مهيأ" : "ينتظر الحفظ والنشر"} /></CardContent></Card>
 
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {(Object.keys(purposeMeta) as Purpose[]).map(purpose => {

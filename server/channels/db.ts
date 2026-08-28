@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   channelAccounts,
   channelWebhookEvents,
@@ -88,7 +88,7 @@ export async function configureChannelAccount(input: {
 }
 
 /** Records one signed incoming message. It never sends a message, calls an LLM, or follows arbitrary media URLs. */
-export async function ingestExternalInboundMessage(input: NormalizedInboundMessage & { payloadHash: string }) {
+export async function ingestExternalInboundMessage(input: NormalizedInboundMessage & { payloadHash: string; reservedWebhookEventId?: number }) {
   const db = await requireDb();
   const [account] = await db.select().from(channelAccounts).where(and(
     eq(channelAccounts.channel, input.channel),
@@ -100,18 +100,20 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
 
   try {
     return await db.transaction(async tx => {
-      try {
-        await tx.insert(channelWebhookEvents).values({
+      if (!input.reservedWebhookEventId) {
+        try {
+          await tx.insert(channelWebhookEvents).values({
           storeId: account.storeId,
           channelAccountId: account.id,
           externalEventId: input.externalEventId,
           payloadHash: input.payloadHash,
           eventType: "message",
           processingStatus: "received",
-        });
-      } catch (error) {
-        if (isDuplicate(error)) return { accepted: true as const, duplicate: true as const, conversationId: null, messageId: null, mediaIds: [] as number[], storeId: account.storeId };
-        throw error;
+          });
+        } catch (error) {
+          if (isDuplicate(error)) return { accepted: true as const, duplicate: true as const, conversationId: null, messageId: null, mediaIds: [] as number[], storeId: account.storeId };
+          throw error;
+        }
       }
 
       const [conversation] = await tx.select().from(inboxConversations).where(and(
@@ -148,7 +150,7 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
         messageId = Number(createdMessage[0].insertId);
       } catch (error) {
         if (isDuplicate(error)) {
-          await tx.update(channelWebhookEvents).set({ processingStatus: "ignored", processedAt: new Date(), errorSummary: "رسالة خارجية مكررة." }).where(and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
+          await tx.update(channelWebhookEvents).set({ processingStatus: "ignored", processedAt: new Date(), errorSummary: "رسالة خارجية مكررة." }).where(input.reservedWebhookEventId ? eq(channelWebhookEvents.id, input.reservedWebhookEventId) : and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
           return { accepted: true as const, duplicate: true as const, conversationId, messageId: null, mediaIds: [] as number[], storeId: account.storeId };
         }
         throw error;
@@ -174,7 +176,7 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
       await tx.update(inboxConversations).set({ status: "open", snoozedUntil: null, closedAt: null, lastMessageAt: input.occurredAt }).where(eq(inboxConversations.id, conversationId));
       await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "message_recorded", toValue: "inbound" });
       await tx.update(channelAccounts).set({ lastInboundAt: input.occurredAt, lastError: null }).where(eq(channelAccounts.id, account.id));
-      await tx.update(channelWebhookEvents).set({ processingStatus: "processed", processedAt: new Date() }).where(and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
+      await tx.update(channelWebhookEvents).set({ processingStatus: "processed", processedAt: new Date() }).where(input.reservedWebhookEventId ? eq(channelWebhookEvents.id, input.reservedWebhookEventId) : and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
       return { accepted: true as const, duplicate: false as const, conversationId, messageId, mediaIds, storeId: account.storeId };
     });
   } catch (error) {
@@ -182,4 +184,21 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
     await db.update(channelAccounts).set({ lastError: summary }).where(eq(channelAccounts.id, account.id));
     throw error;
   }
+}
+
+export async function applyExternalDeliveryStatus(input: { storeId: number; externalMessageId: string; status: "sent" | "delivered" | "read" | "failed"; occurredAt: Date; errorSummary?: string | null }) {
+  const db = await requireDb();
+  const rows = await db.select({ id: inboxMessages.id, current: inboxMessages.deliveryStatus }).from(inboxMessages).innerJoin(inboxConversations, eq(inboxMessages.conversationId, inboxConversations.id)).where(and(eq(inboxConversations.storeId, input.storeId), eq(inboxMessages.externalMessageId, input.externalMessageId)));
+  if (!rows.length) return false;
+  const rank = { queued: 0, sent: 1, delivered: 2, read: 3, failed: 4 } as const;
+  const ids = rows.filter(row => !row.current || rank[input.status] >= rank[row.current]).map(row => row.id);
+  if (!ids.length) return true;
+  await db.update(inboxMessages).set({
+    deliveryStatus: input.status,
+    deliveredAt: input.status === "delivered" || input.status === "read" ? input.occurredAt : undefined,
+    readAt: input.status === "read" ? input.occurredAt : undefined,
+    failedAt: input.status === "failed" ? input.occurredAt : undefined,
+    statusError: input.status === "failed" ? input.errorSummary?.slice(0, 500) || "فشل التسليم لدى Meta." : null,
+  }).where(inArray(inboxMessages.id, ids));
+  return true;
 }

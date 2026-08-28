@@ -289,6 +289,11 @@ export const inboxMessages = mysqlTable(
     body: text("body").notNull(),
     externalMessageId: varchar("externalMessageId", { length: 255 }),
     actorUserId: int("actorUserId").references(() => users.id),
+    deliveryStatus: mysqlEnum("deliveryStatus", ["queued", "sent", "delivered", "read", "failed"]),
+    deliveredAt: timestamp("deliveredAt"),
+    readAt: timestamp("readAt"),
+    failedAt: timestamp("failedAt"),
+    statusError: varchar("statusError", { length: 500 }),
     occurredAt: timestamp("occurredAt").defaultNow().notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
@@ -419,19 +424,40 @@ export const channelWebhookEvents = mysqlTable(
   {
     id: int("id").autoincrement().primaryKey(),
     storeId: int("storeId").notNull().references(() => stores.id),
-    channelAccountId: int("channelAccountId").notNull().references(() => channelAccounts.id),
+    channelAccountId: int("channelAccountId").references(() => channelAccounts.id),
+    metaAssetId: int("metaAssetId").references(() => metaAssets.id),
     externalEventId: varchar("externalEventId", { length: 255 }).notNull(),
     payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
-    eventType: mysqlEnum("eventType", ["message", "delivery_status", "unsupported", "account_event"]).notNull(),
-    processingStatus: mysqlEnum("processingStatus", ["received", "processed", "ignored", "failed"]).default("received").notNull(),
+    eventType: mysqlEnum("eventType", ["message", "delivery_status", "comment", "mention", "lead", "publish_status", "unsupported", "account_event"]).notNull(),
+    processingStatus: mysqlEnum("processingStatus", ["received", "processed", "ignored", "failed", "retry_pending", "dead_letter"]).default("received").notNull(),
+    normalizedPayloadJson: text("normalizedPayloadJson"),
+    attemptCount: int("attemptCount").default(0).notNull(),
+    nextAttemptAt: timestamp("nextAttemptAt"),
+    lastAttemptAt: timestamp("lastAttemptAt"),
+    deadLetterAt: timestamp("deadLetterAt"),
     errorSummary: varchar("errorSummary", { length: 500 }),
     receivedAt: timestamp("receivedAt").defaultNow().notNull(),
     processedAt: timestamp("processedAt"),
   },
   table => [
     uniqueIndex("webhook_account_event_unique").on(table.channelAccountId, table.externalEventId),
+    uniqueIndex("webhook_asset_event_unique").on(table.metaAssetId, table.externalEventId),
     index("webhook_store_status_time_idx").on(table.storeId, table.processingStatus, table.receivedAt),
   ],
+);
+
+/** Singleton configuration for the project-level Heartbeat that retries Meta webhook events. */
+export const metaWebhookRetrySettings = mysqlTable(
+  "meta_webhook_retry_settings",
+  {
+    id: int("id").primaryKey(),
+    scheduleCronTaskUid: varchar("scheduleCronTaskUid", { length: 65 }),
+    enabled: boolean("enabled").default(true).notNull(),
+    lastRunAt: timestamp("lastRunAt"),
+    lastResult: varchar("lastResult", { length: 500 }),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("meta_retry_task_unique").on(table.scheduleCronTaskUid)],
 );
 
 /** A durable platform copy of a message attachment. Provider download URLs are never persisted. */

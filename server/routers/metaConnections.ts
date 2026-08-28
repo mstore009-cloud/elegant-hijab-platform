@@ -6,6 +6,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { configureChannelAccount } from "../channels/db";
+import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
 import { createMetaOAuthState, disconnectMetaConnection, getMetaConnection, listMetaConnectionOverview, markMetaConnectionVerified, metaPurposes, selectMetaAsset, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
 import { createMetaAuthorizationUrl, discoverMetaAssets, metaConfigurationId, metaScopesByPurpose } from "../integrations/meta/oauth";
@@ -25,8 +26,11 @@ function configured() {
 export const metaConnectionsRouter = router({
   overview: protectedProcedure.query(async ({ ctx }) => {
     const store = await requireStore(ctx);
+    const [connectionOverview, eventHealth, retryStatus] = await Promise.all([listMetaConnectionOverview(store.id), getMetaEventHealth(store.id), getMetaRetryStatus()]);
     return {
-      ...(await listMetaConnectionOverview(store.id)),
+      ...connectionOverview,
+      eventHealth,
+      retryStatus,
       configured: configured(),
       callbackUrl: ENV.metaRedirectUri || "/api/meta/oauth/callback",
       graphVersion: ENV.metaGraphApiVersion,
@@ -59,7 +63,7 @@ export const metaConnectionsRouter = router({
   selectAsset: protectedProcedure.input(z.object({ connectionId: z.number().int().positive(), assetId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
     const asset = await selectMetaAsset({ storeId: store.id, connectionId: input.connectionId, assetId: input.assetId });
-    const channel = asset.assetType === "whatsapp_phone" ? "whatsapp" : asset.assetType === "instagram" ? "instagram" : asset.assetType === "page" ? "messenger" : null;
+    const channel = asset.connectionPurpose === "messaging" ? (asset.assetType === "whatsapp_phone" ? "whatsapp" : asset.assetType === "instagram" ? "instagram" : asset.assetType === "page" ? "messenger" : null) : null;
     if (channel) await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel, providerAccountId: asset.externalId, providerDisplayName: asset.displayName, connectionStatus: "testing" });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_asset", entityId: asset.id, action: "meta.asset_selected", summary: `تم اختيار أصل Meta من نوع ${asset.assetType} للمتجر.` });
     return { ...asset, channel };
@@ -69,5 +73,12 @@ export const metaConnectionsRouter = router({
     const disconnected = await disconnectMetaConnection(store.id, input.purpose);
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: input.purpose, action: "meta.connection_revoked", summary: `تم إبطال اتصال Meta لنطاق ${input.purpose} وحذف الرمز المشفر محلياً.` });
     return { disconnected };
+  }),
+  retryFailedEvents: protectedProcedure.input(z.object({ includeDeadLetters: z.boolean().default(false) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx);
+    const requeued = input.includeDeadLetters ? await requeueMetaDeadLetters(store.id) : 0;
+    const result = await retryDueMetaEvents(30);
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_webhook", entityId: store.id, action: "meta.webhook_retry_requested", summary: `طلب إعادة معالجة أحداث Meta؛ أعيد ${requeued} من dead-letter وعولج ${result.attempted}.` });
+    return { requeued, ...result };
   }),
 });

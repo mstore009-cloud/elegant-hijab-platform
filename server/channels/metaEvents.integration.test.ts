@@ -1,0 +1,81 @@
+import { randomUUID } from "node:crypto";
+import { afterEach, describe, expect, it } from "vitest";
+import { eq, inArray } from "drizzle-orm";
+import { channelAccounts, channelWebhookEvents, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessages, stores, users } from "../../drizzle/schema";
+import { getDb } from "../db";
+import { configureChannelAccount } from "./db";
+import { enqueueAndProcessMetaEvent, getMetaEventHealth, normalizeMetaEvents, requeueMetaDeadLetters, retryDueMetaEvents } from "./metaEvents";
+
+const cleanups: Array<{ storeId: number; conversationIds: number[] }> = [];
+
+afterEach(async () => {
+  const db = await getDb(); if (!db) return;
+  for (const cleanup of cleanups.splice(0)) {
+    const messages = cleanup.conversationIds.length ? await db.select({ id: inboxMessages.id }).from(inboxMessages).where(inArray(inboxMessages.conversationId, cleanup.conversationIds)) : [];
+    const messageIds = messages.map(row => row.id);
+    if (messageIds.length) await db.delete(inboxMessageMedia).where(inArray(inboxMessageMedia.messageId, messageIds));
+    for (const conversationId of cleanup.conversationIds) {
+      await db.delete(inboxConversationEvents).where(eq(inboxConversationEvents.conversationId, conversationId));
+      await db.delete(inboxMessages).where(eq(inboxMessages.conversationId, conversationId));
+      await db.delete(inboxConversations).where(eq(inboxConversations.id, conversationId));
+    }
+    await db.delete(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, cleanup.storeId));
+    await db.delete(channelAccounts).where(eq(channelAccounts.storeId, cleanup.storeId));
+    await db.delete(stores).where(eq(stores.id, cleanup.storeId));
+  }
+});
+
+async function setup() {
+  const db = await getDb(); const [owner] = db ? await db.select({ id: users.id }).from(users).limit(1) : [];
+  if (!db || !owner) throw new Error("لا توجد بيانات تشغيلية لاختبار Unified Webhook Gateway.");
+  const created = await db.insert(stores).values({ name: "متجر اختبار Meta Events", slug: `meta-events-${randomUUID().slice(0, 8)}`, primaryOwnerUserId: owner.id });
+  const storeId = Number(created[0].insertId); const cleanup = { storeId, conversationIds: [] as number[] }; cleanups.push(cleanup);
+  return { db, owner, storeId, cleanup };
+}
+
+describe("Unified Meta Webhook Gateway", () => {
+  it("يطبع Messenger ورسائل Instagram وحالات WhatsApp والتعليقات إلى أنواع أحداث موحدة", () => {
+    const messenger = normalizeMetaEvents({ object: "page", entry: [{ id: "page-1", messaging: [{ sender: { id: "customer-1" }, timestamp: 1760000000000, message: { mid: "mid-page-1", text: "هل المنتج متوفر؟" } }], changes: [{ field: "feed", value: { comment_id: "comment-1", post_id: "post-1", message: "أريد هذا اللون" } }] }] });
+    expect(messenger).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "message", channel: "messenger", providerAccountId: "page-1", externalMessageId: "mid-page-1" }), expect.objectContaining({ kind: "comment", externalEventId: "comment:comment-1" })]));
+    const whatsapp = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: "phone-1" }, statuses: [{ id: "wamid-out-1", status: "read", timestamp: "1760000000" }] } }] }] });
+    expect(whatsapp).toEqual([expect.objectContaining({ kind: "delivery_status", providerAccountId: "phone-1", externalMessageId: "wamid-out-1", status: "read" })]);
+  });
+
+  it("يحجز حدث Messenger مرة واحدة وينشئ رسالة واردة داخل متجر الحساب فقط", async () => {
+    const { db, owner, storeId, cleanup } = await setup();
+    await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "messenger", providerAccountId: "page-gateway", providerDisplayName: "صفحة الاختبار", connectionStatus: "testing" });
+    const [event] = normalizeMetaEvents({ object: "page", entry: [{ id: "page-gateway", messaging: [{ sender: { id: "customer-gateway" }, timestamp: 1760000000000, message: { mid: "mid-gateway", text: "السلام عليكم" } }] }] });
+    expect(event.kind).toBe("message");
+    const first = await enqueueAndProcessMetaEvent(event, "hash-gateway");
+    expect(first).toMatchObject({ accepted: true, duplicate: false, processed: true });
+    const duplicate = await enqueueAndProcessMetaEvent(event, "hash-gateway");
+    expect(duplicate).toMatchObject({ accepted: true, duplicate: true });
+    const [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.externalConversationId, "messenger:customer-gateway"));
+    cleanup.conversationIds.push(conversation.id);
+    const messages = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversation.id));
+    expect(messages).toHaveLength(1);
+    expect(messages[0].body).toBe("السلام عليكم");
+  });
+
+  it("يحدث حالة تسليم رسالة صادرة داخل المتجر ولا ينشئ رسالة جديدة", async () => {
+    const { db, owner, storeId, cleanup } = await setup();
+    await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: "phone-status", providerDisplayName: "رقم الاختبار", connectionStatus: "testing" });
+    const conversation = await db.insert(inboxConversations).values({ storeId, channel: "whatsapp", externalConversationId: `whatsapp:${randomUUID()}`, contactNameSnapshot: "عميلة", status: "open" });
+    const conversationId = Number(conversation[0].insertId); cleanup.conversationIds.push(conversationId);
+    await db.insert(inboxMessages).values({ conversationId, direction: "outbound", body: "تم إرسال طلبك", externalMessageId: "wamid-status", deliveryStatus: "sent" });
+    const [event] = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: "phone-status" }, statuses: [{ id: "wamid-status", status: "read", timestamp: "1760000000" }] } }] }] });
+    expect(await enqueueAndProcessMetaEvent(event, "hash-status")).toMatchObject({ processed: true });
+    const [message] = await db.select().from(inboxMessages).where(eq(inboxMessages.externalMessageId, "wamid-status"));
+    expect(message).toMatchObject({ deliveryStatus: "read", readAt: expect.any(Date) });
+  });
+
+  it("ينقل حدث retry بلا حمولة إلى dead-letter ويمكن إعادته يدوياً مع بقاء العزل", async () => {
+    const { db, owner, storeId } = await setup();
+    const account = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: `phone-${randomUUID()}`, providerDisplayName: "رقم retry", connectionStatus: "testing" });
+    await db.insert(channelWebhookEvents).values({ storeId, channelAccountId: account.id, externalEventId: `retry-${randomUUID()}`, payloadHash: "hash-retry", eventType: "message", processingStatus: "retry_pending", normalizedPayloadJson: null, nextAttemptAt: new Date(Date.now() - 1000) });
+    expect(await retryDueMetaEvents()).toMatchObject({ attempted: 1, processed: 0, deadLetters: 1 });
+    expect(await getMetaEventHealth(storeId)).toMatchObject({ deadLetters: 1, retryPending: 0 });
+    expect(await requeueMetaDeadLetters(storeId)).toBe(1);
+    expect(await getMetaEventHealth(storeId)).toMatchObject({ deadLetters: 0, retryPending: 1 });
+  });
+});

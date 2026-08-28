@@ -85,11 +85,12 @@ export async function upsertDiscoveredMetaAssets(input: { storeId: number; conne
 export async function selectMetaAsset(input: { storeId: number; connectionId: number; assetId: number }) {
   const db = await requireDb();
   return db.transaction(async tx => {
+    const [connection] = await tx.select({ purpose: metaConnections.purpose }).from(metaConnections).where(and(eq(metaConnections.id, input.connectionId), eq(metaConnections.storeId, input.storeId))).limit(1);
     const [asset] = await tx.select().from(metaAssets).where(and(eq(metaAssets.id, input.assetId), eq(metaAssets.storeId, input.storeId), eq(metaAssets.connectionId, input.connectionId))).limit(1);
-    if (!asset) throw new Error("الأصل المختار لا ينتمي إلى اتصال Meta في هذا المتجر.");
+    if (!asset || !connection) throw new Error("الأصل المختار لا ينتمي إلى اتصال Meta في هذا المتجر.");
     await tx.update(metaAssets).set({ isSelected: false }).where(and(eq(metaAssets.storeId, input.storeId), eq(metaAssets.connectionId, input.connectionId), eq(metaAssets.assetType, asset.assetType)));
     await tx.update(metaAssets).set({ isSelected: true }).where(eq(metaAssets.id, asset.id));
-    return { ...asset, isSelected: true };
+    return { ...asset, isSelected: true, connectionPurpose: connection.purpose };
   });
 }
 

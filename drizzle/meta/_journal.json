@@ -267,6 +267,27 @@
       "when": 1787942284026,
       "tag": "0037_cooing_matthew_murdock",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "5",
+      "when": 1787943032474,
+      "tag": "0038_stale_silver_samurai",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "5",
+      "when": 1787943121808,
+      "tag": "0039_safe_marvel_boy",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "5",
+      "when": 1787943334087,
+      "tag": "0040_glamorous_bruce_banner",
+      "breakpoints": true
     }
   ]
 }

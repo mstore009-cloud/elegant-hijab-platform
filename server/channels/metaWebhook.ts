@@ -1,8 +1,8 @@
 import crypto from "crypto";
 import express, { type Express, type Request, type Response } from "express";
 import { ENV } from "../_core/env";
-import { ingestExternalInboundMessage, type ExternalMediaReference, type NormalizedInboundMessage } from "./db";
-import { storeInboundImageFromProvider } from "./media";
+import { enqueueAndProcessMetaEvent, normalizeMetaEvents } from "./metaEvents";
+import type { NormalizedInboundMessage } from "./db";
 
 function text(value: unknown, max = 255) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -30,79 +30,9 @@ export function isValidMetaChallenge(input: { mode?: unknown; challenge?: unknow
   return Boolean(expectedVerifyToken && input.mode === "subscribe" && typeof input.challenge === "string" && typeof input.verifyToken === "string" && constantTimeEqual(input.verifyToken, expectedVerifyToken));
 }
 
-function whatsappAttachments(message: Record<string, any>): ExternalMediaReference[] {
-  if (message.type !== "image" || !message.image) return [];
-  return [{ providerMediaId: text(message.image.id), mediaType: "image", mimeType: text(message.image.mime_type, 120) || "image/jpeg", originalFileName: null }];
-}
-
-function instagramAttachments(message: Record<string, any>): ExternalMediaReference[] {
-  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
-  return attachments.map((attachment: any, index: number) => {
-    const attachmentType = text(attachment?.type, 32);
-    const url = text(attachment?.payload?.url, 2000);
-    return {
-      providerMediaId: text(attachment?.payload?.id) || null,
-      mediaType: attachmentType === "image" && url ? "image" : "unsupported",
-      mimeType: attachmentType === "image" ? "image/jpeg" : null,
-      originalFileName: null,
-      sourceUrl: url || null,
-    } as ExternalMediaReference & { sourceUrl?: string | null };
-  }).filter((attachment: ExternalMediaReference) => attachment.mediaType === "image" || attachment.mediaType === "unsupported");
-}
-
 /** Converts only customer-originated text/image events into the internal Inbox format. */
 export function normalizeMetaWebhook(payload: any): NormalizedInboundMessage[] {
-  const normalized: NormalizedInboundMessage[] = [];
-  if (payload?.object === "whatsapp_business_account") {
-    for (const entry of Array.isArray(payload.entry) ? payload.entry : []) {
-      for (const change of Array.isArray(entry?.changes) ? entry.changes : []) {
-        const value = change?.value;
-        const accountId = text(value?.metadata?.phone_number_id);
-        const contacts = new Map<string, string>((Array.isArray(value?.contacts) ? value.contacts : []).map((contact: any): [string, string] => [text(contact?.wa_id), text(contact?.profile?.name, 160)]));
-        for (const message of Array.isArray(value?.messages) ? value.messages : []) {
-          const messageId = text(message?.id);
-          const sender = text(message?.from);
-          if (!accountId || !messageId || !sender) continue;
-          normalized.push({
-            channel: "whatsapp",
-            providerAccountId: accountId,
-            externalEventId: messageId,
-            externalConversationId: `whatsapp:${sender}`,
-            externalMessageId: messageId,
-            senderName: contacts.get(sender) || null,
-            senderPhone: sender,
-            body: text(message?.text?.body, 20_000) || text(message?.image?.caption, 20_000) || null,
-            occurredAt: timestampFromUnix(message?.timestamp),
-            attachments: whatsappAttachments(message),
-          });
-        }
-      }
-    }
-  }
-  if (payload?.object === "instagram") {
-    for (const entry of Array.isArray(payload.entry) ? payload.entry : []) {
-      const accountId = text(entry?.id);
-      for (const envelope of Array.isArray(entry?.messaging) ? entry.messaging : []) {
-        const message = envelope?.message;
-        const messageId = text(message?.mid);
-        const sender = text(envelope?.sender?.id);
-        if (!accountId || !messageId || !sender || message?.is_echo) continue;
-        normalized.push({
-          channel: "instagram",
-          providerAccountId: accountId,
-          externalEventId: messageId,
-          externalConversationId: `instagram:${sender}`,
-          externalMessageId: messageId,
-          senderName: null,
-          senderPhone: null,
-          body: text(message?.text, 20_000) || null,
-          occurredAt: timestampFromUnix(envelope?.timestamp ? Number(envelope.timestamp) / 1000 : undefined),
-          attachments: instagramAttachments(message ?? {}),
-        });
-      }
-    }
-  }
-  return normalized;
+  return normalizeMetaEvents(payload).filter((event): event is { kind: "message" } & NormalizedInboundMessage => event.kind === "message").map(({ kind: _kind, ...message }) => message);
 }
 
 async function receiveMetaWebhook(req: Request, res: Response) {
@@ -119,20 +49,10 @@ async function receiveMetaWebhook(req: Request, res: Response) {
   const payloadHash = crypto.createHash("sha256").update(rawBody).digest("hex");
   try {
     const results = [];
-    for (const message of normalizeMetaWebhook(payload)) {
-      const ingested = await ingestExternalInboundMessage({ ...message, payloadHash });
-      if (ingested.accepted && !ingested.duplicate && ingested.conversationId && ingested.storeId) {
-        for (let index = 0; index < message.attachments.length; index += 1) {
-          const mediaId = ingested.mediaIds[index];
-          const image = message.attachments[index] as ExternalMediaReference & { sourceUrl?: string | null };
-          if (!mediaId || image.mediaType !== "image") continue;
-          const stored = await storeInboundImageFromProvider({ storeId: ingested.storeId, mediaId, sourceUrl: image.sourceUrl });
-          void stored;
-        }
-      }
-      results.push(ingested);
+    for (const event of normalizeMetaEvents(payload)) {
+      results.push(await enqueueAndProcessMetaEvent(event, payloadHash));
     }
-    return res.status(200).json({ received: results.length });
+    return res.status(200).json({ received: results.length, accepted: results.filter(result => result.accepted).length });
   } catch (error) {
     console.error("[MetaWebhook] تعذر حفظ webhook:", error);
     return res.status(500).json({ error: "تعذر حفظ الرسالة الواردة." });
