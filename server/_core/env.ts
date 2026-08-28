@@ -12,7 +12,7 @@ export const ENV = {
   oneDriveRedirectUri: process.env.MICROSOFT_ONEDRIVE_REDIRECT_URI ?? "",
   metaAppSecret: process.env.META_APP_SECRET ?? "",
   metaAppId: process.env.META_APP_ID ?? "",
-  metaRedirectUri: process.env.META_REDIRECT_URI ?? "",
+  metaRedirectUri: process.env.META_REDIRECT_URI ?? "https://eleganthijab-efpivkpx.manus.space/api/meta/oauth/callback",
   metaGraphApiVersion: process.env.META_GRAPH_API_VERSION ?? "v26.0",
   metaMessagingConfigurationId: process.env.META_CONFIG_MESSAGING_ID ?? "",
   metaContentConfigurationId: process.env.META_CONFIG_CONTENT_ID ?? "",
