@@ -460,6 +460,37 @@ export const metaWebhookRetrySettings = mysqlTable(
   table => [uniqueIndex("meta_retry_task_unique").on(table.scheduleCronTaskUid)],
 );
 
+/** Idempotent outbound delivery ledger. Every manual or bot send must pass through this table. */
+export const metaOutboundMessages = mysqlTable(
+  "meta_outbound_messages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    channelAccountId: int("channelAccountId").notNull().references(() => channelAccounts.id),
+    conversationId: int("conversationId").notNull().references(() => inboxConversations.id),
+    inboxMessageId: int("inboxMessageId").references(() => inboxMessages.id),
+    channel: mysqlEnum("channel", ["whatsapp", "instagram", "messenger"]).notNull(),
+    recipientExternalId: varchar("recipientExternalId", { length: 255 }).notNull(),
+    idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
+    mode: mysqlEnum("mode", ["manual", "bot_guarded", "comment_guarded"]).notNull(),
+    body: text("body").notNull(),
+    status: mysqlEnum("status", ["queued", "sending", "sent", "failed", "blocked"]).default("queued").notNull(),
+    externalMessageId: varchar("externalMessageId", { length: 255 }),
+    actorUserId: int("actorUserId").references(() => users.id),
+    botRunId: int("botRunId").references(() => customerBotRuns.id),
+    errorCode: varchar("errorCode", { length: 120 }),
+    errorSummary: varchar("errorSummary", { length: 500 }),
+    requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+    sentAt: timestamp("sentAt"),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_outbound_idempotency_unique").on(table.storeId, table.idempotencyKey),
+    index("meta_outbound_store_status_idx").on(table.storeId, table.status, table.requestedAt),
+    index("meta_outbound_conversation_idx").on(table.conversationId, table.requestedAt),
+  ],
+);
+
 /** A durable platform copy of a message attachment. Provider download URLs are never persisted. */
 export const inboxMessageMedia = mysqlTable(
   "inbox_message_media",

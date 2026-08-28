@@ -11,6 +11,7 @@ import {
   customerBotImageAnalyses,
   customerBotImageMatches,
   products,
+  channelAccounts,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { appendCustomerActivity } from "../crm/db";
@@ -120,7 +121,8 @@ export async function getInboxConversationDetail(storeId: number, conversationId
   ]);
   const customerOrders = customer ? await db.select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, total: orders.total, createdAt: orders.createdAt }).from(orders).where(and(eq(orders.storeId, storeId), eq(orders.customerId, customer.id))).orderBy(desc(orders.createdAt)).limit(6) : [];
   const media = await listInboxMessageMediaForConversation(storeId, conversation.id, messages.map(message => message.id));
-  return { conversation, messages, events, customer, linkedOrder, assignee, customerOrders, media };
+  const [channelAccount] = conversation.channel === "manual" ? [] : await db.select({ id: channelAccounts.id, channel: channelAccounts.channel, providerDisplayName: channelAccounts.providerDisplayName, connectionStatus: channelAccounts.connectionStatus, lastError: channelAccounts.lastError }).from(channelAccounts).where(and(eq(channelAccounts.storeId, storeId), eq(channelAccounts.channel, conversation.channel))).limit(1);
+  return { conversation, messages, events, customer, linkedOrder, assignee, customerOrders, media, channelAccount: channelAccount ?? null };
 }
 
 async function listInboxMessageMediaForConversation(storeId: number, conversationId: number, messageIds: number[]) {

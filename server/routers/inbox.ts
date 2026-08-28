@@ -20,6 +20,7 @@ import {
   setInboxConversationPriority,
   snoozeInboxConversation,
 } from "../inbox/db";
+import { sendMetaConversationMessage } from "../channels/metaOutbound";
 
 const conversationIdInput = z.object({ conversationId: z.number().int().positive() });
 const inboxStatusSchema = z.enum(inboxStatuses);
@@ -49,6 +50,12 @@ export const inboxRouter = router({
     const store = await requireInboxStore(ctx, input.direction === "internal_note" ? "inbox.manage" : "inbox.reply");
     const result = await recordInboxMessage({ ...input, storeId: store.id, actorUserId: ctx.user.id });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "inbox_conversation", entityId: input.conversationId, action: input.direction === "internal_note" ? "inbox.note_added" : "inbox.message_recorded", summary: input.direction === "internal_note" ? "أضيفت ملاحظة داخلية للمحادثة." : "تم حفظ سجل رسالة يدويًا؛ لم تُرسل إلى قناة خارجية." });
+    return result;
+  }),
+  sendManualMeta: protectedProcedure.input(conversationIdInput.extend({ body: z.string().trim().min(1).max(4000), idempotencyKey: z.string().uuid() })).mutation(async ({ ctx, input }) => {
+    const store = await requireInboxStore(ctx, "inbox.reply");
+    const result = await sendMetaConversationMessage({ ...input, storeId: store.id, actorUserId: ctx.user.id, mode: "manual" });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "inbox_conversation", entityId: input.conversationId, action: "inbox.meta_manual_sent", summary: "أرسل الموظف رسالة يدوية عبر قناة Meta المرتبطة؛ لا يوجد رد آلي في هذه العملية." });
     return result;
   }),
   assign: protectedProcedure.input(conversationIdInput.extend({ assigneeEmployeeId: z.number().int().positive().nullable().optional() })).mutation(async ({ ctx, input }) => {
