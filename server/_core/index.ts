@@ -8,6 +8,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { registerOneDriveOAuthRoutes } from "../integrations/onedrive/oauthRoutes";
 import { handleScheduledCatalogScan } from "../products/catalogScheduledHandler";
 import { registerCatalogVideoPlaybackRoute } from "../products/catalogVideoRoute";
+import { registerMetaWebhookRoutes } from "../channels/metaWebhook";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -34,6 +35,7 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  registerMetaWebhookRoutes(app);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));

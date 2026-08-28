@@ -10,4 +10,7 @@ export const ENV = {
   oneDriveClientId: process.env.MICROSOFT_ONEDRIVE_CLIENT_ID ?? "",
   oneDriveClientSecret: process.env.MICROSOFT_ONEDRIVE_CLIENT_SECRET ?? "",
   oneDriveRedirectUri: process.env.MICROSOFT_ONEDRIVE_REDIRECT_URI ?? "",
+  metaAppSecret: process.env.META_APP_SECRET ?? "",
+  metaWebhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN ?? "",
+  metaGraphAccessToken: process.env.META_GRAPH_ACCESS_TOKEN ?? "",
 };

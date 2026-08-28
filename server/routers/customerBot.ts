@@ -6,6 +6,7 @@ import { recordAuditEvent } from "../audit/db";
 import { listLLMModels } from "../_core/llm";
 import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, updateCustomerBotSettings } from "../customerBot/db";
 import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "../customerBot/knowledge";
+import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
@@ -41,6 +42,12 @@ export const customerBotRouter = router({
     const store = await requireStore(ctx, "inbox.reply");
     const result = await generateCustomerBotDraft({ ...input, storeId: store.id, actorUserId: ctx.user.id });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_run", entityId: result.runId, action: "bot.draft_generated", summary: result.route === "human_handoff" ? "حوّل البوت الحالة إلى موظف للمراجعة." : `أنشأ البوت مسودة رد عبر مسار ${result.route}.` });
+    return result;
+  }),
+  analyzeImage: protectedProcedure.input(z.object({ mediaId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "inbox.reply");
+    const result = await analyzeCustomerMessageImage({ storeId: store.id, mediaId: input.mediaId });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_image_analysis", entityId: result.analysisId ?? input.mediaId, action: "bot.image_analyzed", summary: result.status === "completed" ? "تم تحليل صورة عميل كاقتراح للمراجعة." : "تعذر تحليل صورة عميل وسُجل سبب الفشل." });
     return result;
   }),
   dismissDraft: protectedProcedure.input(z.object({ conversationId: z.number().int().positive(), runId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {

@@ -350,3 +350,33 @@
 - [x] Bot-Comparison-R2: مراجعة Bot-H1/H2 في المنصة الحالية من الكود والتوثيق وسجلات الاختبار.
 - [x] Bot-Comparison-R3: مقارنة الفهم والبيانات والتصعيد والمراجعة والقنوات والأمان والتكلفة التشغيلية دون افتراض وظائف غير موجودة.
 - [x] Bot-Comparison-R4: تقديم خلاصة عملية تحدد نقاط القوة والفجوات وما ينبغي الاحتفاظ به أو إضافته مستقبلاً دون تنفيذ.
+- [x] Channel-Vision-Bot-A1: دراسة متطلبات WhatsApp Cloud API وInstagram Messaging وتحليل الصور وحدود التفويض والتكلفة والخصوصية الرسمية.
+- [x] Channel-Vision-Bot-A2: تصميم نموذج القنوات وحسابات Meta وwebhooks والرسائل والوسائط والتحليلات ضمن عزل المتاجر.
+- [x] Channel-Vision-Bot-A3: تنفيذ استقبال webhooks الرسمي والتحقق من التوقيع ومنع التكرار، مع إبقاء الإرسال التلقائي معطلاً.
+- [x] Channel-Vision-Bot-A4: تخزين وسائط الرسائل في S3 مع بيانات وصفية وعزل متجر وسياسة وصول آمنة.
+- [x] Channel-Vision-Bot-A5: إضافة تحليل صور رسائل الزبائن وربط النتائج المقيدة بحزمة حقائق Bot-H1/H2 دون قرارات مالية أو مخزنية.
+- [x] Channel-Vision-Bot-A6: توسيع Inbox ومركز البوت لعرض الصورة والتحليل والمسودة ومسار المراجعة البشرية.
+- [x] Channel-Vision-Bot-A7: اختبار توقيع webhook والتكرار والعزل وتحليل الصور والفشل والتحويل البشري وعدم الإرسال التلقائي.
+- [ ] Channel-Vision-Bot-A8: ربط حسابات WhatsApp وInstagram الرسمية بعد تفويض المستخدم وإجراء اختبار استقبال محدود فقط.
+- [ ] Channel-Vision-Bot-A9: التحقق البصري والفحوص الشاملة والتوثيق وحفظ checkpoint مستقل بعد نجاح المسار الكامل.
+- [x] Meta-Agent-Option-P1: دُرس Meta Business Agent كخيار إضافي، ثم استُبعد بقرار المستخدم لصالح Bot-H1/H2 فقط.
+- [x] Meta-Agent-Option-P2: أُلغي مسار المزود المزدوج؛ لا يوجد Meta Business Agent أو بوت ثانٍ يرد بالتوازي.
+- [x] Meta-Deep-Execution-E0: مراجعة وتثبيت Channel-Vision-Bot-A المحلي الجاري واختبار الترحيل والوسائط والرؤية وواجهة Inbox ومركز البوت ثم حفظ checkpoint مستقل.
+- [ ] Meta-Deep-Execution-E1: بناء Meta Connection Center مع Facebook Login for Business وأصول كل متجر ورموزه المشفرة وحالات الإبطال.
+- [ ] Meta-Deep-Execution-E2: توسيع Unified Webhook Gateway إلى WhatsApp وMessenger وInstagram والتعليقات والـmentions وLead Ads وحالات النشر مع retries وdead-letter.
+- [ ] Meta-Deep-Execution-E3: تفعيل الإرسال اليدوي واختبار رسالة وصورة وحالة تسليم على القنوات الثلاث قبل الرد الآلي.
+- [ ] Meta-Deep-Execution-E4: تنفيذ guarded_auto_reply بحواجز القصد والبيانات والمعرفة والثقة والحساسية وسياسة القناة والتحويل البشري.
+- [ ] Meta-Deep-Execution-E5: إضافة bot.teach وأمثلة التصحيح المعتمدة ومرشحات المعرفة والتقييم والتراجع دون تعلم سعر أو مخزون من النص.
+- [ ] Meta-Deep-Execution-E6: تطبيق الرد المباشر المحكوم على تعليقات Facebook وInstagram والـmentions مع تحويل الشكاوى والغموض للموظف.
+- [ ] Meta-Deep-Execution-E7: ربط Content-A بالنشر المعتمد على Facebook وInstagram للصور والفيديو وReels وStories وCarousel.
+- [ ] Meta-Deep-Execution-E8: تنفيذ مزامنة أحادية الاتجاه للمنتجات النشطة إلى Meta Catalog مع سجل mapping وفشل ومنع المسودات والبيانات الحساسة.
+- [ ] Meta-Deep-Execution-E9: استقبال Lead Ads وربطها بملفات CRM داخل المتجر مع منع التكرار وخريطة حقول واحتفاظ واضحين.
+- [ ] Meta-Deep-Execution-E10: إضافة Ads Insights للقراءة فقط وربطها بـAnalytics-A وMarketing-A مع snapshots ووقت مصدر وrate limits.
+- [ ] Meta-Deep-Execution-E11: تنفيذ Pixel وConversions API وBusiness Messaging CAPI مع event_id وdeduplication والخصوصية وTest Events.
+- [ ] Meta-Deep-Execution-E12: بناء Ads Workspace بمسودات داخلية وموافقتين وصلاحية مالية وسقف متجر وkill switch قبل أي إنفاق.
+- [ ] Meta-Deep-Execution-E13: تجهيز App Review وBusiness Verification والاختبارات الحية والـfeature flags والانتقال المرحلي للإنتاج.
+- [ ] Meta-Deep-Execution-E14: تحديث المراجع وإكمال الاختبارات الشاملة والمراجعة البصرية وحفظ النسخة المتكاملة.
+- [x] Meta-Deep-Review-R1: مراجعة خيارات Meta الرسمية للرسائل والمحتوى والإعلانات والتحليلات والكتالوج والتحويلات والعملاء المحتملين.
+- [x] Meta-Deep-Review-R2: مقارنة خياري Messenger وInstagram الظاهرين مع نطاق الربط العميق الكامل وبيان ما لا يغطيانه.
+- [x] Meta-Deep-Review-R3: تحديد طبقات الربط المناسبة للمنصة والصلاحيات المرحلية والحواجز المالية والخصوصية.
+- [x] Meta-Deep-Review-R4: تقديم توصية تطبيق واحد أثناء التطوير مع فصل الإعلانات والقياس قبل الإنفاق الإنتاجي، دون تنفيذ أو تفعيل.

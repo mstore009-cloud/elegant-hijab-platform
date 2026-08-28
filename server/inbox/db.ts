@@ -5,12 +5,17 @@ import {
   employeeProfiles,
   inboxConversationEvents,
   inboxConversations,
+  inboxMessageMedia,
   inboxMessages,
   orders,
+  customerBotImageAnalyses,
+  customerBotImageMatches,
+  products,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { appendCustomerActivity } from "../crm/db";
 import { notifyEmployee } from "../notifications/db";
+import { storageGet } from "../storage";
 
 export const inboxChannels = ["manual", "whatsapp", "instagram", "messenger"] as const;
 export const inboxStatuses = ["open", "waiting_customer", "snoozed", "closed"] as const;
@@ -114,7 +119,55 @@ export async function getInboxConversationDetail(storeId: number, conversationId
     conversation.assignedEmployeeId ? requireActiveAssignee(db, storeId, conversation.assignedEmployeeId) : null,
   ]);
   const customerOrders = customer ? await db.select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, total: orders.total, createdAt: orders.createdAt }).from(orders).where(and(eq(orders.storeId, storeId), eq(orders.customerId, customer.id))).orderBy(desc(orders.createdAt)).limit(6) : [];
-  return { conversation, messages, events, customer, linkedOrder, assignee, customerOrders };
+  const media = await listInboxMessageMediaForConversation(storeId, conversation.id, messages.map(message => message.id));
+  return { conversation, messages, events, customer, linkedOrder, assignee, customerOrders, media };
+}
+
+async function listInboxMessageMediaForConversation(storeId: number, conversationId: number, messageIds: number[]) {
+  if (!messageIds.length) return [];
+  const db = await requireDb();
+  await getScopedConversation(db, storeId, conversationId);
+  const mediaRows = await db.select().from(inboxMessageMedia).where(and(eq(inboxMessageMedia.storeId, storeId), inArray(inboxMessageMedia.messageId, messageIds))).orderBy(asc(inboxMessageMedia.id));
+  if (!mediaRows.length) return [];
+  const mediaIds = mediaRows.map(media => media.id);
+  const analyses = await db.select().from(customerBotImageAnalyses).where(and(eq(customerBotImageAnalyses.storeId, storeId), inArray(customerBotImageAnalyses.mediaId, mediaIds)));
+  const analysisIds = analyses.map(analysis => analysis.id);
+  const matches = analysisIds.length
+    ? await db.select({ analysisId: customerBotImageMatches.analysisId, confidence: customerBotImageMatches.confidence, reason: customerBotImageMatches.matchReason, productCode: products.productCode, productName: products.name, sellingPrice: products.sellingPrice })
+      .from(customerBotImageMatches)
+      .innerJoin(products, eq(customerBotImageMatches.productId, products.id))
+      .where(and(eq(customerBotImageMatches.storeId, storeId), inArray(customerBotImageMatches.analysisId, analysisIds), eq(products.storeId, storeId)))
+      .orderBy(customerBotImageMatches.rank)
+    : [];
+  return Promise.all(mediaRows.map(async media => {
+    const analysis = analyses.find(item => item.mediaId === media.id) ?? null;
+    return {
+      id: media.id,
+      messageId: media.messageId,
+      mediaType: media.mediaType,
+      mimeType: media.mimeType,
+      originalFileName: media.originalFileName,
+      sizeBytes: media.sizeBytes,
+      downloadStatus: media.downloadStatus,
+      errorSummary: media.errorSummary,
+      url: media.storageKey ? (await storageGet(media.storageKey)).url : null,
+      analysis: analysis ? {
+        id: analysis.id,
+        status: analysis.status,
+        model: analysis.model,
+        confidence: analysis.confidence,
+        garmentType: analysis.garmentType,
+        dominantColor: analysis.dominantColor,
+        secondaryColors: analysis.secondaryColors,
+        pattern: analysis.pattern,
+        detectedText: analysis.detectedText,
+        visualSummary: analysis.visualSummary,
+        suitableForMatching: analysis.suitableForMatching,
+        errorSummary: analysis.errorSummary,
+        matches: matches.filter(match => match.analysisId === analysis.id),
+      } : null,
+    };
+  }));
 }
 
 export async function listInboxAssignableEmployees(storeId: number) {

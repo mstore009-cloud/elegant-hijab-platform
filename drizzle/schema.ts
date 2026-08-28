@@ -318,6 +318,126 @@ export const inboxConversationEvents = mysqlTable(
   ],
 );
 
+/** A verified external messaging identity, scoped to one operational store. Secrets remain in environment variables only. */
+export const channelAccounts = mysqlTable(
+  "channel_accounts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    channel: mysqlEnum("channel", ["whatsapp", "instagram"]).notNull(),
+    providerAccountId: varchar("providerAccountId", { length: 255 }),
+    providerDisplayName: varchar("providerDisplayName", { length: 160 }),
+    connectionStatus: mysqlEnum("connectionStatus", ["disconnected", "testing", "connected", "disabled"]).default("disconnected").notNull(),
+    lastInboundAt: timestamp("lastInboundAt"),
+    lastError: varchar("lastError", { length: 500 }),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("channel_store_channel_unique").on(table.storeId, table.channel),
+    uniqueIndex("channel_provider_unique").on(table.channel, table.providerAccountId),
+    index("channel_store_status_idx").on(table.storeId, table.connectionStatus),
+  ],
+);
+
+/** Delivery evidence for externally received webhook events; payload bytes and tokens are intentionally not retained. */
+export const channelWebhookEvents = mysqlTable(
+  "channel_webhook_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    channelAccountId: int("channelAccountId").notNull().references(() => channelAccounts.id),
+    externalEventId: varchar("externalEventId", { length: 255 }).notNull(),
+    payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+    eventType: mysqlEnum("eventType", ["message", "delivery_status", "unsupported", "account_event"]).notNull(),
+    processingStatus: mysqlEnum("processingStatus", ["received", "processed", "ignored", "failed"]).default("received").notNull(),
+    errorSummary: varchar("errorSummary", { length: 500 }),
+    receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+    processedAt: timestamp("processedAt"),
+  },
+  table => [
+    uniqueIndex("webhook_account_event_unique").on(table.channelAccountId, table.externalEventId),
+    index("webhook_store_status_time_idx").on(table.storeId, table.processingStatus, table.receivedAt),
+  ],
+);
+
+/** A durable platform copy of a message attachment. Provider download URLs are never persisted. */
+export const inboxMessageMedia = mysqlTable(
+  "inbox_message_media",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    messageId: int("messageId").notNull().references(() => inboxMessages.id),
+    channelAccountId: int("channelAccountId").references(() => channelAccounts.id),
+    providerMediaId: varchar("providerMediaId", { length: 255 }),
+    mediaType: mysqlEnum("mediaType", ["image", "video", "audio", "document", "unsupported"]).notNull(),
+    mimeType: varchar("mimeType", { length: 120 }),
+    originalFileName: varchar("originalFileName", { length: 255 }),
+    storageKey: varchar("storageKey", { length: 512 }),
+    sizeBytes: int("sizeBytes"),
+    sha256: varchar("sha256", { length: 64 }),
+    downloadStatus: mysqlEnum("downloadStatus", ["pending", "stored", "failed", "unsupported"]).default("pending").notNull(),
+    errorSummary: varchar("errorSummary", { length: 500 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("message_media_provider_unique").on(table.channelAccountId, table.providerMediaId),
+    index("message_media_store_message_idx").on(table.storeId, table.messageId),
+    index("message_media_store_status_idx").on(table.storeId, table.downloadStatus),
+  ],
+);
+
+/** Non-executing vision result for a customer-supplied image. */
+export const customerBotImageAnalyses = mysqlTable(
+  "customer_bot_image_analyses",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    mediaId: int("mediaId").notNull().references(() => inboxMessageMedia.id),
+    sourceMessageId: int("sourceMessageId").notNull().references(() => inboxMessages.id),
+    status: mysqlEnum("status", ["pending", "completed", "failed", "not_applicable"]).default("pending").notNull(),
+    model: varchar("model", { length: 80 }),
+    confidence: int("confidence"),
+    garmentType: varchar("garmentType", { length: 120 }),
+    dominantColor: varchar("dominantColor", { length: 80 }),
+    secondaryColors: text("secondaryColors"),
+    pattern: varchar("pattern", { length: 160 }),
+    detectedText: varchar("detectedText", { length: 500 }),
+    visualSummary: text("visualSummary"),
+    suitableForMatching: boolean("suitableForMatching").default(false).notNull(),
+    errorSummary: varchar("errorSummary", { length: 500 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("bot_image_analysis_media_unique").on(table.mediaId),
+    index("bot_image_analysis_store_msg_idx").on(table.storeId, table.sourceMessageId),
+    index("bot_image_analysis_store_status_idx").on(table.storeId, table.status),
+  ],
+);
+
+/** Candidate products inferred from a customer image. Candidates remain suggestions for human review. */
+export const customerBotImageMatches = mysqlTable(
+  "customer_bot_image_matches",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    analysisId: int("analysisId").notNull().references(() => customerBotImageAnalyses.id),
+    productId: int("productId").notNull().references(() => products.id),
+    productMediaId: int("productMediaId").references(() => productMedia.id),
+    rank: int("rank").notNull(),
+    confidence: int("confidence").notNull(),
+    matchReason: varchar("matchReason", { length: 300 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("bot_image_match_unique").on(table.analysisId, table.productId),
+    index("bot_image_match_store_analysis_idx").on(table.storeId, table.analysisId, table.rank),
+  ],
+);
+
 /** Store-scoped controls for the hybrid customer assistant. Automated sending stays disabled by default. */
 export const customerBotSettings = mysqlTable(
   "customer_bot_settings",
