@@ -19,6 +19,7 @@ const purposeMeta: Record<Purpose, { title: string; description: string; icon: t
 const assetLabels: Record<string, string> = { business: "Business Portfolio", page: "Facebook Page", instagram: "Instagram", whatsapp_business: "WhatsApp Business", whatsapp_phone: "رقم WhatsApp", ad_account: "حساب إعلانات", dataset: "Dataset", pixel: "Pixel", catalog: "Catalog" };
 
 export default function MetaConnections() {
+  const publishedCallbackUrl = "https://eleganthijab-efpivkpx.manus.space/api/meta/oauth/callback";
   const profile = trpc.access.myProfile.useQuery();
   const canManage = profile.data?.permissions.includes("settings.manage") ?? false;
   const overview = trpc.metaConnections.overview.useQuery(undefined, { enabled: canManage });
@@ -46,10 +47,10 @@ export default function MetaConnections() {
     if (configuredUrl.startsWith("/")) return `${window.location.origin}${configuredUrl}`;
     try {
       const parsed = new URL(configuredUrl);
-      if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") return `${window.location.origin}${parsed.pathname}`;
+      if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") return publishedCallbackUrl;
       return parsed.toString();
     } catch {
-      return `${window.location.origin}/api/meta/oauth/callback`;
+      return publishedCallbackUrl;
     }
   })();
 

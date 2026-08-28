@@ -363,7 +363,7 @@
 - [x] Meta-Agent-Option-P2: أُلغي مسار المزود المزدوج؛ لا يوجد Meta Business Agent أو بوت ثانٍ يرد بالتوازي.
 - [x] Meta-Deep-Execution-E0: مراجعة وتثبيت Channel-Vision-Bot-A المحلي الجاري واختبار الترحيل والوسائط والرؤية وواجهة Inbox ومركز البوت ثم حفظ checkpoint مستقل.
 - [x] Meta-Deep-Execution-E1: بناء Meta Connection Center مع Facebook Login for Business وأصول كل متجر ورموزه المشفرة وحالات الإبطال.
-- [ ] Meta-Deep-Execution-E2: توسيع Unified Webhook Gateway إلى WhatsApp وMessenger وInstagram والتعليقات والـmentions وLead Ads وحالات النشر مع retries وdead-letter.
+- [x] Meta-Deep-Execution-E2: توسيع Unified Webhook Gateway إلى WhatsApp وMessenger وInstagram والتعليقات والـmentions وLead Ads وحالات النشر مع retries وdead-letter.
 - [ ] Meta-Deep-Execution-E3: تفعيل الإرسال اليدوي واختبار رسالة وصورة وحالة تسليم على القنوات الثلاث قبل الرد الآلي.
 - [ ] Meta-Deep-Execution-E4: تنفيذ guarded_auto_reply بحواجز القصد والبيانات والمعرفة والثقة والحساسية وسياسة القناة والتحويل البشري.
 - [ ] Meta-Deep-Execution-E5: إضافة bot.teach وأمثلة التصحيح المعتمدة ومرشحات المعرفة والتقييم والتراجع دون تعلم سعر أو مخزون من النص.
