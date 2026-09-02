@@ -410,5 +410,6 @@
 - [x] Meta-History-Sync-V1-A4: بناء واجهة تقدم مزامنة القنوات وتغطية التاريخ داخل مركز Meta وInbox على سطح المكتب والهاتف.
 - [x] Meta-Multistore-Live-V1-A1: اختبار متجرين مستقلين وربط الأصول والرسائل والإبطال دون تعديل الكود أو متغيرات البيئة، ثم حفظ checkpoints مرحلية.
 - [x] Meta-Inbox-Sync-Visibility-V1-A1: إظهار حالة مزامنة Meta دائماً داخل Inbox حتى قبل إنشاء المهام، مع رابط واضح لبدء المزامنة من مركز Meta.
+- [x] Meta-History-Sync-Insert-Bug-V1-A1: إصلاح فشل إدراج مهمة Messenger في meta_history_sync_jobs والتحقق من زر بدء المزامنة الحي دون عرض خطأ قاعدة بيانات خام.
 
 - [x] التحقق من إصلاح Repository issue عبر حفظ checkpoint جديد بطلب المستخدم (466b97f9)

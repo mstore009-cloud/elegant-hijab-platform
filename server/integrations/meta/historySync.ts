@@ -14,7 +14,6 @@ function compact(value: unknown, max = 255) { return typeof value === "string" ?
 function parseDate(value: unknown) { const date = new Date(typeof value === "string" || typeof value === "number" ? value : Date.now()); return Number.isNaN(date.getTime()) ? new Date() : date; }
 function parseCursor(value: string | null): SyncCursor { try { const parsed = JSON.parse(value || "{}"); return parsed && typeof parsed === "object" ? parsed : {}; } catch { return {}; } }
 function safeCursor(value: SyncCursor) { return JSON.stringify(value).slice(0, 8000); }
-function isDuplicate(error: unknown) { return String((error as any)?.code || "") === "ER_DUP_ENTRY" || String((error as any)?.message || error).includes("Duplicate"); }
 
 async function graphGet(path: string, token: string, params: Record<string, string>) {
   const runtime = await getMetaRuntimeSettings();
@@ -57,9 +56,7 @@ export async function ensureMetaHistorySyncJobs(storeId: number, actorUserId: nu
   for (const account of accounts) {
     const status = account.channel === "whatsapp" ? "unsupported" as const : "pending" as const;
     const stage = account.channel === "whatsapp" ? "history_webhook" as const : "conversations" as const;
-    try {
-      await db.insert(metaHistorySyncJobs).values({ storeId, connectionId: connection.id, channelAccountId: account.id, channel: account.channel, providerAccountId: account.providerAccountId!, status, stage, createdByUserId: actorUserId, lastError: account.channel === "whatsapp" ? "الربط القياسي يستقبل الرسائل الجديدة فقط. يتطلب التاريخ WhatsApp Coexistence وموافقة مشاركة السجل." : null });
-    } catch (error) { if (!isDuplicate(error)) throw error; }
+    await db.insert(metaHistorySyncJobs).values({ storeId, connectionId: connection.id, channelAccountId: account.id, channel: account.channel, providerAccountId: account.providerAccountId!, status, stage, createdByUserId: actorUserId, lastError: account.channel === "whatsapp" ? "الربط القياسي يستقبل الرسائل الجديدة فقط. يتطلب التاريخ WhatsApp Coexistence وموافقة مشاركة السجل." : null }).onDuplicateKeyUpdate({ set: { connectionId: connection.id, channelAccountId: account.id, createdByUserId: actorUserId, updatedAt: new Date() } });
   }
   return listMetaHistorySyncJobs(storeId);
 }

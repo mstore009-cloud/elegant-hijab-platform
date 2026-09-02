@@ -61,6 +61,9 @@ describe("Meta history sync", () => {
     const messages = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversations[0].id));
     expect(messages.map(row => ({ direction: row.direction, source: row.source }))).toEqual(expect.arrayContaining([{ direction: "inbound", source: "historical_sync" }, { direction: "outbound", source: "historical_sync" }]));
     expect(await db.select().from(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, storeId))).toHaveLength(0);
+    const jobsAfterRepeat = await ensureMetaHistorySyncJobs(storeId, userId);
+    expect(jobsAfterRepeat).toHaveLength(1);
+    expect(jobsAfterRepeat[0].processedMessages).toBe(2);
     const [account] = await db.select().from(channelAccounts).where(eq(channelAccounts.id, accountId));
     expect(account.lastInboundAt).toBeNull();
     await db.update(metaHistorySyncJobs).set({ status: "pending", cursor: JSON.stringify({ conversationIndex: 0 }) }).where(eq(metaHistorySyncJobs.id, jobs[0].id));
