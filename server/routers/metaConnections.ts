@@ -79,7 +79,11 @@ export const metaConnectionsRouter = router({
     await upsertDiscoveredMetaAssets({ storeId: store.id, connectionId: connection.id, purpose: "unified", assets: discovered.assets });
     await carryLegacyMetaAssetSelections(store.id, connection.id);
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: connection.id, grantedScopes: connection.grantedScopes.split(",").filter(Boolean) });
-    await markMetaConnectionVerified(connection.id, discovered.failures.length ? discovered.failures.join(" | ").slice(0, 500) : null);
+    await markMetaConnectionVerified(
+      connection.id,
+      discovered.failures.length ? discovered.failures.join(" | ").slice(0, 500) : null,
+      { fatal: false },
+    );
     return { discovered: discovered.assets.length, warnings: discovered.failures };
   }),
   setAssetSelection: protectedProcedure.input(z.object({ connectionId: z.number().int().positive(), assetId: z.number().int().positive(), selected: z.boolean() })).mutation(async ({ ctx, input }) => {

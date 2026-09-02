@@ -204,7 +204,8 @@ export async function disconnectMetaConnection(storeId: number, purpose: MetaCon
   return true;
 }
 
-export async function markMetaConnectionVerified(connectionId: number, error: string | null = null) {
+export async function markMetaConnectionVerified(connectionId: number, error: string | null = null, options?: { fatal?: boolean }) {
   const db = await requireDb();
-  await db.update(metaConnections).set({ status: error ? "failed" : "connected", lastVerifiedAt: new Date(), lastError: error?.slice(0, 500) || null }).where(eq(metaConnections.id, connectionId));
+  const isFatal = Boolean(error) && options?.fatal !== false;
+  await db.update(metaConnections).set({ status: isFatal ? "failed" : "connected", lastVerifiedAt: new Date(), lastError: error?.slice(0, 500) || null }).where(eq(metaConnections.id, connectionId));
 }

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { channelAccounts, metaAssets, metaConnectionCapabilities, metaConnections, metaOAuthStates, stores, users } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { configureChannelAccount } from "../../channels/db";
-import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
+import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
 import { buildMetaAuthorizationUrl, metaScopesByPurpose, unifiedMetaScopes } from "./oauth";
 import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext, metaPlatformSecretContext } from "./tokenCipher";
 import { loadMetaCredential } from "../../channels/metaOutbound";
@@ -178,5 +178,13 @@ describe("Meta Connection Center", () => {
     const account = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: asset.externalId, providerDisplayName: asset.displayName, connectionStatus: "testing" });
     await saveMetaSystemUserToken({ storeId, token: "preferred-whatsapp-system-user-token" });
     await expect(loadMetaCredential(storeId, account)).resolves.toEqual({ accessToken: "preferred-whatsapp-system-user-token", providerAccountId: "phone-system-token" });
+  });
+
+  it("يبقي Owner Direct متصلاً عند نجاح الأصول الأساسية ووجود تحذير اكتشاف اختياري", async () => {
+    const { owner, storeId, db } = await setup();
+    const connection = await upsertMetaConnection({ storeId, purpose: "unified", authMode: "owner_direct", accessToken: "owner-token-with-partial-discovery", tokenExpiresAt: null, grantedScopes: unifiedMetaScopes, metaUserId: "owner-user", metaUserName: null, configurationId: null, connectedByUserId: owner.id });
+    await markMetaConnectionVerified(connection.id, "WhatsApp: Requires business_management permission", { fatal: false });
+    const [stored] = await db.select().from(metaConnections).where(eq(metaConnections.id, connection.id));
+    expect(stored).toMatchObject({ status: "connected", lastError: "WhatsApp: Requires business_management permission" });
   });
 });

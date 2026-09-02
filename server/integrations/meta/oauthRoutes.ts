@@ -34,7 +34,11 @@ export function registerMetaOAuthRoutes(app: Express) {
         await carryLegacyMetaAssetSelections(oauthState.storeId, connection.id);
         await syncMetaConnectionCapabilities({ storeId: oauthState.storeId, connectionId: connection.id, grantedScopes: inspection.scopes });
       }
-      await markMetaConnectionVerified(connection.id, discovered.failures.length ? discovered.failures.join(" | ").slice(0, 500) : null);
+      await markMetaConnectionVerified(
+        connection.id,
+        discovered.failures.length ? discovered.failures.join(" | ").slice(0, 500) : null,
+        { fatal: false },
+      );
       const result = discovered.failures.length ? "partial" : "connected";
       return res.redirect(`/meta-connections?meta=${result}${oauthState.purpose === "unified" ? `&flow=unified&authMode=${encodeURIComponent(oauthState.authMode)}` : `&purpose=${encodeURIComponent(oauthState.purpose)}`}`);
     } catch (error) {
