@@ -1,10 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { ENV } from "../_core/env";
 import { protectedProcedure, router } from "../_core/trpc";
 import { recordAuditEvent } from "../audit/db";
 import {
   allowedMetaGraphVersions,
+  defaultMetaCapabilities,
   getMaskedMetaPlatformSettings,
   rotateMetaWebhookVerifyToken,
   saveMetaPlatformSettings,
@@ -16,32 +16,26 @@ function requirePlatformAdmin(ctx: { user: { role: string }; operationalStore: {
   return ctx.operationalStore;
 }
 
-function getPublicOrigin(req: { protocol?: string; get?: (name: string) => string | undefined }) {
-  const protocol = req.get?.("x-forwarded-proto")?.split(",")[0]?.trim() || req.protocol || "https";
-  const host = req.get?.("x-forwarded-host") || req.get?.("host");
-  return host ? `${protocol}://${host}` : "";
-}
-
 const settingsInput = z.object({
   appId: z.string().trim().regex(/^\d{5,80}$/, "معرّف تطبيق Meta يجب أن يتكون من أرقام فقط."),
   appSecret: z.string().trim().max(500).optional(),
   businessLoginConfigurationId: z.string().trim().max(255),
   whatsappEmbeddedSignupConfigurationId: z.string().trim().max(255).optional(),
   graphApiVersion: z.enum(allowedMetaGraphVersions),
+  publicBaseUrl: z.string().trim().url("أدخل نطاقاً عاماً صالحاً.").max(512),
+  defaultCapabilities: z.array(z.enum(defaultMetaCapabilities)).min(1).optional(),
 });
 
 export const metaPlatformSettingsRouter = router({
   overview: protectedProcedure.query(async ({ ctx }) => {
     requirePlatformAdmin(ctx);
-    const requestOrigin = getPublicOrigin(ctx.req);
-    const oauthCallbackUrl = ENV.metaRedirectUri || `${requestOrigin}/api/meta/oauth/callback`;
-    let publicOrigin = requestOrigin;
-    try { publicOrigin = new URL(oauthCallbackUrl).origin; } catch { /* use current request origin */ }
+    const settings = await getMaskedMetaPlatformSettings();
     return {
-      settings: await getMaskedMetaPlatformSettings(),
+      settings,
       allowedGraphVersions: allowedMetaGraphVersions,
-      oauthCallbackUrl,
-      webhookCallbackUrl: `${publicOrigin}/api/webhooks/meta`,
+      allowedCapabilities: defaultMetaCapabilities,
+      oauthCallbackUrl: settings.oauthCallbackUrl,
+      webhookCallbackUrl: settings.webhookCallbackUrl,
     };
   }),
   save: protectedProcedure.input(settingsInput).mutation(async ({ ctx, input }) => {

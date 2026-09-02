@@ -35,9 +35,9 @@ async function requireDb() {
   return db;
 }
 
-export async function createMetaOAuthState(input: { state: string; storeId: number; userId: number; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; requestedScopes: string[]; expiresAt: Date }) {
+export async function createMetaOAuthState(input: { state: string; storeId: number; userId: number; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; templateVersion?: number; requestedScopes: string[]; expiresAt: Date }) {
   const db = await requireDb();
-  await db.insert(metaOAuthStates).values({ ...input, authMode: input.authMode ?? "external_business", requestedScopes: input.requestedScopes.join(","), returnTo: "/meta-connections" });
+  await db.insert(metaOAuthStates).values({ ...input, authMode: input.authMode ?? "external_business", templateVersion: input.templateVersion ?? 1, requestedScopes: input.requestedScopes.join(","), returnTo: "/meta-connections" });
 }
 
 export async function consumeMetaOAuthState(state: string) {
@@ -48,13 +48,14 @@ export async function consumeMetaOAuthState(state: string) {
   return item;
 }
 
-export async function upsertMetaConnection(input: { storeId: number; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; accessToken: string; tokenExpiresAt: Date | null; grantedScopes: string[]; metaUserId: string | null; metaUserName: string | null; configurationId: string | null; connectedByUserId: number }) {
+export async function upsertMetaConnection(input: { storeId: number; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; templateVersion?: number; accessToken: string; tokenExpiresAt: Date | null; grantedScopes: string[]; metaUserId: string | null; metaUserName: string | null; configurationId: string | null; connectedByUserId: number }) {
   const db = await requireDb();
   const encryptedAccessToken = encryptMetaToken(input.accessToken, metaConnectionTokenContext(input.storeId, input.purpose));
   const values = {
     storeId: input.storeId,
     purpose: input.purpose,
     authMode: input.authMode ?? "external_business",
+    templateVersion: input.templateVersion ?? 1,
     status: "connected" as const,
     encryptedAccessToken,
     tokenExpiresAt: input.tokenExpiresAt,
@@ -112,7 +113,7 @@ export async function markMetaSystemUserTokenStatus(storeId: number, status: "re
 
 export async function listMetaConnectionOverview(storeId: number) {
   const db = await requireDb();
-  const connections = await db.select({ id: metaConnections.id, purpose: metaConnections.purpose, authMode: metaConnections.authMode, status: metaConnections.status, tokenExpiresAt: metaConnections.tokenExpiresAt, grantedScopes: metaConnections.grantedScopes, metaUserId: metaConnections.metaUserId, metaUserName: metaConnections.metaUserName, configurationId: metaConnections.configurationId, systemUserTokenStatus: metaConnections.systemUserTokenStatus, systemUserTokenLastTestedAt: metaConnections.systemUserTokenLastTestedAt, connectedAt: metaConnections.connectedAt, lastVerifiedAt: metaConnections.lastVerifiedAt, revokedAt: metaConnections.revokedAt, lastError: metaConnections.lastError, updatedAt: metaConnections.updatedAt }).from(metaConnections).where(eq(metaConnections.storeId, storeId));
+  const connections = await db.select({ id: metaConnections.id, purpose: metaConnections.purpose, authMode: metaConnections.authMode, templateVersion: metaConnections.templateVersion, status: metaConnections.status, tokenExpiresAt: metaConnections.tokenExpiresAt, grantedScopes: metaConnections.grantedScopes, metaUserId: metaConnections.metaUserId, metaUserName: metaConnections.metaUserName, configurationId: metaConnections.configurationId, systemUserTokenStatus: metaConnections.systemUserTokenStatus, systemUserTokenLastTestedAt: metaConnections.systemUserTokenLastTestedAt, connectedAt: metaConnections.connectedAt, lastVerifiedAt: metaConnections.lastVerifiedAt, revokedAt: metaConnections.revokedAt, lastError: metaConnections.lastError, updatedAt: metaConnections.updatedAt }).from(metaConnections).where(eq(metaConnections.storeId, storeId));
   const assets = await db.select({ id: metaAssets.id, connectionId: metaAssets.connectionId, assetType: metaAssets.assetType, externalId: metaAssets.externalId, displayName: metaAssets.displayName, parentExternalId: metaAssets.parentExternalId, metadataJson: metaAssets.metadataJson, isSelected: metaAssets.isSelected, lastDiscoveredAt: metaAssets.lastDiscoveredAt }).from(metaAssets).where(eq(metaAssets.storeId, storeId));
   const capabilities = await db.select().from(metaConnectionCapabilities).where(eq(metaConnectionCapabilities.storeId, storeId));
   return { connections, assets, capabilities };

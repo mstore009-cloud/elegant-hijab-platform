@@ -87,6 +87,22 @@ export async function configureChannelAccount(input: {
   }
 }
 
+export async function updateChannelSubscriptionHealth(input: {
+  storeId: number;
+  channel: ExternalChannel;
+  appSubscriptionStatus: "unknown" | "ready" | "error";
+  assetSubscriptionStatus: "unknown" | "ready" | "error";
+  error?: string | null;
+}) {
+  const db = await requireDb();
+  const [account] = await db.select().from(channelAccounts).where(and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel))).limit(1);
+  if (!account) throw new Error("اختر حساب القناة أولاً قبل فحص الاشتراك.");
+  const subscriptionLastCheckedAt = new Date();
+  const lastError = input.error?.slice(0, 500) || null;
+  await db.update(channelAccounts).set({ appSubscriptionStatus: input.appSubscriptionStatus, assetSubscriptionStatus: input.assetSubscriptionStatus, subscriptionLastCheckedAt, lastError }).where(and(eq(channelAccounts.id, account.id), eq(channelAccounts.storeId, input.storeId)));
+  return { ...account, appSubscriptionStatus: input.appSubscriptionStatus, assetSubscriptionStatus: input.assetSubscriptionStatus, subscriptionLastCheckedAt, lastError };
+}
+
 /** Records one signed incoming message. It never sends a message, calls an LLM, or follows arbitrary media URLs. */
 export async function ingestExternalInboundMessage(input: NormalizedInboundMessage & { payloadHash: string; reservedWebhookEventId?: number }) {
   const db = await requireDb();

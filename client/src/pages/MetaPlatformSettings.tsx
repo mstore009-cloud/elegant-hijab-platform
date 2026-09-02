@@ -17,6 +17,8 @@ export default function MetaPlatformSettings() {
   const [businessConfigId, setBusinessConfigId] = useState("");
   const [whatsappConfigId, setWhatsappConfigId] = useState("");
   const [graphVersion, setGraphVersion] = useState("v26.0");
+  const [publicBaseUrl, setPublicBaseUrl] = useState("");
+  const [capabilities, setCapabilities] = useState<string[]>([]);
   const [oneTimeToken, setOneTimeToken] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,6 +28,8 @@ export default function MetaPlatformSettings() {
     setBusinessConfigId(settings.businessLoginConfigurationId || "");
     setWhatsappConfigId(settings.whatsappEmbeddedSignupConfigurationId || "");
     setGraphVersion(settings.graphApiVersion || "v26.0");
+    setPublicBaseUrl(settings.publicBaseUrl || "");
+    setCapabilities(settings.defaultCapabilities || []);
   }, [overview.data]);
 
   const save = trpc.metaPlatformSettings.save.useMutation({
@@ -56,6 +60,8 @@ export default function MetaPlatformSettings() {
   const data = overview.data!;
   const settings = data.settings;
   const busy = save.isPending || test.isPending || rotate.isPending;
+  const capabilityLabels: Record<string, string> = { messaging: "الرسائل والقنوات", content: "المحتوى والتفاعل", ads_read: "الإعلانات والقراءة", leads: "عملاء Lead Ads", catalog: "Meta Catalog", measurement: "القياس والتحويلات" };
+  const toggleCapability = (purpose: string) => setCapabilities(current => current.includes(purpose) ? current.filter(item => item !== purpose) : [...current, purpose]);
 
   return <div dir="rtl" className="mx-auto max-w-5xl space-y-5 pb-12">
     <header className="rounded-[1.8rem] border border-[#eadfe2] bg-[radial-gradient(circle_at_85%_10%,#f8e8eb,transparent_38%),linear-gradient(135deg,#fffdfc,#f7f1ed)] px-5 py-6 shadow-[0_14px_35px_rgba(82,48,60,0.07)] sm:px-7">
@@ -70,14 +76,16 @@ export default function MetaPlatformSettings() {
         <Field label="App Secret" hint={settings.appSecretConfigured ? "محفوظ ومشفر — اتركه فارغاً للإبقاء عليه" : "مطلوب عند الحفظ الأول"}><div className="relative"><Input type="password" value={appSecret} onChange={event => setAppSecret(event.target.value)} placeholder={settings.appSecretConfigured ? "••••••••••••••••" : "أدخل App Secret"} className="pl-10" /><EyeOff className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /></div></Field>
         <Field label="Business Login Configuration ID" hint="اختياري لمسار ربط محفظة عميل خارجي فقط؛ لا يستخدم عند ربط محفظة مالك التطبيق"><Input value={businessConfigId} onChange={event => setBusinessConfigId(event.target.value)} placeholder="اختياري للعملاء الخارجيين" /></Field>
         <Field label="WhatsApp Embedded Signup Configuration ID" hint="اختياري، يستخدم فقط عند إنشاء أو نقل رقم WhatsApp"><Input value={whatsappConfigId} onChange={event => setWhatsappConfigId(event.target.value)} placeholder="اختياري" /></Field>
+        <Field label="النطاق العام للمنصة" hint="يُحفظ داخل المنصة ويولد منه رابط OAuth وWebhook لجميع المتاجر"><Input dir="ltr" value={publicBaseUrl} onChange={event => setPublicBaseUrl(event.target.value)} placeholder="https://example.com" /></Field>
         <Field label="Graph API Version"><Select value={graphVersion} onValueChange={setGraphVersion}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{data.allowedGraphVersions.map(version => <SelectItem key={version} value={version}>{version}</SelectItem>)}</SelectContent></Select></Field>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => save.mutate({ appId, appSecret: appSecret || undefined, businessLoginConfigurationId: businessConfigId, whatsappEmbeddedSignupConfigurationId: whatsappConfigId || undefined, graphApiVersion: graphVersion as "v26.0" | "v25.0" | "v24.0" })}><Save className="ml-2 h-4 w-4" />حفظ الإعداد</Button><Button variant="outline" disabled={busy || !settings.appSecretConfigured} onClick={() => test.mutate()}>{test.isPending ? <LoaderCircle className="ml-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="ml-2 h-4 w-4" />}اختبار Meta</Button></div>
+        <Field label="القدرات الافتراضية للمتاجر" hint="تحدد ما يطلبه قالب الربط الجديد. يمكن للمتجر تعطيل أي قدرة لاحقاً."><div className="grid gap-2 sm:grid-cols-2">{data.allowedCapabilities.map(purpose => <button key={purpose} type="button" onClick={() => toggleCapability(purpose)} className={`rounded-xl border px-3 py-2.5 text-right text-sm font-bold transition ${capabilities.includes(purpose) ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground"}`}>{capabilities.includes(purpose) ? "✓ " : ""}{capabilityLabels[purpose] || purpose}</button>)}</div></Field>
+        <div className="flex flex-wrap gap-2"><Button disabled={busy || capabilities.length === 0} onClick={() => save.mutate({ appId, appSecret: appSecret || undefined, businessLoginConfigurationId: businessConfigId, whatsappEmbeddedSignupConfigurationId: whatsappConfigId || undefined, graphApiVersion: graphVersion as "v26.0" | "v25.0" | "v24.0", publicBaseUrl, defaultCapabilities: capabilities as ("messaging" | "content" | "ads_read" | "leads" | "catalog" | "measurement")[] })}><Save className="ml-2 h-4 w-4" />نشر نسخة جديدة من القالب</Button><Button variant="outline" disabled={busy || !settings.appSecretConfigured} onClick={() => test.mutate()}>{test.isPending ? <LoaderCircle className="ml-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="ml-2 h-4 w-4" />}اختبار Meta</Button></div>
       </CardContent></Card>
 
       <div className="space-y-5">
         <Card className="border-border/80 bg-card/95"><CardHeader><CardTitle className="text-base">الروابط الجاهزة</CardTitle><CardDescription>انسخها إلى إعداد التطبيق في لوحة Meta.</CardDescription></CardHeader><CardContent className="space-y-3"><CopyRow label="OAuth Callback" value={data.oauthCallbackUrl} onCopy={copy} /><CopyRow label="Webhook Callback" value={data.webhookCallbackUrl} onCopy={copy} /></CardContent></Card>
         <Card className="border-border/80 bg-card/95"><CardHeader><CardTitle className="text-base">Webhook Verify Token</CardTitle><CardDescription>{settings.webhookVerifyTokenConfigured ? "محفوظ ومشفر. التدوير يبطل القيمة السابقة في Meta." : "سيُولد تلقائياً عند أول حفظ."}</CardDescription></CardHeader><CardContent><Button variant="outline" className="w-full" disabled={busy} onClick={() => window.confirm("سيصبح Verify Token السابق غير صالح. هل تريد المتابعة؟") && rotate.mutate({ confirm: true })}><RefreshCw className={`ml-2 h-4 w-4 ${rotate.isPending ? "animate-spin" : ""}`} />تدوير الرمز</Button></CardContent></Card>
-        <Card className="border-border/80 bg-card/95"><CardContent className="pt-6 text-sm leading-6 text-muted-foreground"><p><strong className="text-foreground">مصدر الإعداد:</strong> {settings.source === "database" ? "داخل المنصة" : settings.source === "environment" ? "إعداد انتقالي من الاستضافة" : "غير مهيأ"}</p><p><strong className="text-foreground">آخر اختبار:</strong> {settings.lastTestedAt ? new Date(settings.lastTestedAt).toLocaleString("ar-IQ") : "لا يوجد"}</p>{settings.lastError && <p className="mt-2 text-rose-700">{settings.lastError}</p>}</CardContent></Card>
+        <Card className="border-border/80 bg-card/95"><CardContent className="space-y-1 pt-6 text-sm leading-6 text-muted-foreground"><p><strong className="text-foreground">نسخة القالب النشطة:</strong> {settings.activeTemplateName} — v{settings.activeTemplateVersion}</p><p><strong className="text-foreground">مصدر الإعداد:</strong> {settings.source === "database" ? "داخل المنصة" : settings.source === "environment" ? "إعداد انتقالي من الاستضافة" : "غير مهيأ"}</p><p><strong className="text-foreground">آخر اختبار:</strong> {settings.lastTestedAt ? new Date(settings.lastTestedAt).toLocaleString("ar-IQ") : "لا يوجد"}</p>{settings.lastError && <p className="mt-2 text-rose-700">{settings.lastError}</p>}</CardContent></Card>
       </div>
     </div>
   </div>;

@@ -333,6 +333,7 @@ export const metaOAuthStates = mysqlTable(
     userId: int("userId").notNull().references(() => users.id),
     purpose: mysqlEnum("purpose", ["unified", "messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
     authMode: mysqlEnum("authMode", ["owner_direct", "external_business"]).default("external_business").notNull(),
+    templateVersion: int("templateVersion").default(1).notNull(),
     requestedScopes: text("requestedScopes").notNull(),
     returnTo: varchar("returnTo", { length: 255 }).default("/meta-connections").notNull(),
     expiresAt: timestamp("expiresAt").notNull(),
@@ -353,6 +354,7 @@ export const metaConnections = mysqlTable(
     storeId: int("storeId").notNull().references(() => stores.id),
     purpose: mysqlEnum("purpose", ["unified", "messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
     authMode: mysqlEnum("authMode", ["owner_direct", "external_business"]).default("external_business").notNull(),
+    templateVersion: int("templateVersion").default(1).notNull(),
     status: mysqlEnum("status", ["connected", "expired", "revoked", "failed", "disabled"]).default("connected").notNull(),
     encryptedAccessToken: text("encryptedAccessToken"),
     tokenExpiresAt: timestamp("tokenExpiresAt"),
@@ -384,6 +386,8 @@ export const metaPlatformSettings = mysqlTable("meta_platform_settings", {
   businessLoginConfigurationId: varchar("businessLoginConfigurationId", { length: 255 }),
   whatsappEmbeddedSignupConfigurationId: varchar("whatsappEmbeddedSignupConfigurationId", { length: 255 }),
   encryptedWebhookVerifyToken: text("encryptedWebhookVerifyToken"),
+  publicBaseUrl: varchar("publicBaseUrl", { length: 512 }),
+  activeTemplateVersion: int("activeTemplateVersion").default(1).notNull(),
   graphApiVersion: varchar("graphApiVersion", { length: 16 }).default("v26.0").notNull(),
   status: mysqlEnum("status", ["incomplete", "ready", "verified", "needs_attention"]).default("incomplete").notNull(),
   lastTestedAt: timestamp("lastTestedAt"),
@@ -392,6 +396,29 @@ export const metaPlatformSettings = mysqlTable("meta_platform_settings", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+/** Versioned, reusable onboarding template shared by all stores. */
+export const metaOnboardingTemplates = mysqlTable(
+  "meta_onboarding_templates",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    version: int("version").notNull(),
+    name: varchar("name", { length: 160 }).notNull(),
+    status: mysqlEnum("status", ["draft", "active", "retired"]).default("draft").notNull(),
+    businessLoginConfigurationId: varchar("businessLoginConfigurationId", { length: 255 }),
+    whatsappEmbeddedSignupConfigurationId: varchar("whatsappEmbeddedSignupConfigurationId", { length: 255 }),
+    defaultCapabilitiesJson: text("defaultCapabilitiesJson").notNull(),
+    readinessJson: text("readinessJson"),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    activatedAt: timestamp("activatedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_onboarding_template_version_unq").on(table.version),
+    index("meta_onboarding_template_status_idx").on(table.status),
+  ],
+);
 
 /** Six operational capabilities projected from one encrypted delegated Meta connection. */
 export const metaConnectionCapabilities = mysqlTable(
@@ -448,6 +475,9 @@ export const channelAccounts = mysqlTable(
     providerAccountId: varchar("providerAccountId", { length: 255 }),
     providerDisplayName: varchar("providerDisplayName", { length: 160 }),
     connectionStatus: mysqlEnum("connectionStatus", ["disconnected", "testing", "connected", "disabled"]).default("disconnected").notNull(),
+    appSubscriptionStatus: mysqlEnum("appSubscriptionStatus", ["unknown", "ready", "error"]).default("unknown").notNull(),
+    assetSubscriptionStatus: mysqlEnum("assetSubscriptionStatus", ["unknown", "ready", "error"]).default("unknown").notNull(),
+    subscriptionLastCheckedAt: timestamp("subscriptionLastCheckedAt"),
     lastInboundAt: timestamp("lastInboundAt"),
     lastError: varchar("lastError", { length: 500 }),
     createdByUserId: int("createdByUserId").references(() => users.id),

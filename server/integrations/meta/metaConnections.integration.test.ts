@@ -8,6 +8,7 @@ import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthS
 import { buildMetaAuthorizationUrl, messengerPageSubscribedFields, metaScopesByPurpose, subscribeMessengerPage, unifiedMetaScopes } from "./oauth";
 import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext, metaPlatformSecretContext } from "./tokenCipher";
 import { loadMetaCredential } from "../../channels/metaOutbound";
+import { buildMetaPlatformUrls, normalizeMetaPublicBaseUrl } from "./platformSettings";
 
 const cleanupStoreIds: number[] = [];
 
@@ -47,9 +48,9 @@ describe("Meta Connection Center", () => {
   it("يستهلك state صالحاً مرة واحدة ويرفض إعادة استخدامه", async () => {
     const { owner, storeId } = await setup();
     const state = randomUUID();
-    await createMetaOAuthState({ state, storeId, userId: owner.id, purpose: "unified", authMode: "owner_direct", requestedScopes: ["pages_messaging"], expiresAt: new Date(Date.now() + 60_000) });
+    await createMetaOAuthState({ state, storeId, userId: owner.id, purpose: "unified", authMode: "owner_direct", templateVersion: 7, requestedScopes: ["pages_messaging"], expiresAt: new Date(Date.now() + 60_000) });
     const first = await consumeMetaOAuthState(state);
-    expect(first).toMatchObject({ storeId, userId: owner.id, purpose: "unified", authMode: "owner_direct", requestedScopes: "pages_messaging" });
+    expect(first).toMatchObject({ storeId, userId: owner.id, purpose: "unified", authMode: "owner_direct", templateVersion: 7, requestedScopes: "pages_messaging" });
     expect(await consumeMetaOAuthState(state)).toBeNull();
   });
 
@@ -61,6 +62,13 @@ describe("Meta Connection Center", () => {
     const externalUrl = new URL(buildMetaAuthorizationUrl({ ...common, authMode: "external_business" }));
     expect(externalUrl.searchParams.get("config_id")).toBe("config-external");
     expect(externalUrl.searchParams.has("scope")).toBe(false);
+  });
+
+  it("يولد روابط OAuth وWebhook من نطاق المنصة المخزن ويرفض النطاقات غير الآمنة", () => {
+    expect(normalizeMetaPublicBaseUrl("https://platform.example.com/")).toBe("https://platform.example.com");
+    expect(buildMetaPlatformUrls("https://platform.example.com")).toEqual({ oauthCallbackUrl: "https://platform.example.com/api/meta/oauth/callback", webhookCallbackUrl: "https://platform.example.com/api/webhooks/meta" });
+    expect(() => normalizeMetaPublicBaseUrl("http://platform.example.com")).toThrow("HTTPS");
+    expect(() => normalizeMetaPublicBaseUrl("https://platform.example.com/other")).toThrow("دون مسار");
   });
 
   it("يحفظ الرمز مشفراً ولا يعيده في ملخص الاتصال ويعزل الأصول حسب المتجر", async () => {

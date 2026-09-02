@@ -1,6 +1,5 @@
-import { ENV } from "../../_core/env";
 import { metaPurposes, type MetaAssetType, type MetaAuthMode, type MetaConnectionPurpose, type MetaPurpose } from "./db";
-import { getMetaRuntimeSettings } from "./platformSettings";
+import { buildMetaPlatformUrls, getActiveMetaOnboardingTemplate, getMetaRuntimeSettings } from "./platformSettings";
 
 export const metaScopesByPurpose: Record<MetaPurpose, string[]> = {
   messaging: ["pages_show_list", "pages_messaging", "pages_manage_metadata", "pages_read_engagement", "instagram_basic", "instagram_manage_messages", "whatsapp_business_management", "whatsapp_business_messaging", "business_management"],
@@ -11,14 +10,6 @@ export const metaScopesByPurpose: Record<MetaPurpose, string[]> = {
   measurement: ["ads_read", "business_management"],
 };
 
-const configurationByPurpose: Record<MetaPurpose, () => string> = {
-  messaging: () => ENV.metaMessagingConfigurationId,
-  content: () => ENV.metaContentConfigurationId,
-  ads_read: () => ENV.metaAdsReadConfigurationId,
-  leads: () => ENV.metaLeadsConfigurationId,
-  catalog: () => ENV.metaCatalogConfigurationId,
-  measurement: () => ENV.metaMeasurementConfigurationId,
-};
 export const unifiedMetaScopes = Array.from(new Set(metaPurposes.flatMap(purpose => metaScopesByPurpose[purpose]))).sort();
 
 function graphBase(path: string, graphApiVersion: string) {
@@ -26,8 +17,14 @@ function graphBase(path: string, graphApiVersion: string) {
 }
 
 export async function metaConfigurationId(purpose: MetaConnectionPurpose) {
-  if (purpose === "unified") return (await getMetaRuntimeSettings()).businessLoginConfigurationId || null;
-  return configurationByPurpose[purpose]().trim() || null;
+  const template = await getActiveMetaOnboardingTemplate();
+  return template.businessLoginConfigurationId?.trim() || null;
+}
+
+export async function getActiveMetaTemplateScopes(purpose: MetaConnectionPurpose) {
+  if (purpose !== "unified") return metaScopesByPurpose[purpose];
+  const template = await getActiveMetaOnboardingTemplate();
+  return Array.from(new Set(template.defaultCapabilities.flatMap(capability => metaScopesByPurpose[capability]))).sort();
 }
 
 export function buildMetaAuthorizationUrl(input: { appId: string; graphApiVersion: string; redirectUri: string; state: string; scopes: string[]; authMode: MetaAuthMode; configurationId?: string | null; rerequest?: boolean }) {
@@ -44,7 +41,7 @@ export function buildMetaAuthorizationUrl(input: { appId: string; graphApiVersio
 
 export async function createMetaAuthorizationUrl(input: { state: string; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; redirectUri?: string; rerequest?: boolean }) {
   const runtime = await getMetaRuntimeSettings();
-  const redirectUri = input.redirectUri || ENV.metaRedirectUri;
+  const redirectUri = input.redirectUri || (runtime.publicBaseUrl ? buildMetaPlatformUrls(runtime.publicBaseUrl).oauthCallbackUrl : "");
   if (!runtime.appId || !redirectUri) throw new Error("أكمل إعداد تطبيق Meta ورابط العودة قبل بدء التفويض.");
   const authMode = input.authMode ?? "external_business";
   return buildMetaAuthorizationUrl({
@@ -52,7 +49,7 @@ export async function createMetaAuthorizationUrl(input: { state: string; purpose
     graphApiVersion: runtime.graphApiVersion,
     redirectUri,
     state: input.state,
-    scopes: input.purpose === "unified" ? unifiedMetaScopes : metaScopesByPurpose[input.purpose],
+    scopes: await getActiveMetaTemplateScopes(input.purpose),
     authMode,
     configurationId: authMode === "external_business" ? await metaConfigurationId(input.purpose) : null,
     rerequest: input.rerequest,
@@ -70,11 +67,12 @@ async function readMetaJson(response: Response, operation: string) {
 
 export async function exchangeMetaCode(code: string) {
   const runtime = await getMetaRuntimeSettings();
-  if (!runtime.appId || !runtime.appSecret || !ENV.metaRedirectUri) throw new Error("إعداد تطبيق Meta غير مكتمل.");
+  const redirectUri = runtime.publicBaseUrl ? buildMetaPlatformUrls(runtime.publicBaseUrl).oauthCallbackUrl : "";
+  if (!runtime.appId || !runtime.appSecret || !redirectUri) throw new Error("إعداد تطبيق Meta غير مكتمل.");
   const url = new URL(graphBase("oauth/access_token", runtime.graphApiVersion));
   url.searchParams.set("client_id", runtime.appId);
   url.searchParams.set("client_secret", runtime.appSecret);
-  url.searchParams.set("redirect_uri", ENV.metaRedirectUri);
+  url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("code", code);
   const token = await readMetaJson(await fetch(url), "استبدال رمز Meta");
   let accessToken = String(token.access_token || "");
@@ -117,8 +115,8 @@ export const messengerPageSubscribedFields = ["messages", "messaging_postbacks",
 
 export async function ensureMetaPageWebhookSubscription(fetcher: typeof fetch = fetch) {
   const runtime = await getMetaRuntimeSettings();
-  if (!runtime.appId || !runtime.appSecret || !runtime.webhookVerifyToken || !ENV.metaRedirectUri) throw new Error("إعداد Webhook لتطبيق Meta غير مكتمل.");
-  const callbackUrl = new URL("/api/webhooks/meta", new URL(ENV.metaRedirectUri).origin).toString();
+  if (!runtime.appId || !runtime.appSecret || !runtime.webhookVerifyToken || !runtime.publicBaseUrl) throw new Error("إعداد Webhook لتطبيق Meta غير مكتمل.");
+  const callbackUrl = buildMetaPlatformUrls(runtime.publicBaseUrl).webhookCallbackUrl;
   const url = new URL(graphBase(`${runtime.appId}/subscriptions`, runtime.graphApiVersion));
   const body = new URLSearchParams({ object: "page", callback_url: callbackUrl, fields: messengerPageSubscribedFields.join(","), verify_token: runtime.webhookVerifyToken, include_values: "true" });
   const response = await fetcher(url, { method: "POST", headers: { Authorization: `Bearer ${runtime.appId}|${runtime.appSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body });
@@ -135,6 +133,30 @@ export async function subscribeMessengerPage(pageId: string, pageAccessToken: st
   const payload = await readMetaJson(response, "اشتراك صفحة Messenger بالتطبيق");
   if (payload?.success !== true) throw new Error("لم تؤكد Meta اشتراك صفحة Messenger بالتطبيق.");
   return { success: true as const, fields: [...messengerPageSubscribedFields] };
+}
+
+export async function inspectMessengerPageWebhookSubscription(pageId: string, pageAccessToken: string, fetcher: typeof fetch = fetch) {
+  const runtime = await getMetaRuntimeSettings();
+  if (!runtime.appId || !runtime.appSecret || !runtime.publicBaseUrl) throw new Error("إعداد تطبيق Meta المركزي غير مكتمل.");
+  const expectedCallbackUrl = buildMetaPlatformUrls(runtime.publicBaseUrl).webhookCallbackUrl;
+  const appUrl = new URL(graphBase(`${runtime.appId}/subscriptions`, runtime.graphApiVersion));
+  const appResponse = await fetcher(appUrl, { headers: { Authorization: `Bearer ${runtime.appId}|${runtime.appSecret}` } });
+  const appPayload = await readMetaJson(appResponse, "فحص اشتراك تطبيق Meta");
+  const appSubscription = Array.isArray(appPayload?.data) ? appPayload.data.find((item: any) => item?.object === "page" && String(item?.callback_url || "") === expectedCallbackUrl) : null;
+
+  const pageUrl = new URL(graphBase(`${encodeURIComponent(pageId)}/subscribed_apps`, runtime.graphApiVersion));
+  pageUrl.searchParams.set("fields", "id,name,subscribed_fields");
+  const pageResponse = await fetcher(pageUrl, { headers: { Authorization: `Bearer ${pageAccessToken}` } });
+  const pagePayload = await readMetaJson(pageResponse, "فحص اشتراك صفحة Messenger");
+  const pageSubscription = Array.isArray(pagePayload?.data) ? pagePayload.data.find((item: any) => String(item?.id || "") === runtime.appId) : null;
+  const subscribedFields = Array.isArray(pageSubscription?.subscribed_fields) ? pageSubscription.subscribed_fields.map(String) : [];
+  const missingFields = messengerPageSubscribedFields.filter(field => !subscribedFields.includes(field));
+  return {
+    appReady: Boolean(appSubscription),
+    assetReady: Boolean(pageSubscription) && missingFields.length === 0,
+    expectedCallbackUrl,
+    missingFields,
+  };
 }
 
 async function graphList(path: string, accessToken: string, fields: string, graphApiVersion: string) {

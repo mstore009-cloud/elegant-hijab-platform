@@ -19,6 +19,7 @@ export function registerMetaOAuthRoutes(app: Express) {
         storeId: oauthState.storeId,
         purpose: oauthState.purpose,
         authMode: oauthState.authMode,
+        templateVersion: oauthState.templateVersion,
         accessToken: exchanged.accessToken,
         tokenExpiresAt: inspection.expiresAt ?? (exchanged.expiresIn ? new Date(Date.now() + exchanged.expiresIn * 1000) : null),
         grantedScopes: inspection.scopes,
