@@ -6,10 +6,12 @@ import {
   allowedMetaGraphVersions,
   defaultMetaCapabilities,
   getMaskedMetaPlatformSettings,
+  recordMetaPlatformWebhookReadiness,
   rotateMetaWebhookVerifyToken,
   saveMetaPlatformSettings,
   testMetaPlatformSettings,
 } from "../integrations/meta/platformSettings";
+import { ensureMetaPlatformWebhookSubscriptions } from "../integrations/meta/oauth";
 
 function requirePlatformAdmin(ctx: { user: { role: string }; operationalStore: { id: number } | null }) {
   if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "إعداد تطبيق Meta متاح لمدير المنصة فقط." });
@@ -51,9 +53,12 @@ export const metaPlatformSettingsRouter = router({
   test: protectedProcedure.mutation(async ({ ctx }) => {
     const store = requirePlatformAdmin(ctx);
     try {
-      const settings = await testMetaPlatformSettings();
+      await testMetaPlatformSettings();
+      const webhookSubscriptions = await ensureMetaPlatformWebhookSubscriptions();
+      const readiness = await recordMetaPlatformWebhookReadiness(webhookSubscriptions);
+      const settings = await getMaskedMetaPlatformSettings();
       if (store) await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_platform_settings", entityId: "1", action: "meta.platform_settings_verified", summary: "تم التحقق من إعداد تطبيق Meta المركزي بنجاح." });
-      return settings;
+      return { settings, webhookSubscriptions, ready: readiness.ready };
     } catch (error) {
       throw new TRPCError({ code: "BAD_GATEWAY", message: error instanceof Error ? error.message : "تعذر اختبار إعداد Meta." });
     }

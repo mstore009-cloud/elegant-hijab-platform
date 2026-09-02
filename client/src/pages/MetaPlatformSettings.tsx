@@ -42,7 +42,7 @@ export default function MetaPlatformSettings() {
     onError: error => toast.error(error.message),
   });
   const test = trpc.metaPlatformSettings.test.useMutation({
-    onSuccess: async () => { await overview.refetch(); toast.success("تم التحقق من App ID وApp Secret لدى Meta."); },
+    onSuccess: async result => { await overview.refetch(); result.ready ? toast.success("تم التحقق من التطبيق واشتراكات Webhook المركزية.") : toast.warning("بيانات التطبيق صحيحة، وبعض اشتراكات Webhook تحتاج مراجعة."); },
     onError: error => toast.error(error.message),
   });
   const rotate = trpc.metaPlatformSettings.rotateWebhookVerifyToken.useMutation({

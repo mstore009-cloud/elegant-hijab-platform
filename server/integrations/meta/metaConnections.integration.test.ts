@@ -5,7 +5,7 @@ import { channelAccounts, metaAssets, metaConnectionCapabilities, metaConnection
 import { getDb } from "../../db";
 import { configureChannelAccount } from "../../channels/db";
 import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
-import { buildMetaAuthorizationUrl, messengerPageSubscribedFields, metaScopesByPurpose, subscribeMessengerPage, unifiedMetaScopes } from "./oauth";
+import { buildMetaAuthorizationUrl, ensureMetaPlatformWebhookSubscriptions, messengerPageSubscribedFields, metaScopesByPurpose, subscribeMessengerPage, subscribeWhatsAppBusinessAccount, unifiedMetaScopes } from "./oauth";
 import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext, metaPlatformSecretContext } from "./tokenCipher";
 import { loadMetaCredential } from "../../channels/metaOutbound";
 import { buildMetaPlatformUrls, normalizeMetaPublicBaseUrl } from "./platformSettings";
@@ -209,5 +209,28 @@ describe("Meta Connection Center", () => {
     expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe("Bearer page-token-private");
     expect(String(calls[0].init?.body)).toContain("messages");
     expect(calls[0].url.toString()).not.toContain("page-token-private");
+  });
+
+  it("ينشئ اشتراكات Webhook المركزية لـPage وInstagram وWhatsApp من قالب المنصة", async () => {
+    const calls: Array<{ url: URL; init?: RequestInit }> = [];
+    const results = await ensureMetaPlatformWebhookSubscriptions(async (input, init) => {
+      calls.push({ url: new URL(String(input)), init });
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    expect(results.map(item => item.object)).toEqual(["page", "instagram", "whatsapp_business_account"]);
+    expect(results.every(item => item.ready)).toBe(true);
+    expect(calls).toHaveLength(3);
+    expect(calls.map(call => new URLSearchParams(String(call.init?.body)).get("object"))).toEqual(["page", "instagram", "whatsapp_business_account"]);
+  });
+
+  it("يشترك في WABA باستخدام رمز المتجر دون وضعه في الرابط", async () => {
+    const calls: Array<{ url: URL; init?: RequestInit }> = [];
+    await subscribeWhatsAppBusinessAccount("waba-test", "store-private-token", async (input, init) => {
+      calls.push({ url: new URL(String(input)), init });
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    expect(calls[0].url.pathname).toContain("/waba-test/subscribed_apps");
+    expect(calls[0].url.toString()).not.toContain("store-private-token");
+    expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe("Bearer store-private-token");
   });
 });

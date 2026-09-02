@@ -288,6 +288,7 @@ export const inboxMessages = mysqlTable(
     direction: mysqlEnum("direction", ["inbound", "outbound", "internal_note", "system"]).notNull(),
     body: text("body").notNull(),
     externalMessageId: varchar("externalMessageId", { length: 255 }),
+    source: mysqlEnum("source", ["manual", "live_webhook", "historical_sync", "outbound"]).default("manual").notNull(),
     actorUserId: int("actorUserId").references(() => users.id),
     deliveryStatus: mysqlEnum("deliveryStatus", ["queued", "sent", "delivered", "read", "failed"]),
     deliveredAt: timestamp("deliveredAt"),
@@ -531,6 +532,42 @@ export const metaWebhookRetrySettings = mysqlTable(
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   table => [uniqueIndex("meta_retry_task_unique").on(table.scheduleCronTaskUid)],
+);
+
+/** Resumable deterministic backfill state for one Meta channel identity. Tokens and temporary media URLs are never stored here. */
+export const metaHistorySyncJobs = mysqlTable(
+  "meta_history_sync_jobs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    connectionId: int("connectionId").notNull().references(() => metaConnections.id),
+    channelAccountId: int("channelAccountId").notNull().references(() => channelAccounts.id),
+    channel: mysqlEnum("channel", ["messenger", "instagram", "whatsapp"]).notNull(),
+    providerAccountId: varchar("providerAccountId", { length: 255 }).notNull(),
+    status: mysqlEnum("status", ["pending", "running", "paused", "retry_pending", "completed", "failed", "unsupported"]).default("pending").notNull(),
+    stage: mysqlEnum("stage", ["conversations", "messages", "history_webhook", "complete"]).default("conversations").notNull(),
+    cursor: text("cursor"),
+    currentConversationExternalId: varchar("currentConversationExternalId", { length: 255 }),
+    processedConversations: int("processedConversations").default(0).notNull(),
+    processedMessages: int("processedMessages").default(0).notNull(),
+    duplicateMessages: int("duplicateMessages").default(0).notNull(),
+    failedItems: int("failedItems").default(0).notNull(),
+    oldestMessageAt: timestamp("oldestMessageAt"),
+    newestMessageAt: timestamp("newestMessageAt"),
+    attemptCount: int("attemptCount").default(0).notNull(),
+    nextAttemptAt: timestamp("nextAttemptAt"),
+    lastRunAt: timestamp("lastRunAt"),
+    completedAt: timestamp("completedAt"),
+    lastError: varchar("lastError", { length: 500 }),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_history_store_channel_account_unq").on(table.storeId, table.channel, table.providerAccountId),
+    index("meta_history_store_status_retry_idx").on(table.storeId, table.status, table.nextAttemptAt),
+    index("meta_history_connection_idx").on(table.connectionId, table.channel),
+  ],
 );
 
 /** Idempotent outbound delivery ledger. Every manual or bot send must pass through this table. */

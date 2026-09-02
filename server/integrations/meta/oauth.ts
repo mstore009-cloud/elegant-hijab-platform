@@ -112,17 +112,33 @@ async function graphGet(pathOrUrl: string, accessToken: string, graphApiVersion:
 }
 
 export const messengerPageSubscribedFields = ["messages", "messaging_postbacks", "message_deliveries", "message_reads"] as const;
+export const instagramSubscribedFields = ["messages", "messaging_postbacks", "comments", "mentions"] as const;
+export const whatsappSubscribedFields = ["messages", "message_template_status_update", "phone_number_name_update", "phone_number_quality_update"] as const;
 
-export async function ensureMetaPageWebhookSubscription(fetcher: typeof fetch = fetch) {
+async function ensureMetaAppWebhookSubscription(object: "page" | "instagram" | "whatsapp_business_account", fields: readonly string[], fetcher: typeof fetch = fetch) {
   const runtime = await getMetaRuntimeSettings();
   if (!runtime.appId || !runtime.appSecret || !runtime.webhookVerifyToken || !runtime.publicBaseUrl) throw new Error("إعداد Webhook لتطبيق Meta غير مكتمل.");
   const callbackUrl = buildMetaPlatformUrls(runtime.publicBaseUrl).webhookCallbackUrl;
   const url = new URL(graphBase(`${runtime.appId}/subscriptions`, runtime.graphApiVersion));
-  const body = new URLSearchParams({ object: "page", callback_url: callbackUrl, fields: messengerPageSubscribedFields.join(","), verify_token: runtime.webhookVerifyToken, include_values: "true" });
+  const body = new URLSearchParams({ object, callback_url: callbackUrl, fields: fields.join(","), verify_token: runtime.webhookVerifyToken, include_values: "true" });
   const response = await fetcher(url, { method: "POST", headers: { Authorization: `Bearer ${runtime.appId}|${runtime.appSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body });
-  const payload = await readMetaJson(response, "اشتراك تطبيق Meta في Webhook الصفحة");
-  if (payload?.success !== true) throw new Error("لم تؤكد Meta اشتراك التطبيق في Webhook الصفحة.");
-  return { success: true as const, callbackUrl, fields: [...messengerPageSubscribedFields] };
+  const payload = await readMetaJson(response, `اشتراك تطبيق Meta في Webhook ${object}`);
+  if (payload?.success !== true) throw new Error(`لم تؤكد Meta اشتراك التطبيق في Webhook ${object}.`);
+  return { success: true as const, object, callbackUrl, fields: [...fields] };
+}
+
+export async function ensureMetaPageWebhookSubscription(fetcher: typeof fetch = fetch) {
+  return ensureMetaAppWebhookSubscription("page", messengerPageSubscribedFields, fetcher);
+}
+
+export async function ensureMetaPlatformWebhookSubscriptions(fetcher: typeof fetch = fetch) {
+  const definitions = [["page", messengerPageSubscribedFields], ["instagram", instagramSubscribedFields], ["whatsapp_business_account", whatsappSubscribedFields]] as const;
+  const results: Array<{ object: string; ready: boolean; error: string | null }> = [];
+  for (const [object, fields] of definitions) {
+    try { await ensureMetaAppWebhookSubscription(object, fields, fetcher); results.push({ object, ready: true, error: null }); }
+    catch (error) { results.push({ object, ready: false, error: error instanceof Error ? error.message.slice(0, 300) : "تعذر الاشتراك" }); }
+  }
+  return results;
 }
 
 export async function subscribeMessengerPage(pageId: string, pageAccessToken: string, fetcher: typeof fetch = fetch) {
@@ -133,6 +149,15 @@ export async function subscribeMessengerPage(pageId: string, pageAccessToken: st
   const payload = await readMetaJson(response, "اشتراك صفحة Messenger بالتطبيق");
   if (payload?.success !== true) throw new Error("لم تؤكد Meta اشتراك صفحة Messenger بالتطبيق.");
   return { success: true as const, fields: [...messengerPageSubscribedFields] };
+}
+
+export async function subscribeWhatsAppBusinessAccount(wabaId: string, accessToken: string, fetcher: typeof fetch = fetch) {
+  const runtime = await getMetaRuntimeSettings();
+  const url = new URL(graphBase(`${encodeURIComponent(wabaId)}/subscribed_apps`, runtime.graphApiVersion));
+  const response = await fetcher(url, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
+  const payload = await readMetaJson(response, "اشتراك حساب WhatsApp Business بالتطبيق");
+  if (payload?.success !== true) throw new Error("لم تؤكد Meta اشتراك حساب WhatsApp Business بالتطبيق.");
+  return { success: true as const };
 }
 
 export async function inspectMessengerPageWebhookSubscription(pageId: string, pageAccessToken: string, fetcher: typeof fetch = fetch) {

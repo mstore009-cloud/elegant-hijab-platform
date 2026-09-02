@@ -228,3 +228,11 @@ export async function testMetaPlatformSettings(fetcher: typeof fetch = fetch) {
   if (error) throw new Error(error);
   return getMaskedMetaPlatformSettings();
 }
+
+export async function recordMetaPlatformWebhookReadiness(results: Array<{ object: string; ready: boolean; error: string | null }>) {
+  const db = await requireDb();
+  const failures = results.filter(item => !item.ready);
+  const lastError = failures.length ? failures.map(item => `${item.object}: ${item.error || "غير جاهز"}`).join(" | ").slice(0, 500) : null;
+  await db.update(metaPlatformSettings).set({ status: failures.length ? "needs_attention" : "verified", lastTestedAt: new Date(), lastError }).where(eq(metaPlatformSettings.id, 1));
+  return { ready: failures.length === 0, results, lastError };
+}

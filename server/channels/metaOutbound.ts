@@ -86,7 +86,7 @@ export async function sendMetaConversationMessage(input: { storeId: number; conv
     const credential = await loadMetaCredential(input.storeId, account);
     const delivered = await transport({ channel, providerAccountId: credential.providerAccountId, recipientExternalId, body, accessToken: credential.accessToken });
     const messageId = await db.transaction(async tx => {
-      const createdMessage = await tx.insert(inboxMessages).values({ conversationId: conversation.id, direction: "outbound", body, externalMessageId: delivered.externalMessageId, actorUserId: input.actorUserId ?? null, deliveryStatus: "sent", deliveredAt: null });
+      const createdMessage = await tx.insert(inboxMessages).values({ conversationId: conversation.id, direction: "outbound", body, externalMessageId: delivered.externalMessageId, source: "outbound", actorUserId: input.actorUserId ?? null, deliveryStatus: "sent", deliveredAt: null });
       const inboxMessageId = Number(createdMessage[0].insertId);
       await tx.update(metaOutboundMessages).set({ status: "sent", externalMessageId: delivered.externalMessageId, inboxMessageId, sentAt: new Date() }).where(eq(metaOutboundMessages.id, outboxId));
       await tx.update(channelAccounts).set({ lastError: null }).where(eq(channelAccounts.id, account.id));

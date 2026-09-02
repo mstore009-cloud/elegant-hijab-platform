@@ -8,8 +8,9 @@ import { configureChannelAccount, listChannelAccounts, updateChannelSubscription
 import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
 import { carryLegacyMetaAssetSelections, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
-import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, getActiveMetaTemplateScopes, inspectMessengerPageWebhookSubscription, inspectMetaToken, metaConfigurationId, metaScopesByPurpose, subscribeMessengerPage } from "../integrations/meta/oauth";
+import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, getActiveMetaTemplateScopes, inspectMessengerPageWebhookSubscription, inspectMetaToken, metaConfigurationId, metaScopesByPurpose, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
+import { ensureMetaHistorySyncJobs, listMetaHistorySyncJobs, processDueMetaHistorySyncJobs, processMetaHistorySyncJob, setMetaHistorySyncStatus } from "../integrations/meta/historySync";
 
 const purposeSchema = z.enum(metaPurposes);
 
@@ -17,6 +18,10 @@ async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { i
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
   await assertPermission(ctx.user, "settings.manage", ctx.operationalStore.id);
   return ctx.operationalStore;
+}
+
+function requirePlatformAdminUser(ctx: { user: NonNullable<any> }) {
+  if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "هذا المسار مخصص لمدير المنصة." });
 }
 
 async function ensureSelectedMessengerPageSubscriptions(storeId: number, connectionId: number) {
@@ -41,10 +46,29 @@ async function ensureSelectedMessengerPageSubscriptions(storeId: number, connect
   return failures;
 }
 
+async function ensureSelectedWhatsAppSubscriptions(storeId: number, connectionId: number) {
+  const overview = await listMetaConnectionOverview(storeId);
+  const connection = await getMetaConnection(storeId, "unified");
+  if (!connection?.encryptedAccessToken || connection.id !== connectionId) return [] as string[];
+  const selectedPhones = overview.assets.filter(asset => asset.connectionId === connectionId && asset.assetType === "whatsapp_phone" && asset.isSelected);
+  const selectedWabaIds = new Set([
+    ...overview.assets.filter(asset => asset.connectionId === connectionId && asset.assetType === "whatsapp_business" && asset.isSelected).map(asset => asset.externalId),
+    ...selectedPhones.map(asset => asset.parentExternalId).filter((value): value is string => Boolean(value)),
+  ]);
+  if (!selectedWabaIds.size) return [] as string[];
+  const accessToken = (await getMetaSystemUserToken(storeId)) || decryptMetaToken(connection.encryptedAccessToken, metaConnectionTokenContext(storeId, "unified"));
+  const failures: string[] = [];
+  for (const wabaId of Array.from(selectedWabaIds)) {
+    try { await subscribeWhatsAppBusinessAccount(wabaId, accessToken); }
+    catch (error) { failures.push(`${wabaId}: ${error instanceof Error ? error.message : "تعذر اشتراك WhatsApp"}`); }
+  }
+  return failures;
+}
+
 export const metaConnectionsRouter = router({
   overview: protectedProcedure.query(async ({ ctx }) => {
     const store = await requireStore(ctx);
-    const [connectionOverview, eventHealth, retryStatus, runtime, channelAccounts] = await Promise.all([listMetaConnectionOverview(store.id), getMetaEventHealth(store.id), getMetaRetryStatus(), getMetaRuntimeSettings(), listChannelAccounts(store.id)]);
+    const [connectionOverview, eventHealth, retryStatus, runtime, channelAccounts, historySyncJobs] = await Promise.all([listMetaConnectionOverview(store.id), getMetaEventHealth(store.id), getMetaRetryStatus(), getMetaRuntimeSettings(), listChannelAccounts(store.id), listMetaHistorySyncJobs(store.id)]);
     const unifiedConnection = connectionOverview.connections.find(connection => connection.purpose === "unified") ?? null;
     const selectedAssetCount = connectionOverview.assets.filter(asset => asset.connectionId === unifiedConnection?.id && asset.isSelected).length;
     return {
@@ -52,6 +76,8 @@ export const metaConnectionsRouter = router({
       eventHealth,
       retryStatus,
       channelAccounts,
+      historySyncJobs,
+      platformAdmin: ctx.user.role === "admin",
       configured: Boolean(runtime.appId && runtime.appSecret && runtime.publicBaseUrl),
       callbackUrl: runtime.publicBaseUrl ? `${runtime.publicBaseUrl}/api/meta/oauth/callback` : "/api/meta/oauth/callback",
       graphVersion: runtime.graphApiVersion,
@@ -69,6 +95,7 @@ export const metaConnectionsRouter = router({
     };
   }),
   beginUnifiedAuthorization: protectedProcedure.mutation(async ({ ctx }) => {
+    requirePlatformAdminUser(ctx);
     const store = await requireStore(ctx);
     const runtime = await getMetaRuntimeSettings();
     if (!runtime.appId || !runtime.appSecret || !runtime.publicBaseUrl) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "أكمل إعداد تطبيق Meta المركزي واختبره قبل بدء الربط." });
@@ -108,7 +135,7 @@ export const metaConnectionsRouter = router({
     await upsertDiscoveredMetaAssets({ storeId: store.id, connectionId: connection.id, purpose: "unified", assets: discovered.assets });
     await carryLegacyMetaAssetSelections(store.id, connection.id);
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: connection.id, grantedScopes: connection.grantedScopes.split(",").filter(Boolean) });
-    const subscriptionWarnings = await ensureSelectedMessengerPageSubscriptions(store.id, connection.id);
+    const subscriptionWarnings = [...await ensureSelectedMessengerPageSubscriptions(store.id, connection.id), ...await ensureSelectedWhatsAppSubscriptions(store.id, connection.id)];
     const selectedPage = (await listMetaConnectionOverview(store.id)).assets.find(asset => asset.connectionId === connection.id && asset.assetType === "page" && asset.isSelected);
     if (selectedPage) await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "messenger", providerAccountId: selectedPage.externalId, providerDisplayName: selectedPage.displayName, connectionStatus: subscriptionWarnings.length ? "testing" : "connected" });
     const warnings = [...discovered.failures, ...subscriptionWarnings];
@@ -146,7 +173,7 @@ export const metaConnectionsRouter = router({
   setAssetSelection: protectedProcedure.input(z.object({ connectionId: z.number().int().positive(), assetId: z.number().int().positive(), selected: z.boolean() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
     const asset = await setMetaAssetSelection({ storeId: store.id, ...input });
-    const subscriptionWarnings = input.selected && asset.assetType === "page" ? await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId) : [];
+    const subscriptionWarnings = input.selected && asset.assetType === "page" ? await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId) : input.selected && ["whatsapp_business", "whatsapp_phone"].includes(asset.assetType) ? await ensureSelectedWhatsAppSubscriptions(store.id, input.connectionId) : [];
     const channel = asset.connectionPurpose === "unified" || asset.connectionPurpose === "messaging" ? (asset.assetType === "whatsapp_phone" ? "whatsapp" : asset.assetType === "instagram" ? "instagram" : asset.assetType === "page" ? "messenger" : null) : null;
     if (channel) {
       const latest = await listMetaConnectionOverview(store.id);
@@ -169,7 +196,7 @@ export const metaConnectionsRouter = router({
     }
     const latest = await listMetaConnectionOverview(store.id);
     const selected = latest.assets.filter(asset => asset.connectionId === input.connectionId && asset.isSelected);
-    const subscriptionWarnings = await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId);
+    const subscriptionWarnings = [...await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId), ...await ensureSelectedWhatsAppSubscriptions(store.id, input.connectionId)];
     const channelTypes = [{ channel: "whatsapp" as const, assetType: "whatsapp_phone" as const }, { channel: "instagram" as const, assetType: "instagram" as const }, { channel: "messenger" as const, assetType: "page" as const }];
     for (const item of channelTypes) {
       const active = selected.find(asset => asset.assetType === item.assetType);
@@ -190,6 +217,26 @@ export const metaConnectionsRouter = router({
     const disconnected = await disconnectMetaConnection(store.id, "unified");
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "unified", action: "meta.unified_revoked", summary: "تم إبطال اتصال Meta الموحد وحذف رمز الوصول المشفر وتعطيل أصوله وقدراته." });
     return { disconnected };
+  }),
+  startHistorySync: protectedProcedure.mutation(async ({ ctx }) => {
+    const store = await requireStore(ctx);
+    const jobs = await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
+    const first = jobs.find(job => ["pending", "retry_pending"].includes(job.status));
+    const firstBatch = first ? await processMetaHistorySyncJob(first.id) : null;
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_history_sync", entityId: store.id, action: "meta.history_sync_started", summary: "بدأت مزامنة سجل الرسائل المتاح رسمياً للقنوات المختارة دون تشغيل البوت أو إشعارات الرسائل القديمة." });
+    return { jobs: await listMetaHistorySyncJobs(store.id), firstBatch };
+  }),
+  controlHistorySync: protectedProcedure.input(z.object({ jobId: z.number().int().positive(), action: z.enum(["pause", "resume", "retry"]) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx);
+    const result = await setMetaHistorySyncStatus(store.id, input.jobId, input.action);
+    if (input.action !== "pause") await processMetaHistorySyncJob(input.jobId);
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_history_sync", entityId: input.jobId, action: `meta.history_sync_${input.action}`, summary: `${input.action === "pause" ? "أوقف" : input.action === "resume" ? "استأنف" : "أعاد"} المستخدم مزامنة سجل Meta لهذه القناة.` });
+    return { result, jobs: await listMetaHistorySyncJobs(store.id) };
+  }),
+  runHistorySyncBatch: protectedProcedure.mutation(async ({ ctx }) => {
+    const store = await requireStore(ctx);
+    const result = await processDueMetaHistorySyncJobs(3);
+    return { ...result, jobs: await listMetaHistorySyncJobs(store.id) };
   }),
   saveWhatsAppSystemUserToken: protectedProcedure.input(z.object({ token: z.string().trim().min(20).max(4000) })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);

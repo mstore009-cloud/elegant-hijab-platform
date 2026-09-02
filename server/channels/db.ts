@@ -31,6 +31,8 @@ export type NormalizedInboundMessage = {
   body?: string | null;
   occurredAt: Date;
   attachments: ExternalMediaReference[];
+  direction?: "inbound" | "outbound";
+  source?: "live_webhook" | "historical_sync";
 };
 
 function compactText(value: unknown, max: number) {
@@ -106,6 +108,7 @@ export async function updateChannelSubscriptionHealth(input: {
 /** Records one signed incoming message. It never sends a message, calls an LLM, or follows arbitrary media URLs. */
 export async function ingestExternalInboundMessage(input: NormalizedInboundMessage & { payloadHash: string; reservedWebhookEventId?: number }) {
   const db = await requireDb();
+  const messageSource = input.source ?? "live_webhook";
   const [account] = await db.select().from(channelAccounts).where(and(
     eq(channelAccounts.channel, input.channel),
     eq(channelAccounts.providerAccountId, input.providerAccountId),
@@ -116,7 +119,7 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
 
   try {
     return await db.transaction(async tx => {
-      if (!input.reservedWebhookEventId) {
+      if (!input.reservedWebhookEventId && messageSource === "live_webhook") {
         try {
           await tx.insert(channelWebhookEvents).values({
           storeId: account.storeId,
@@ -153,20 +156,23 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
         await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "created", toValue: input.channel });
       }
 
-      const messageBody = compactText(input.body, 20_000) || (input.attachments.length ? "أرسل العميل مرفقًا للاستفسار." : "رسالة واردة بلا نص.");
+      const direction = input.direction ?? "inbound";
+      const source = messageSource;
+      const messageBody = compactText(input.body, 20_000) || (input.attachments.length ? (direction === "inbound" ? "أرسل العميل مرفقًا للاستفسار." : "أرسل المتجر مرفقًا.") : (direction === "inbound" ? "رسالة واردة بلا نص." : "رسالة صادرة بلا نص."));
       let messageId: number;
       try {
         const createdMessage = await tx.insert(inboxMessages).values({
           conversationId,
-          direction: "inbound",
+          direction,
           body: messageBody,
           externalMessageId: input.externalMessageId,
+          source,
           occurredAt: input.occurredAt,
         });
         messageId = Number(createdMessage[0].insertId);
       } catch (error) {
         if (isDuplicate(error)) {
-          await tx.update(channelWebhookEvents).set({ processingStatus: "ignored", processedAt: new Date(), errorSummary: "رسالة خارجية مكررة." }).where(input.reservedWebhookEventId ? eq(channelWebhookEvents.id, input.reservedWebhookEventId) : and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
+          if (source === "live_webhook") await tx.update(channelWebhookEvents).set({ processingStatus: "ignored", processedAt: new Date(), errorSummary: "رسالة خارجية مكررة." }).where(input.reservedWebhookEventId ? eq(channelWebhookEvents.id, input.reservedWebhookEventId) : and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
           return { accepted: true as const, duplicate: true as const, conversationId, messageId: null, mediaIds: [] as number[], storeId: account.storeId };
         }
         throw error;
@@ -189,10 +195,11 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
         mediaIds.push(Number(media[0].insertId));
       }
 
-      await tx.update(inboxConversations).set({ status: "open", snoozedUntil: null, closedAt: null, lastMessageAt: input.occurredAt }).where(eq(inboxConversations.id, conversationId));
-      await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "message_recorded", toValue: "inbound" });
-      await tx.update(channelAccounts).set({ lastInboundAt: input.occurredAt, lastError: null }).where(eq(channelAccounts.id, account.id));
-      await tx.update(channelWebhookEvents).set({ processingStatus: "processed", processedAt: new Date() }).where(input.reservedWebhookEventId ? eq(channelWebhookEvents.id, input.reservedWebhookEventId) : and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
+      const lastMessageAt = !conversation?.lastMessageAt || input.occurredAt > conversation.lastMessageAt ? input.occurredAt : conversation.lastMessageAt;
+      await tx.update(inboxConversations).set(source === "historical_sync" ? { lastMessageAt } : { status: "open", snoozedUntil: null, closedAt: null, lastMessageAt }).where(eq(inboxConversations.id, conversationId));
+      await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "message_recorded", toValue: source === "historical_sync" ? `historical:${direction}` : direction });
+      if (source === "live_webhook" && direction === "inbound") await tx.update(channelAccounts).set({ lastInboundAt: input.occurredAt, lastError: null }).where(eq(channelAccounts.id, account.id));
+      if (source === "live_webhook") await tx.update(channelWebhookEvents).set({ processingStatus: "processed", processedAt: new Date() }).where(input.reservedWebhookEventId ? eq(channelWebhookEvents.id, input.reservedWebhookEventId) : and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
       return { accepted: true as const, duplicate: false as const, conversationId, messageId, mediaIds, storeId: account.storeId };
     });
   } catch (error) {

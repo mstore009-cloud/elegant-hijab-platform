@@ -401,10 +401,10 @@
 - [x] Meta-Owner-Direct-V1-A9: إبقاء الاتصال Owner Direct بحالة connected عند نجاح الصفحة والقدرات مع عرض أخطاء WhatsApp أو Catalog الاختيارية كتحذيرات لا كفشل كامل.
 - [ ] Meta-Messenger-Live-V1-A1: تشخيص وإصلاح عدم وصول رسالة Messenger الحية إلى Inbox بعد نجاح Owner Direct، مع التحقق من اشتراك الصفحة وWebhook والتوجيه ومنع التكرار.
 - [x] Meta-Multistore-Template-V1-A1: تحويل إعداد Meta المركزي إلى قالب مُصدّر بإصدار وحالة جاهزية وروابط عامة آمنة تُدار من داخل المنصة.
-- [ ] Meta-Multistore-Template-V1-A2: جعل External Business المسار الافتراضي لأي متجر جديد مع إبقاء Owner Direct لمتجر المشغل فقط.
-- [ ] Meta-Multistore-Template-V1-A3: استكمال توجيه Webhook متعدد المتاجر واشتراكات الأصول وحالات الصحة دون أي معرف متجر أو أصل ثابت في الشفرة.
-- [ ] Meta-History-Sync-V1-A1: إضافة نموذج مهام مزامنة قابل للاستئناف ومصدر الرسالة ومنع التكرار بين backfill وWebhook الحي.
-- [ ] Meta-History-Sync-V1-A2: استيراد محادثات ورسائل Messenger وInstagram السابقة المتاحة رسمياً مع pagination وحفظ الرسائل الواردة والصادرة.
+- [x] Meta-Multistore-Template-V1-A2: جعل External Business المسار الافتراضي لأي متجر جديد مع إبقاء Owner Direct لمتجر المشغل فقط.
+- [x] Meta-Multistore-Template-V1-A3: استكمال توجيه Webhook متعدد المتاجر واشتراكات الأصول وحالات الصحة دون أي معرف متجر أو أصل ثابت في الشفرة.
+- [x] Meta-History-Sync-V1-A1: إضافة نموذج مهام مزامنة قابل للاستئناف ومصدر الرسالة ومنع التكرار بين backfill وWebhook الحي.
+- [x] Meta-History-Sync-V1-A2: استيراد محادثات ورسائل Messenger وInstagram السابقة المتاحة رسمياً مع pagination وحفظ الرسائل الواردة والصادرة.
 - [ ] Meta-WhatsApp-Coexistence-V1-A1: إضافة مسار Embedded Signup وحالات أهلية مشاركة تاريخ WhatsApp وhistory webhooks دون ادعاء دعم الماضي للربط القياسي.
 - [ ] Meta-History-Sync-V1-A3: إضافة تشغيل خلفي durable وإيقاف واستئناف وإعادة محاولة دون تشغيل البوت أو إشعارات الرسائل التاريخية.
 - [ ] Meta-History-Sync-V1-A4: بناء واجهة تقدم مزامنة القنوات وتغطية التاريخ داخل مركز Meta وInbox على سطح المكتب والهاتف.

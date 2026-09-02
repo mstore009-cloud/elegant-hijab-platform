@@ -2,10 +2,10 @@ import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { channelAccounts, channelWebhookEvents, metaAssets, metaWebhookRetrySettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
-import { applyExternalDeliveryStatus, ingestExternalInboundMessage, type ExternalMediaReference, type NormalizedInboundMessage } from "./db";
+import { applyExternalDeliveryStatus, ingestExternalInboundMessage, type ExternalChannel, type ExternalMediaReference, type NormalizedInboundMessage } from "./db";
 import { storeInboundImageFromProvider } from "./media";
 
-type DeliveryEvent = { kind: "delivery_status"; providerAccountId: string; externalEventId: string; externalMessageId: string; status: "sent" | "delivered" | "read" | "failed"; occurredAt: Date; errorSummary?: string | null };
+type DeliveryEvent = { kind: "delivery_status"; channel: ExternalChannel; providerAccountId: string; externalEventId: string; externalMessageId: string; status: "sent" | "delivered" | "read" | "failed"; occurredAt: Date; errorSummary?: string | null };
 type BusinessEvent = { kind: "comment" | "mention" | "lead" | "publish_status" | "unsupported" | "account_event"; providerAccountId: string; externalEventId: string; occurredAt: Date; summary: string; data: Record<string, string | number | boolean | null> };
 export type NormalizedMetaEvent = ({ kind: "message" } & NormalizedInboundMessage) | DeliveryEvent | BusinessEvent;
 
@@ -30,7 +30,7 @@ export function normalizeMetaEvents(payload: any): NormalizedMetaEvent[] {
       }
       for (const status of Array.isArray(value?.statuses) ? value.statuses : []) {
         const id = compact(status?.id); const raw = compact(status?.status, 32); const mapped = raw === "delivered" ? "delivered" : raw === "read" ? "read" : raw === "failed" ? "failed" : "sent"; if (!accountId || !id) continue;
-        events.push({ kind: "delivery_status", providerAccountId: accountId, externalEventId: `status:${id}:${mapped}:${compact(status?.timestamp)}`, externalMessageId: id, status: mapped, occurredAt: dateFromSeconds(status?.timestamp), errorSummary: mapped === "failed" ? compact(status?.errors?.[0]?.title || status?.errors?.[0]?.message, 500) || null : null });
+        events.push({ kind: "delivery_status", channel: "whatsapp", providerAccountId: accountId, externalEventId: `status:${id}:${mapped}:${compact(status?.timestamp)}`, externalMessageId: id, status: mapped, occurredAt: dateFromSeconds(status?.timestamp), errorSummary: mapped === "failed" ? compact(status?.errors?.[0]?.title || status?.errors?.[0]?.message, 500) || null : null });
       }
     }
   }
@@ -41,7 +41,7 @@ export function normalizeMetaEvents(payload: any): NormalizedMetaEvent[] {
       for (const envelope of Array.isArray(entry?.messaging) ? entry.messaging : []) {
         const message = envelope?.message; const messageId = compact(message?.mid); const sender = compact(envelope?.sender?.id);
         if (accountId && messageId && sender && !message?.is_echo) events.push({ kind: "message", channel, providerAccountId: accountId, externalEventId: messageId, externalConversationId: `${channel}:${sender}`, externalMessageId: messageId, senderName: null, senderPhone: null, body: compact(message?.text, 20_000) || null, occurredAt: dateFromMilliseconds(envelope?.timestamp), attachments: mediaFromMessage(message) });
-        for (const deliveredId of Array.isArray(envelope?.delivery?.mids) ? envelope.delivery.mids : []) { const id = compact(deliveredId); if (accountId && id) events.push({ kind: "delivery_status", providerAccountId: accountId, externalEventId: `delivery:${id}:${compact(envelope?.delivery?.watermark)}`, externalMessageId: id, status: "delivered", occurredAt: dateFromMilliseconds(envelope?.delivery?.watermark) }); }
+        for (const deliveredId of Array.isArray(envelope?.delivery?.mids) ? envelope.delivery.mids : []) { const id = compact(deliveredId); if (accountId && id) events.push({ kind: "delivery_status", channel, providerAccountId: accountId, externalEventId: `delivery:${id}:${compact(envelope?.delivery?.watermark)}`, externalMessageId: id, status: "delivered", occurredAt: dateFromMilliseconds(envelope?.delivery?.watermark) }); }
       }
       for (const change of Array.isArray(entry?.changes) ? entry.changes : []) {
         const field = compact(change?.field, 64); const value = change?.value || {}; const externalId = compact(value?.comment_id || value?.leadgen_id || value?.media_id || value?.post_id || value?.id);
@@ -62,7 +62,7 @@ function reviveEvent(json: string): NormalizedMetaEvent { const event = JSON.par
 async function resolveBinding(event: NormalizedMetaEvent) {
   const db = await requireDb();
   if (event.kind === "message" || event.kind === "delivery_status") {
-    const [account] = await db.select().from(channelAccounts).where(and(eq(channelAccounts.providerAccountId, event.providerAccountId), inArray(channelAccounts.connectionStatus, ["testing", "connected"]))).limit(1);
+    const [account] = await db.select().from(channelAccounts).where(and(eq(channelAccounts.channel, event.channel), eq(channelAccounts.providerAccountId, event.providerAccountId), inArray(channelAccounts.connectionStatus, ["testing", "connected"]))).limit(1);
     return account ? { storeId: account.storeId, channelAccountId: account.id, metaAssetId: null } : null;
   }
   const [asset] = await db.select().from(metaAssets).where(and(eq(metaAssets.externalId, event.providerAccountId), eq(metaAssets.isSelected, true))).limit(1);

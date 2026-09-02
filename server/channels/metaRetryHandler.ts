@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { metaWebhookRetrySettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { sdk } from "../_core/sdk";
+import { processDueMetaHistorySyncJobs } from "../integrations/meta/historySync";
 import { retryDueMetaEvents } from "./metaEvents";
 
 export async function handleScheduledMetaWebhookRetry(req: Request, res: Response) {
@@ -14,7 +15,9 @@ export async function handleScheduledMetaWebhookRetry(req: Request, res: Respons
     const [settings] = await db.select().from(metaWebhookRetrySettings).where(eq(metaWebhookRetrySettings.scheduleCronTaskUid, user.taskUid)).limit(1);
     if (!settings) return res.json({ ok: true, skipped: "orphan" });
     if (!settings.enabled) return res.json({ ok: true, skipped: "disabled" });
-    const result = await retryDueMetaEvents(30);
+    const webhookRetry = await retryDueMetaEvents(30);
+    const historySync = await processDueMetaHistorySyncJobs(3);
+    const result = { webhookRetry, historySync };
     await db.update(metaWebhookRetrySettings).set({ lastRunAt: new Date(), lastResult: JSON.stringify(result).slice(0, 500) }).where(eq(metaWebhookRetrySettings.id, settings.id));
     return res.json({ ok: true, ...result });
   } catch (error) {
