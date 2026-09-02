@@ -35,6 +35,10 @@ export function metaSystemUserTokenContext(storeId: number) {
   return `meta-whatsapp-system-user:${storeId}`;
 }
 
+export function metaWhatsAppBusinessTokenContext(storeId: number, phoneNumberId: string) {
+  return `meta-whatsapp-business:${storeId}:${phoneNumberId}`;
+}
+
 export function metaPlatformSecretContext(field: "app-secret" | "webhook-verify-token") {
   return `meta-platform:${field}`;
 }

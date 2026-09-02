@@ -6,11 +6,13 @@ import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { configureChannelAccount, listChannelAccounts, updateChannelSubscriptionHealth } from "../channels/db";
 import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
-import { carryLegacyMetaAssetSelections, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
+import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
-import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, getActiveMetaTemplateScopes, inspectMessengerPageWebhookSubscription, inspectMetaToken, metaConfigurationId, metaScopesByPurpose, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
+import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
-import { ensureMetaHistorySyncJobs, listMetaHistorySyncJobs, processDueMetaHistorySyncJobs, processMetaHistorySyncJob, setMetaHistorySyncStatus } from "../integrations/meta/historySync";
+import { enableWhatsAppHistorySyncJob, ensureMetaHistorySyncJobs, listMetaHistorySyncJobs, processDueMetaHistorySyncJobs, processMetaHistorySyncJob, setMetaHistorySyncStatus } from "../integrations/meta/historySync";
+import { listWhatsAppOnboardings, markWhatsAppSyncRequested, upsertWhatsAppOnboarding } from "../integrations/meta/whatsappCoexistence";
+import { getWhatsAppHistoryChunkHealth, processDueWhatsAppHistoryChunks } from "../integrations/meta/whatsappHistoryWebhook";
 
 const purposeSchema = z.enum(metaPurposes);
 
@@ -68,7 +70,7 @@ async function ensureSelectedWhatsAppSubscriptions(storeId: number, connectionId
 export const metaConnectionsRouter = router({
   overview: protectedProcedure.query(async ({ ctx }) => {
     const store = await requireStore(ctx);
-    const [connectionOverview, eventHealth, retryStatus, runtime, channelAccounts, historySyncJobs] = await Promise.all([listMetaConnectionOverview(store.id), getMetaEventHealth(store.id), getMetaRetryStatus(), getMetaRuntimeSettings(), listChannelAccounts(store.id), listMetaHistorySyncJobs(store.id)]);
+    const [connectionOverview, eventHealth, retryStatus, runtime, channelAccounts, historySyncJobs, whatsappOnboardings, whatsappHistoryChunkHealth] = await Promise.all([listMetaConnectionOverview(store.id), getMetaEventHealth(store.id), getMetaRetryStatus(), getMetaRuntimeSettings(), listChannelAccounts(store.id), listMetaHistorySyncJobs(store.id), listWhatsAppOnboardings(store.id), getWhatsAppHistoryChunkHealth(store.id)]);
     const unifiedConnection = connectionOverview.connections.find(connection => connection.purpose === "unified") ?? null;
     const selectedAssetCount = connectionOverview.assets.filter(asset => asset.connectionId === unifiedConnection?.id && asset.isSelected).length;
     return {
@@ -77,6 +79,8 @@ export const metaConnectionsRouter = router({
       retryStatus,
       channelAccounts,
       historySyncJobs,
+      whatsappOnboardings,
+      whatsappHistoryChunkHealth,
       platformAdmin: ctx.user.role === "admin",
       configured: Boolean(runtime.appId && runtime.appSecret && runtime.publicBaseUrl),
       callbackUrl: runtime.publicBaseUrl ? `${runtime.publicBaseUrl}/api/meta/oauth/callback` : "/api/meta/oauth/callback",
@@ -114,6 +118,50 @@ export const metaConnectionsRouter = router({
     await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: "unified", authMode: "external_business", templateVersion: runtime.activeTemplateVersion, requestedScopes, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "unified", action: "meta.external_business_started", summary: "بدأ ربط محفظة عميل خارجي عبر Facebook Login for Business." });
     return { authorizationUrl: await createMetaAuthorizationUrl({ state, purpose: "unified", authMode: "external_business" }) };
+  }),
+  beginWhatsAppEmbeddedSignup: protectedProcedure.mutation(async ({ ctx }) => {
+    const store = await requireStore(ctx);
+    const runtime = await getMetaRuntimeSettings();
+    const connection = await getMetaConnection(store.id, "unified");
+    if (!connection || connection.status !== "connected") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "أكمل ربط Meta الموحد أولاً قبل ربط WhatsApp." });
+    if (!runtime.appId || !runtime.whatsappEmbeddedSignupConfigurationId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "انشر WhatsApp Embedded Signup Configuration ID داخل إعداد قالب Meta أولاً." });
+    const state = randomBytes(32).toString("base64url");
+    await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: "unified", authMode: "external_business", flowType: "whatsapp_embedded_signup", templateVersion: runtime.activeTemplateVersion, requestedScopes: ["whatsapp_business_management", "whatsapp_business_messaging"], expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "whatsapp_embedded_signup", action: "meta.whatsapp_embedded_signup_started", summary: "بدأ المتجر WhatsApp Embedded Signup من قالب Meta المركزي." });
+    return { appId: runtime.appId, graphApiVersion: runtime.graphApiVersion, configurationId: runtime.whatsappEmbeddedSignupConfigurationId, state, featureType: "whatsapp_business_app_onboarding" as const, sessionInfoVersion: "3" as const };
+  }),
+  completeWhatsAppEmbeddedSignup: protectedProcedure.input(z.object({ state: z.string().min(20).max(200), code: z.string().min(8).max(4000), wabaId: z.string().trim().min(3).max(255), phoneNumberId: z.string().trim().min(3).max(255) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx);
+    const oauthState = await consumeMetaOAuthState(input.state);
+    if (!oauthState || oauthState.storeId !== store.id || oauthState.userId !== ctx.user.id || oauthState.flowType !== "whatsapp_embedded_signup") throw new TRPCError({ code: "BAD_REQUEST", message: "انتهت جلسة WhatsApp Embedded Signup أو لا تخص هذا المتجر." });
+    const connection = await getMetaConnection(store.id, "unified");
+    if (!connection || connection.status !== "connected") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "اتصال Meta الموحد غير متصل لهذا المتجر." });
+    try {
+      const exchanged = await exchangeWhatsAppEmbeddedSignupCode(input.code);
+      const [inspection, phone] = await Promise.all([inspectMetaToken(exchanged.accessToken), inspectWhatsAppBusinessPhone(input.phoneNumberId, exchanged.accessToken)]);
+      await subscribeWhatsAppBusinessAccount(input.wabaId, exchanged.accessToken);
+      await upsertDiscoveredMetaAssets({ storeId: store.id, connectionId: connection.id, purpose: "unified", assets: [
+        { assetType: "whatsapp_business", externalId: input.wabaId, displayName: "WhatsApp Business", accessToken: exchanged.accessToken },
+        { assetType: "whatsapp_phone", externalId: input.phoneNumberId, displayName: phone.verifiedName || phone.displayPhoneNumber || "WhatsApp", parentExternalId: input.wabaId, metadata: { displayPhoneNumber: phone.displayPhoneNumber, isOnBizApp: phone.isOnBizApp, platformType: phone.platformType }, accessToken: exchanged.accessToken },
+      ] });
+      const latest = await listMetaConnectionOverview(store.id);
+      for (const asset of latest.assets.filter(asset => asset.connectionId === connection.id && [input.wabaId, input.phoneNumberId].includes(asset.externalId))) await setMetaAssetSelection({ storeId: store.id, connectionId: connection.id, assetId: asset.id, selected: true });
+      const onboarding = await upsertWhatsAppOnboarding({ storeId: store.id, connectionId: connection.id, wabaId: input.wabaId, phoneNumberId: input.phoneNumberId, displayPhoneNumber: phone.displayPhoneNumber, accessToken: exchanged.accessToken, tokenExpiresAt: inspection.expiresAt ?? (exchanged.expiresIn ? new Date(Date.now() + exchanged.expiresIn * 1000) : null), coexistenceMode: phone.isOnBizApp ? "coexistence" : "standard_cloud_api", actorUserId: ctx.user.id });
+      const account = await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "whatsapp", providerAccountId: input.phoneNumberId, providerDisplayName: phone.verifiedName || phone.displayPhoneNumber, connectionStatus: "connected" });
+      await enableWhatsAppHistorySyncJob({ storeId: store.id, connectionId: connection.id, channelAccountId: account.id, providerAccountId: input.phoneNumberId, actorUserId: ctx.user.id, coexistence: phone.isOnBizApp });
+      let contactsRequestId: string | null = null;
+      let historyRequestId: string | null = null;
+      const warnings: string[] = [];
+      if (phone.isOnBizApp) {
+        try { contactsRequestId = (await requestWhatsAppSmbData({ phoneNumberId: input.phoneNumberId, accessToken: exchanged.accessToken, syncType: "smb_app_state_sync" })).requestId; } catch (error) { warnings.push(error instanceof Error ? error.message : "تعذرت مزامنة جهات اتصال WhatsApp"); }
+        try { historyRequestId = (await requestWhatsAppSmbData({ phoneNumberId: input.phoneNumberId, accessToken: exchanged.accessToken, syncType: "history" })).requestId; } catch (error) { warnings.push(error instanceof Error ? error.message : "تعذرت مزامنة تاريخ WhatsApp"); }
+        await markWhatsAppSyncRequested({ onboardingId: onboarding.id, contactsRequestId, historyRequestId });
+      }
+      await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "channel_account", entityId: `whatsapp:${input.phoneNumberId}`, action: "meta.whatsapp_embedded_signup_completed", summary: phone.isOnBizApp ? "اكتمل WhatsApp Coexistence وبدأ طلب مشاركة التاريخ." : "اكتمل WhatsApp Cloud API القياسي؛ التاريخ السابق غير متاح." });
+      return { connected: true as const, coexistence: phone.isOnBizApp, displayPhoneNumber: phone.displayPhoneNumber, historyRequested: Boolean(historyRequestId), warnings };
+    } catch (error) {
+      throw new TRPCError({ code: "BAD_GATEWAY", message: error instanceof Error ? error.message : "تعذر إكمال WhatsApp Embedded Signup." });
+    }
   }),
   repairUnifiedAuthorization: protectedProcedure.input(z.object({ focusPurpose: purposeSchema.optional() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
@@ -226,6 +274,15 @@ export const metaConnectionsRouter = router({
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_history_sync", entityId: store.id, action: "meta.history_sync_started", summary: "بدأت مزامنة سجل الرسائل المتاح رسمياً للقنوات المختارة دون تشغيل البوت أو إشعارات الرسائل القديمة." });
     return { jobs: await listMetaHistorySyncJobs(store.id), firstBatch };
   }),
+  historyProgress: protectedProcedure.query(async ({ ctx }) => {
+    if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
+    await assertPermission(ctx.user, "inbox.read", ctx.operationalStore.id);
+    const [jobs, whatsappOnboardings] = await Promise.all([listMetaHistorySyncJobs(ctx.operationalStore.id), listWhatsAppOnboardings(ctx.operationalStore.id)]);
+    return {
+      jobs: jobs.map(job => ({ id: job.id, channel: job.channel, status: job.status, stage: job.stage, processedConversations: job.processedConversations, processedMessages: job.processedMessages, duplicateMessages: job.duplicateMessages, oldestMessageAt: job.oldestMessageAt, newestMessageAt: job.newestMessageAt, lastRunAt: job.lastRunAt, completedAt: job.completedAt, lastError: job.lastError })),
+      whatsapp: whatsappOnboardings.map(item => ({ phoneNumberId: item.phoneNumberId, coexistenceMode: item.coexistenceMode, onboardingStatus: item.onboardingStatus, historyProgress: item.historyProgress, oldestMessageAt: item.oldestMessageAt, newestMessageAt: item.newestMessageAt })),
+    };
+  }),
   controlHistorySync: protectedProcedure.input(z.object({ jobId: z.number().int().positive(), action: z.enum(["pause", "resume", "retry"]) })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
     const result = await setMetaHistorySyncStatus(store.id, input.jobId, input.action);
@@ -235,8 +292,8 @@ export const metaConnectionsRouter = router({
   }),
   runHistorySyncBatch: protectedProcedure.mutation(async ({ ctx }) => {
     const store = await requireStore(ctx);
-    const result = await processDueMetaHistorySyncJobs(3);
-    return { ...result, jobs: await listMetaHistorySyncJobs(store.id) };
+    const [result, whatsappHistory] = await Promise.all([processDueMetaHistorySyncJobs(3), processDueWhatsAppHistoryChunks(2)]);
+    return { ...result, whatsappHistory, jobs: await listMetaHistorySyncJobs(store.id) };
   }),
   saveWhatsAppSystemUserToken: protectedProcedure.input(z.object({ token: z.string().trim().min(20).max(4000) })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);

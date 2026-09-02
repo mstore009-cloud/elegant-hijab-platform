@@ -35,9 +35,9 @@ async function requireDb() {
   return db;
 }
 
-export async function createMetaOAuthState(input: { state: string; storeId: number; userId: number; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; templateVersion?: number; requestedScopes: string[]; expiresAt: Date }) {
+export async function createMetaOAuthState(input: { state: string; storeId: number; userId: number; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; flowType?: "meta_unified" | "whatsapp_embedded_signup"; templateVersion?: number; requestedScopes: string[]; expiresAt: Date }) {
   const db = await requireDb();
-  await db.insert(metaOAuthStates).values({ ...input, authMode: input.authMode ?? "external_business", templateVersion: input.templateVersion ?? 1, requestedScopes: input.requestedScopes.join(","), returnTo: "/meta-connections" });
+  await db.insert(metaOAuthStates).values({ ...input, authMode: input.authMode ?? "external_business", flowType: input.flowType ?? "meta_unified", templateVersion: input.templateVersion ?? 1, requestedScopes: input.requestedScopes.join(","), returnTo: "/meta-connections" });
 }
 
 export async function consumeMetaOAuthState(state: string) {

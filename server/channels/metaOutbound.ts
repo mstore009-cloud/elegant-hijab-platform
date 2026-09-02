@@ -3,6 +3,7 @@ import { channelAccounts, inboxConversationEvents, inboxConversations, inboxMess
 import { getDb } from "../db";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { getMetaSystemUserToken } from "../integrations/meta/db";
+import { loadWhatsAppBusinessToken } from "../integrations/meta/whatsappCoexistence";
 import { decryptMetaToken, metaAssetTokenContext, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
 
 type SupportedChannel = "whatsapp" | "instagram" | "messenger";
@@ -37,6 +38,8 @@ export async function loadMetaCredential(storeId: number, channelAccount: typeof
   const asset = unifiedConnection ? candidates.find(candidate => candidate.connectionPurpose === "unified") : candidates.find(candidate => candidate.connectionPurpose === "messaging");
   if (!asset || asset.connectionStatus === "revoked") throw new Error("أصل Meta المحدد لهذه القناة غير مفوض حالياً.");
   if (channelAccount.channel === "whatsapp") {
+    const embedded = await loadWhatsAppBusinessToken(storeId, channelAccount.providerAccountId);
+    if (embedded) return { accessToken: embedded.accessToken, providerAccountId: embedded.onboarding.phoneNumberId };
     const systemUserToken = await getMetaSystemUserToken(storeId);
     if (systemUserToken) return { accessToken: systemUserToken, providerAccountId: asset.assetExternalId };
   }

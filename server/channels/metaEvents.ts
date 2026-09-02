@@ -22,11 +22,16 @@ export function normalizeMetaEvents(payload: any): NormalizedMetaEvent[] {
   const events: NormalizedMetaEvent[] = [];
   if (payload?.object === "whatsapp_business_account") {
     for (const entry of Array.isArray(payload.entry) ? payload.entry : []) for (const change of Array.isArray(entry?.changes) ? entry.changes : []) {
-      const value = change?.value; const accountId = compact(value?.metadata?.phone_number_id);
+      const value = change?.value; const accountId = compact(value?.metadata?.phone_number_id); const field = compact(change?.field, 80);
       const contacts = new Map<string, string>((Array.isArray(value?.contacts) ? value.contacts : []).map((item: any): [string, string] => [compact(item?.wa_id), compact(item?.profile?.name, 160)]));
-      for (const message of Array.isArray(value?.messages) ? value.messages : []) {
+      for (const message of field === "smb_message_echoes" ? [] : Array.isArray(value?.messages) ? value.messages : []) {
         const id = compact(message?.id); const sender = compact(message?.from); if (!accountId || !id || !sender) continue;
         events.push({ kind: "message", channel: "whatsapp", providerAccountId: accountId, externalEventId: id, externalConversationId: `whatsapp:${sender}`, externalMessageId: id, senderName: contacts.get(sender) || null, senderPhone: sender, body: compact(message?.text?.body, 20_000) || compact(message?.image?.caption, 20_000) || null, occurredAt: dateFromSeconds(message?.timestamp), attachments: mediaFromMessage(message) });
+      }
+      const echoes = Array.isArray(value?.smb_message_echoes) ? value.smb_message_echoes : field === "smb_message_echoes" && Array.isArray(value?.messages) ? value.messages : [];
+      for (const message of echoes) {
+        const id = compact(message?.id); const recipient = compact(message?.to); if (!accountId || !id || !recipient) continue;
+        events.push({ kind: "message", channel: "whatsapp", providerAccountId: accountId, externalEventId: `echo:${id}`, externalConversationId: `whatsapp:${recipient}`, externalMessageId: id, senderName: null, senderPhone: recipient, body: compact(message?.text?.body, 20_000) || compact(message?.image?.caption, 20_000) || null, occurredAt: dateFromSeconds(message?.timestamp), attachments: mediaFromMessage(message), direction: "outbound", source: "live_webhook" });
       }
       for (const status of Array.isArray(value?.statuses) ? value.statuses : []) {
         const id = compact(status?.id); const raw = compact(status?.status, 32); const mapped = raw === "delivered" ? "delivered" : raw === "read" ? "read" : raw === "failed" ? "failed" : "sent"; if (!accountId || !id) continue;

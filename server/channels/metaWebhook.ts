@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import express, { type Express, type Request, type Response } from "express";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
+import { enqueueWhatsAppCoexistencePayload } from "../integrations/meta/whatsappHistoryWebhook";
 import { enqueueAndProcessMetaEvent, normalizeMetaEvents } from "./metaEvents";
 import type { NormalizedInboundMessage } from "./db";
 
@@ -49,11 +50,12 @@ async function receiveMetaWebhook(req: Request, res: Response) {
   }
   const payloadHash = crypto.createHash("sha256").update(rawBody).digest("hex");
   try {
+    const coexistence = await enqueueWhatsAppCoexistencePayload(payload);
     const results = [];
     for (const event of normalizeMetaEvents(payload)) {
       results.push(await enqueueAndProcessMetaEvent(event, payloadHash));
     }
-    return res.status(200).json({ received: results.length, accepted: results.filter(result => result.accepted).length });
+    return res.status(200).json({ received: results.length + coexistence.handled, accepted: results.filter(result => result.accepted).length + coexistence.queued, coexistence });
   } catch (error) {
     console.error("[MetaWebhook] تعذر حفظ webhook:", error);
     return res.status(500).json({ error: "تعذر حفظ الرسالة الواردة." });

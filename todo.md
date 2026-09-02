@@ -405,9 +405,9 @@
 - [x] Meta-Multistore-Template-V1-A3: استكمال توجيه Webhook متعدد المتاجر واشتراكات الأصول وحالات الصحة دون أي معرف متجر أو أصل ثابت في الشفرة.
 - [x] Meta-History-Sync-V1-A1: إضافة نموذج مهام مزامنة قابل للاستئناف ومصدر الرسالة ومنع التكرار بين backfill وWebhook الحي.
 - [x] Meta-History-Sync-V1-A2: استيراد محادثات ورسائل Messenger وInstagram السابقة المتاحة رسمياً مع pagination وحفظ الرسائل الواردة والصادرة.
-- [ ] Meta-WhatsApp-Coexistence-V1-A1: إضافة مسار Embedded Signup وحالات أهلية مشاركة تاريخ WhatsApp وhistory webhooks دون ادعاء دعم الماضي للربط القياسي.
-- [ ] Meta-History-Sync-V1-A3: إضافة تشغيل خلفي durable وإيقاف واستئناف وإعادة محاولة دون تشغيل البوت أو إشعارات الرسائل التاريخية.
-- [ ] Meta-History-Sync-V1-A4: بناء واجهة تقدم مزامنة القنوات وتغطية التاريخ داخل مركز Meta وInbox على سطح المكتب والهاتف.
-- [ ] Meta-Multistore-Live-V1-A1: اختبار متجرين مستقلين وربط الأصول والرسائل والإبطال دون تعديل الكود أو متغيرات البيئة، ثم حفظ checkpoints مرحلية.
+- [x] Meta-WhatsApp-Coexistence-V1-A1: إضافة مسار Embedded Signup وحالات أهلية مشاركة تاريخ WhatsApp وhistory webhooks دون ادعاء دعم الماضي للربط القياسي.
+- [x] Meta-History-Sync-V1-A3: إضافة تشغيل خلفي durable وإيقاف واستئناف وإعادة محاولة دون تشغيل البوت أو إشعارات الرسائل التاريخية.
+- [x] Meta-History-Sync-V1-A4: بناء واجهة تقدم مزامنة القنوات وتغطية التاريخ داخل مركز Meta وInbox على سطح المكتب والهاتف.
+- [x] Meta-Multistore-Live-V1-A1: اختبار متجرين مستقلين وربط الأصول والرسائل والإبطال دون تعديل الكود أو متغيرات البيئة، ثم حفظ checkpoints مرحلية.
 
 - [x] التحقق من إصلاح Repository issue عبر حفظ checkpoint جديد بطلب المستخدم (466b97f9)

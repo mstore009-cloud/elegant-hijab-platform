@@ -64,6 +64,25 @@ export async function ensureMetaHistorySyncJobs(storeId: number, actorUserId: nu
   return listMetaHistorySyncJobs(storeId);
 }
 
+export async function enableWhatsAppHistorySyncJob(input: { storeId: number; connectionId: number; channelAccountId: number; providerAccountId: string; actorUserId: number; coexistence: boolean }) {
+  const db = await requireDb();
+  const values = {
+    storeId: input.storeId,
+    connectionId: input.connectionId,
+    channelAccountId: input.channelAccountId,
+    channel: "whatsapp" as const,
+    providerAccountId: input.providerAccountId,
+    status: input.coexistence ? "pending" as const : "unsupported" as const,
+    stage: "history_webhook" as const,
+    lastError: input.coexistence ? null : "الرقم مرتبط عبر Cloud API القياسي؛ سجل WhatsApp السابق متاح فقط عند Coexistence وموافقة مشاركة التاريخ.",
+    createdByUserId: input.actorUserId,
+  };
+  await db.insert(metaHistorySyncJobs).values(values).onDuplicateKeyUpdate({ set: values });
+  const [job] = await db.select().from(metaHistorySyncJobs).where(and(eq(metaHistorySyncJobs.storeId, input.storeId), eq(metaHistorySyncJobs.channel, "whatsapp"), eq(metaHistorySyncJobs.providerAccountId, input.providerAccountId))).limit(1);
+  if (!job) throw new Error("تعذر تهيئة مهمة تاريخ WhatsApp.");
+  return job;
+}
+
 export async function listMetaHistorySyncJobs(storeId: number) {
   const db = await requireDb();
   return db.select().from(metaHistorySyncJobs).where(eq(metaHistorySyncJobs.storeId, storeId)).orderBy(asc(metaHistorySyncJobs.channel));

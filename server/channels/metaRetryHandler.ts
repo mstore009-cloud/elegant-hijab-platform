@@ -4,6 +4,7 @@ import { metaWebhookRetrySettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { sdk } from "../_core/sdk";
 import { processDueMetaHistorySyncJobs } from "../integrations/meta/historySync";
+import { processDueWhatsAppHistoryChunks } from "../integrations/meta/whatsappHistoryWebhook";
 import { retryDueMetaEvents } from "./metaEvents";
 
 export async function handleScheduledMetaWebhookRetry(req: Request, res: Response) {
@@ -17,7 +18,8 @@ export async function handleScheduledMetaWebhookRetry(req: Request, res: Respons
     if (!settings.enabled) return res.json({ ok: true, skipped: "disabled" });
     const webhookRetry = await retryDueMetaEvents(30);
     const historySync = await processDueMetaHistorySyncJobs(3);
-    const result = { webhookRetry, historySync };
+    const whatsappHistory = await processDueWhatsAppHistoryChunks(2);
+    const result = { webhookRetry, historySync, whatsappHistory };
     await db.update(metaWebhookRetrySettings).set({ lastRunAt: new Date(), lastResult: JSON.stringify(result).slice(0, 500) }).where(eq(metaWebhookRetrySettings.id, settings.id));
     return res.json({ ok: true, ...result });
   } catch (error) {

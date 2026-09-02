@@ -93,6 +93,19 @@ export async function exchangeMetaCode(code: string) {
   return { accessToken, expiresIn };
 }
 
+export async function exchangeWhatsAppEmbeddedSignupCode(code: string, fetcher: typeof fetch = fetch) {
+  const runtime = await getMetaRuntimeSettings();
+  if (!runtime.appId || !runtime.appSecret) throw new Error("إعداد تطبيق Meta غير مكتمل.");
+  const url = new URL(graphBase("oauth/access_token", runtime.graphApiVersion));
+  url.searchParams.set("client_id", runtime.appId);
+  url.searchParams.set("client_secret", runtime.appSecret);
+  url.searchParams.set("code", code);
+  const token = await readMetaJson(await fetcher(url), "استبدال رمز WhatsApp Embedded Signup");
+  const accessToken = String(token.access_token || "");
+  if (!accessToken) throw new Error("لم تُرجع Meta business token صالحاً لواتساب.");
+  return { accessToken, expiresIn: Number(token.expires_in || 0) };
+}
+
 export async function inspectMetaToken(accessToken: string) {
   const runtime = await getMetaRuntimeSettings();
   if (!runtime.appId || !runtime.appSecret) throw new Error("إعداد تطبيق Meta غير مكتمل.");
@@ -113,7 +126,7 @@ async function graphGet(pathOrUrl: string, accessToken: string, graphApiVersion:
 
 export const messengerPageSubscribedFields = ["messages", "messaging_postbacks", "message_deliveries", "message_reads"] as const;
 export const instagramSubscribedFields = ["messages", "messaging_postbacks", "comments", "mentions"] as const;
-export const whatsappSubscribedFields = ["messages", "message_template_status_update", "phone_number_name_update", "phone_number_quality_update"] as const;
+export const whatsappSubscribedFields = ["messages", "history", "smb_app_state_sync", "smb_message_echoes", "account_update", "message_template_status_update", "phone_number_name_update", "phone_number_quality_update"] as const;
 
 async function ensureMetaAppWebhookSubscription(object: "page" | "instagram" | "whatsapp_business_account", fields: readonly string[], fetcher: typeof fetch = fetch) {
   const runtime = await getMetaRuntimeSettings();
@@ -158,6 +171,35 @@ export async function subscribeWhatsAppBusinessAccount(wabaId: string, accessTok
   const payload = await readMetaJson(response, "اشتراك حساب WhatsApp Business بالتطبيق");
   if (payload?.success !== true) throw new Error("لم تؤكد Meta اشتراك حساب WhatsApp Business بالتطبيق.");
   return { success: true as const };
+}
+
+export async function inspectWhatsAppBusinessPhone(phoneNumberId: string, accessToken: string, fetcher: typeof fetch = fetch) {
+  const runtime = await getMetaRuntimeSettings();
+  const url = new URL(graphBase(encodeURIComponent(phoneNumberId), runtime.graphApiVersion));
+  url.searchParams.set("fields", "id,display_phone_number,verified_name,is_on_biz_app,platform_type");
+  const payload = await readMetaJson(await fetcher(url, { headers: { Authorization: `Bearer ${accessToken}` } }), "فحص رقم WhatsApp Business");
+  return {
+    id: String(payload.id || phoneNumberId),
+    displayPhoneNumber: payload.display_phone_number ? String(payload.display_phone_number) : null,
+    verifiedName: payload.verified_name ? String(payload.verified_name) : null,
+    isOnBizApp: payload.is_on_biz_app === true,
+    platformType: payload.platform_type ? String(payload.platform_type) : null,
+  };
+}
+
+export async function requestWhatsAppSmbData(input: { phoneNumberId: string; accessToken: string; syncType: "history" | "smb_app_state_sync"; fetcher?: typeof fetch }) {
+  const runtime = await getMetaRuntimeSettings();
+  const fetcher = input.fetcher ?? fetch;
+  const url = new URL(graphBase(`${encodeURIComponent(input.phoneNumberId)}/smb_app_data`, runtime.graphApiVersion));
+  const response = await fetcher(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${input.accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", sync_type: input.syncType }),
+  });
+  const payload = await readMetaJson(response, input.syncType === "history" ? "بدء مزامنة تاريخ WhatsApp" : "بدء مزامنة جهات اتصال WhatsApp");
+  const requestId = String(payload.request_id || "");
+  if (!requestId) throw new Error("لم تُرجع Meta رقم طلب مزامنة WhatsApp.");
+  return { requestId };
 }
 
 export async function inspectMessengerPageWebhookSubscription(pageId: string, pageAccessToken: string, fetcher: typeof fetch = fetch) {

@@ -1,4 +1,4 @@
-import { boolean, decimal, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { boolean, decimal, index, int, mediumtext, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 const orderStatuses = ["new", "needs_contact", "confirmed", "preparing", "out_for_delivery", "completed", "cancelled"] as const;
 
@@ -334,6 +334,7 @@ export const metaOAuthStates = mysqlTable(
     userId: int("userId").notNull().references(() => users.id),
     purpose: mysqlEnum("purpose", ["unified", "messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
     authMode: mysqlEnum("authMode", ["owner_direct", "external_business"]).default("external_business").notNull(),
+    flowType: mysqlEnum("flowType", ["meta_unified", "whatsapp_embedded_signup"]).default("meta_unified").notNull(),
     templateVersion: int("templateVersion").default(1).notNull(),
     requestedScopes: text("requestedScopes").notNull(),
     returnTo: varchar("returnTo", { length: 255 }).default("/meta-connections").notNull(),
@@ -567,6 +568,69 @@ export const metaHistorySyncJobs = mysqlTable(
     uniqueIndex("meta_history_store_channel_account_unq").on(table.storeId, table.channel, table.providerAccountId),
     index("meta_history_store_status_retry_idx").on(table.storeId, table.status, table.nextAttemptAt),
     index("meta_history_connection_idx").on(table.connectionId, table.channel),
+  ],
+);
+
+/** Store-scoped WhatsApp Embedded Signup result and Coexistence history state. Business tokens stay encrypted server-side. */
+export const metaWhatsAppOnboardings = mysqlTable(
+  "meta_whatsapp_onboardings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    connectionId: int("connectionId").notNull().references(() => metaConnections.id),
+    wabaId: varchar("wabaId", { length: 255 }).notNull(),
+    phoneNumberId: varchar("phoneNumberId", { length: 255 }).notNull(),
+    displayPhoneNumber: varchar("displayPhoneNumber", { length: 64 }),
+    encryptedBusinessToken: text("encryptedBusinessToken").notNull(),
+    tokenExpiresAt: timestamp("tokenExpiresAt"),
+    onboardingStatus: mysqlEnum("onboardingStatus", ["connected", "history_requested", "history_receiving", "history_completed", "history_declined", "offboarded", "failed"]).default("connected").notNull(),
+    coexistenceMode: mysqlEnum("coexistenceMode", ["unknown", "standard_cloud_api", "coexistence"]).default("unknown").notNull(),
+    historyRequestId: varchar("historyRequestId", { length: 255 }),
+    contactsRequestId: varchar("contactsRequestId", { length: 255 }),
+    historyProgress: int("historyProgress").default(0).notNull(),
+    historyPhase: int("historyPhase"),
+    lastChunkOrder: int("lastChunkOrder"),
+    oldestMessageAt: timestamp("oldestMessageAt"),
+    newestMessageAt: timestamp("newestMessageAt"),
+    onboardingCompletedAt: timestamp("onboardingCompletedAt").defaultNow().notNull(),
+    historySyncDeadlineAt: timestamp("historySyncDeadlineAt").notNull(),
+    lastHistoryWebhookAt: timestamp("lastHistoryWebhookAt"),
+    completedAt: timestamp("completedAt"),
+    lastError: varchar("lastError", { length: 500 }),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_whatsapp_store_phone_unq").on(table.storeId, table.phoneNumberId),
+    uniqueIndex("meta_whatsapp_phone_global_unq").on(table.phoneNumberId),
+    index("meta_whatsapp_store_status_idx").on(table.storeId, table.onboardingStatus),
+    index("meta_whatsapp_waba_idx").on(table.wabaId),
+  ],
+);
+
+/** Temporary durable queue for large WhatsApp history webhooks. Payload is removed after successful processing. */
+export const metaWhatsAppHistoryChunks = mysqlTable(
+  "meta_whatsapp_history_chunks",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    onboardingId: int("onboardingId").notNull().references(() => metaWhatsAppOnboardings.id),
+    phase: int("phase").notNull(),
+    chunkOrder: int("chunkOrder").notNull(),
+    progress: int("progress").default(0).notNull(),
+    payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+    payloadJson: mediumtext("payloadJson"),
+    status: mysqlEnum("status", ["pending", "processing", "retry_pending", "processed", "dead_letter"]).default("pending").notNull(),
+    attemptCount: int("attemptCount").default(0).notNull(),
+    nextAttemptAt: timestamp("nextAttemptAt"),
+    lastError: varchar("lastError", { length: 500 }),
+    receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+    processedAt: timestamp("processedAt"),
+  },
+  table => [
+    uniqueIndex("meta_whatsapp_history_chunk_unq").on(table.onboardingId, table.phase, table.chunkOrder),
+    index("meta_whatsapp_history_store_status_idx").on(table.storeId, table.status, table.nextAttemptAt),
   ],
 );
 
