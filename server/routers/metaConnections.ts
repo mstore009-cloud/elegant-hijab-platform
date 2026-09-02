@@ -8,7 +8,7 @@ import { configureChannelAccount, listChannelAccounts, updateChannelSubscription
 import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
 import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
-import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
+import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, ensureMetaPlatformWebhookSubscriptions, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { enableWhatsAppHistorySyncJob, ensureMetaHistorySyncJobs, listMetaHistorySyncJobs, processDueMetaHistorySyncJobs, processMetaHistorySyncJob, setMetaHistorySyncStatus } from "../integrations/meta/historySync";
 import { listWhatsAppOnboardings, markWhatsAppSyncRequested, upsertWhatsAppOnboarding } from "../integrations/meta/whatsappCoexistence";
@@ -43,6 +43,30 @@ async function ensureSelectedMessengerPageSubscriptions(storeId: number, connect
       await subscribeMessengerPage(page.externalId, pageToken);
     } catch (error) {
       failures.push(`${page.displayName || page.externalId}: ${error instanceof Error ? error.message : "تعذر اشتراك الصفحة"}`);
+    }
+  }
+  return failures;
+}
+
+async function ensureSelectedInstagramSubscriptions(storeId: number, connectionId: number) {
+  const overview = await listMetaConnectionOverview(storeId);
+  const instagramAccounts = overview.assets.filter(asset => asset.connectionId === connectionId && asset.assetType === "instagram" && asset.isSelected);
+  if (!instagramAccounts.length) return [] as string[];
+  const failures: string[] = [];
+  const platform = await ensureMetaPlatformWebhookSubscriptions();
+  const instagramWebhook = platform.find(item => item.object === "instagram");
+  if (!instagramWebhook?.ready) failures.push(`Webhook Instagram: ${instagramWebhook?.error || "اشتراك التطبيق غير جاهز"}`);
+  for (const instagram of instagramAccounts) {
+    const page = overview.assets.find(asset => asset.connectionId === connectionId && asset.assetType === "page" && asset.externalId === instagram.parentExternalId);
+    if (!page) {
+      failures.push(`${instagram.displayName || instagram.externalId}: لا توجد صفحة Facebook مرتبطة.`);
+      continue;
+    }
+    try {
+      const pageToken = await getMetaAssetAccessToken({ storeId, connectionId, assetId: page.id });
+      await subscribeMessengerPage(page.externalId, pageToken);
+    } catch (error) {
+      failures.push(`${instagram.displayName || instagram.externalId}: ${error instanceof Error ? error.message : "تعذر تثبيت التطبيق على الصفحة المرتبطة"}`);
     }
   }
   return failures;
@@ -183,9 +207,19 @@ export const metaConnectionsRouter = router({
     await upsertDiscoveredMetaAssets({ storeId: store.id, connectionId: connection.id, purpose: "unified", assets: discovered.assets });
     await carryLegacyMetaAssetSelections(store.id, connection.id);
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: connection.id, grantedScopes: connection.grantedScopes.split(",").filter(Boolean) });
-    const subscriptionWarnings = [...await ensureSelectedMessengerPageSubscriptions(store.id, connection.id), ...await ensureSelectedWhatsAppSubscriptions(store.id, connection.id)];
-    const selectedPage = (await listMetaConnectionOverview(store.id)).assets.find(asset => asset.connectionId === connection.id && asset.assetType === "page" && asset.isSelected);
+    const messengerWarnings = await ensureSelectedMessengerPageSubscriptions(store.id, connection.id);
+    const instagramWarnings = await ensureSelectedInstagramSubscriptions(store.id, connection.id);
+    const whatsappWarnings = await ensureSelectedWhatsAppSubscriptions(store.id, connection.id);
+    const subscriptionWarnings = [...messengerWarnings, ...instagramWarnings, ...whatsappWarnings];
+    const selectedAssets = (await listMetaConnectionOverview(store.id)).assets.filter(asset => asset.connectionId === connection.id && asset.isSelected);
+    const selectedPage = selectedAssets.find(asset => asset.assetType === "page");
+    const selectedInstagram = selectedAssets.find(asset => asset.assetType === "instagram");
     if (selectedPage) await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "messenger", providerAccountId: selectedPage.externalId, providerDisplayName: selectedPage.displayName, connectionStatus: subscriptionWarnings.length ? "testing" : "connected" });
+    if (selectedInstagram) {
+      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "instagram", providerAccountId: selectedInstagram.externalId, providerDisplayName: selectedInstagram.displayName, connectionStatus: instagramWarnings.length ? "testing" : "connected" });
+      await updateChannelSubscriptionHealth({ storeId: store.id, channel: "instagram", appSubscriptionStatus: instagramWarnings.length ? "error" : "ready", assetSubscriptionStatus: instagramWarnings.length ? "error" : "ready", error: instagramWarnings.join(" | ") || null });
+    }
+    await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
     const warnings = [...discovered.failures, ...subscriptionWarnings];
     await markMetaConnectionVerified(
       connection.id,
@@ -218,17 +252,35 @@ export const metaConnectionsRouter = router({
       throw new TRPCError({ code: "BAD_GATEWAY", message });
     }
   }),
+  repairInstagramReception: protectedProcedure.mutation(async ({ ctx }) => {
+    const store = await requireStore(ctx);
+    const connection = await getMetaConnection(store.id, "unified");
+    if (!connection || connection.status !== "connected") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "اربط Meta أولاً قبل إصلاح Instagram." });
+    const overview = await listMetaConnectionOverview(store.id);
+    const instagram = overview.assets.find(asset => asset.connectionId === connection.id && asset.assetType === "instagram" && asset.isSelected);
+    if (!instagram) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "اختر حساب Instagram أولاً." });
+    await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "instagram", providerAccountId: instagram.externalId, providerDisplayName: instagram.displayName, connectionStatus: "testing" });
+    const failures = await ensureSelectedInstagramSubscriptions(store.id, connection.id);
+    const error = failures.join(" | ") || null;
+    await updateChannelSubscriptionHealth({ storeId: store.id, channel: "instagram", appSubscriptionStatus: failures.length ? "error" : "ready", assetSubscriptionStatus: failures.length ? "error" : "ready", error });
+    await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "instagram", providerAccountId: instagram.externalId, providerDisplayName: instagram.displayName, connectionStatus: failures.length ? "testing" : "connected" });
+    if (!failures.length) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "channel_account", entityId: `instagram:${instagram.externalId}`, action: "meta.instagram_reception_repaired", summary: error || "تم التحقق من اشتراك تطبيق Meta وصفحة Instagram المرتبطة بنجاح." });
+    if (failures.length) throw new TRPCError({ code: "BAD_GATEWAY", message: error || "تعذر إصلاح استقبال Instagram." });
+    return { appReady: true, assetReady: true };
+  }),
   setAssetSelection: protectedProcedure.input(z.object({ connectionId: z.number().int().positive(), assetId: z.number().int().positive(), selected: z.boolean() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
     const asset = await setMetaAssetSelection({ storeId: store.id, ...input });
-    const subscriptionWarnings = input.selected && asset.assetType === "page" ? await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId) : input.selected && ["whatsapp_business", "whatsapp_phone"].includes(asset.assetType) ? await ensureSelectedWhatsAppSubscriptions(store.id, input.connectionId) : [];
+    const subscriptionWarnings = input.selected && asset.assetType === "page" ? await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId) : input.selected && asset.assetType === "instagram" ? await ensureSelectedInstagramSubscriptions(store.id, input.connectionId) : input.selected && ["whatsapp_business", "whatsapp_phone"].includes(asset.assetType) ? await ensureSelectedWhatsAppSubscriptions(store.id, input.connectionId) : [];
     const channel = asset.connectionPurpose === "unified" || asset.connectionPurpose === "messaging" ? (asset.assetType === "whatsapp_phone" ? "whatsapp" : asset.assetType === "instagram" ? "instagram" : asset.assetType === "page" ? "messenger" : null) : null;
     if (channel) {
       const latest = await listMetaConnectionOverview(store.id);
       const compatibleType = channel === "whatsapp" ? "whatsapp_phone" : channel === "instagram" ? "instagram" : "page";
       const fallback = latest.assets.find(item => item.connectionId === input.connectionId && item.assetType === compatibleType && item.isSelected);
       const active = input.selected ? asset : fallback;
-      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? (channel === "messenger" && !subscriptionWarnings.length ? "connected" : "testing") : "disabled" });
+      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? (["messenger", "instagram"].includes(channel) && !subscriptionWarnings.length ? "connected" : "testing") : "disabled" });
+      if (input.selected && ["messenger", "instagram"].includes(channel)) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
     }
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: input.connectionId, grantedScopes: asset.grantedScopes.split(",").filter(Boolean) });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_asset", entityId: asset.id, action: input.selected ? "meta.asset_enabled" : "meta.asset_disabled", summary: `${input.selected ? "تم تفعيل" : "تم استبعاد"} أصل Meta من نوع ${asset.assetType} داخل المتجر.` });
@@ -244,12 +296,17 @@ export const metaConnectionsRouter = router({
     }
     const latest = await listMetaConnectionOverview(store.id);
     const selected = latest.assets.filter(asset => asset.connectionId === input.connectionId && asset.isSelected);
-    const subscriptionWarnings = [...await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId), ...await ensureSelectedWhatsAppSubscriptions(store.id, input.connectionId)];
+    const messengerWarnings = await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId);
+    const instagramWarnings = await ensureSelectedInstagramSubscriptions(store.id, input.connectionId);
+    const whatsappWarnings = await ensureSelectedWhatsAppSubscriptions(store.id, input.connectionId);
+    const subscriptionWarnings = [...messengerWarnings, ...instagramWarnings, ...whatsappWarnings];
     const channelTypes = [{ channel: "whatsapp" as const, assetType: "whatsapp_phone" as const }, { channel: "instagram" as const, assetType: "instagram" as const }, { channel: "messenger" as const, assetType: "page" as const }];
     for (const item of channelTypes) {
       const active = selected.find(asset => asset.assetType === item.assetType);
-      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: item.channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? (item.channel === "messenger" && !subscriptionWarnings.length ? "connected" : "testing") : "disabled" });
+      const channelWarnings = item.channel === "messenger" ? messengerWarnings : item.channel === "instagram" ? instagramWarnings : whatsappWarnings;
+      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: item.channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? (["messenger", "instagram"].includes(item.channel) && !channelWarnings.length ? "connected" : "testing") : "disabled" });
     }
+    if (input.selected && selected.some(asset => ["page", "instagram"].includes(asset.assetType))) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: input.connectionId, grantedScopes: grantedScopes.split(",").filter(Boolean) });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_assets", entityId: String(input.connectionId), action: input.selected ? "meta.assets_bulk_enabled" : "meta.assets_bulk_disabled", summary: `${input.selected ? "تم تفعيل" : "تم استبعاد"} ${uniqueAssetIds.length} من أصول Meta دفعة واحدة.` });
     return { updated: uniqueAssetIds.length, selected: input.selected, subscriptionWarnings };

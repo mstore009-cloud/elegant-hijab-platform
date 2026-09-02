@@ -20,7 +20,7 @@ async function graphGet(path: string, token: string, params: Record<string, stri
   const url = new URL(path.startsWith("https://") ? path : `https://graph.facebook.com/${runtime.graphApiVersion}/${path.replace(/^\//, "")}`);
   if (url.hostname !== "graph.facebook.com") throw new Error("رفض رابط pagination غير موثوق من Meta.");
   for (const [key, value] of Object.entries(params)) if (value) url.searchParams.set(key, value);
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000) });
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(35_000) });
   const payload = await response.json().catch(() => null) as any;
   if (!response.ok || payload?.error) throw new Error(compact(payload?.error?.message || response.statusText || "تعذر قراءة سجل Meta", 500));
   return payload;
@@ -108,7 +108,7 @@ export async function processMetaHistorySyncJob(jobId: number) {
   const cursor = parseCursor(job.cursor);
   await db.update(metaHistorySyncJobs).set({ status: "running", lastRunAt: new Date(), lastError: null }).where(eq(metaHistorySyncJobs.id, job.id));
   try {
-    const conversations = await graphGet(`${credential.graphAccountId}/conversations`, credential.token, { platform: channel, fields: "id,updated_time,participants", limit: "25", after: cursor.conversationsAfter || "" });
+    const conversations = await graphGet(`${credential.graphAccountId}/conversations`, credential.token, { platform: channel, fields: "id,updated_time,participants", limit: channel === "instagram" ? "10" : "25", after: cursor.conversationsAfter || "" });
     const rows = Array.isArray(conversations?.data) ? conversations.data : [];
     const index = Math.max(0, Math.min(cursor.conversationIndex || 0, rows.length));
     const conversation = rows[index];
@@ -124,7 +124,7 @@ export async function processMetaHistorySyncJob(jobId: number) {
     const participants = Array.isArray(conversation?.participants?.data) ? conversation.participants.data : [];
     const customer = participants.find((item: any) => compact(item?.id) && compact(item?.id) !== job.providerAccountId) || participants[0] || {};
     const customerId = compact(customer?.id) || compact(conversation?.id);
-    const messages = await graphGet(`${compact(conversation?.id)}/messages`, credential.token, { fields: "id,message,created_time,from,to,attachments", limit: "50", after: cursor.messagesAfter || "" });
+    const messages = await graphGet(`${compact(conversation?.id)}/messages`, credential.token, { fields: "id,message,created_time,from,to,attachments", limit: channel === "instagram" ? "25" : "50", after: cursor.messagesAfter || "" });
     let imported = 0; let duplicates = 0; let oldest: Date | null = job.oldestMessageAt; let newest: Date | null = job.newestMessageAt;
     for (const message of Array.isArray(messages?.data) ? messages.data : []) {
       const result = await importHistoryMessage({ storeId: job.storeId, channel, providerAccountId: job.providerAccountId, businessAccountId: job.providerAccountId, customerId, customerName: compact(customer?.name, 160) || null, message });
@@ -145,7 +145,14 @@ export async function processMetaHistorySyncJob(jobId: number) {
 export async function processDueMetaHistorySyncJobs(limit = 3) {
   const db = await requireDb(); const now = new Date();
   const jobs = await db.select({ id: metaHistorySyncJobs.id }).from(metaHistorySyncJobs).where(or(eq(metaHistorySyncJobs.status, "pending"), and(eq(metaHistorySyncJobs.status, "retry_pending"), or(isNull(metaHistorySyncJobs.nextAttemptAt), lte(metaHistorySyncJobs.nextAttemptAt, now))))).orderBy(asc(metaHistorySyncJobs.updatedAt)).limit(Math.max(1, Math.min(limit, 10)));
-  const results = []; for (const job of jobs) results.push(await processMetaHistorySyncJob(job.id));
+  const results = []; const startedAt = Date.now();
+  for (const job of jobs) {
+    for (let step = 0; step < 4 && Date.now() - startedAt < 95_000; step += 1) {
+      const result = await processMetaHistorySyncJob(job.id);
+      results.push(result);
+      if (!result.processed || result.completed) break;
+    }
+  }
   return { attempted: jobs.length, processed: results.filter(item => item.processed).length };
 }
 

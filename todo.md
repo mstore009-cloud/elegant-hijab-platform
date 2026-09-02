@@ -411,5 +411,8 @@
 - [x] Meta-Multistore-Live-V1-A1: اختبار متجرين مستقلين وربط الأصول والرسائل والإبطال دون تعديل الكود أو متغيرات البيئة، ثم حفظ checkpoints مرحلية.
 - [x] Meta-Inbox-Sync-Visibility-V1-A1: إظهار حالة مزامنة Meta دائماً داخل Inbox حتى قبل إنشاء المهام، مع رابط واضح لبدء المزامنة من مركز Meta.
 - [x] Meta-History-Sync-Insert-Bug-V1-A1: إصلاح فشل إدراج مهمة Messenger في meta_history_sync_jobs والتحقق من زر بدء المزامنة الحي دون عرض خطأ قاعدة بيانات خام.
+- [ ] Meta-History-Completeness-V1-A1: إصلاح نقص رسائل Messenger وغياب سجل Instagram عبر pagination كاملة وحالات تقدم قابلة للتحقق.
+- [ ] Meta-Live-Realtime-V1-A1: إصلاح وصول رسائل Messenger وInstagram الجديدة فوراً عبر Webhook دون تشغيل مزامنة يدوية.
+- [ ] Meta-Auto-Initial-Sync-V1-A1: إنشاء وتشغيل المزامنة التاريخية مرة واحدة تلقائياً بعد نجاح الربط واختيار أصول الرسائل.
 
 - [x] التحقق من إصلاح Repository issue عبر حفظ checkpoint جديد بطلب المستخدم (466b97f9)

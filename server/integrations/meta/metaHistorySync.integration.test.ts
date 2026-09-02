@@ -101,4 +101,38 @@ describe("Meta history sync", () => {
     const [message] = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversation.id));
     expect(message).toMatchObject({ direction: "inbound", source: "historical_sync", body: "هل اللون متوفر؟" });
   });
+
+  it("يتابع cursors المحادثات والرسائل حتى تكتمل كل صفحات Messenger", async () => {
+    const db = await getDb(); if (!db) throw new Error("database unavailable");
+    const suffix = randomUUID();
+    const userResult = await db.insert(users).values({ openId: `paged-history-${suffix}`, name: "مالك pagination", email: `paged-${suffix}@example.test`, role: "admin" });
+    const userId = Number(userResult[0].insertId);
+    const storeResult = await db.insert(stores).values({ ownerUserId: userId, name: `متجر pagination ${suffix}`, slug: `paged-${suffix}` });
+    const storeId = Number(storeResult[0].insertId); cleanups.push({ storeId, userId });
+    const pageId = `page-${suffix}`;
+    const connectionResult = await db.insert(metaConnections).values({ storeId, purpose: "unified", authMode: "external_business", templateVersion: 1, status: "connected", encryptedAccessToken: encryptMetaToken("user-token", metaConnectionTokenContext(storeId, "unified")), grantedScopes: "pages_messaging,pages_manage_metadata,pages_read_engagement", connectedByUserId: userId });
+    const connectionId = Number(connectionResult[0].insertId);
+    await db.insert(metaAssets).values({ storeId, connectionId, assetType: "page", externalId: pageId, displayName: "صفحة pagination", encryptedAccessToken: encryptMetaToken("page-token", metaAssetTokenContext(storeId, pageId)), isSelected: true });
+    await db.insert(channelAccounts).values({ storeId, channel: "messenger", providerAccountId: pageId, providerDisplayName: "صفحة pagination", connectionStatus: "connected", createdByUserId: userId });
+    vi.stubGlobal("fetch", vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input)); const after = url.searchParams.get("after");
+      if (url.pathname.endsWith(`/${pageId}/conversations`) && after === "conv-page-2") return new Response(JSON.stringify({ data: [{ id: `thread-b-${suffix}`, participants: { data: [{ id: pageId }, { id: `customer-b-${suffix}` }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.pathname.endsWith(`/${pageId}/conversations`)) return new Response(JSON.stringify({ data: [{ id: `thread-a-${suffix}`, participants: { data: [{ id: pageId }, { id: `customer-a-${suffix}` }] } }], paging: { cursors: { after: "conv-page-2" } } }), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.pathname.endsWith(`/thread-a-${suffix}/messages`) && after === "message-page-2") return new Response(JSON.stringify({ data: [{ id: `mid-a2-${suffix}`, message: "الثانية", created_time: "2026-08-03T10:01:00+0000", from: { id: pageId } }] }), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.pathname.endsWith(`/thread-a-${suffix}/messages`)) return new Response(JSON.stringify({ data: [{ id: `mid-a1-${suffix}`, message: "الأولى", created_time: "2026-08-03T10:00:00+0000", from: { id: `customer-a-${suffix}` } }], paging: { cursors: { after: "message-page-2" } } }), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.pathname.endsWith(`/thread-b-${suffix}/messages`)) return new Response(JSON.stringify({ data: [{ id: `mid-b1-${suffix}`, message: "الثالثة", created_time: "2026-08-03T10:02:00+0000", from: { id: `customer-b-${suffix}` } }] }), { status: 200, headers: { "content-type": "application/json" } });
+      throw new Error(`unexpected graph call ${url.pathname}`);
+    }));
+    const [job] = await ensureMetaHistorySyncJobs(storeId, userId);
+    for (let step = 0; step < 6; step += 1) {
+      const result = await processMetaHistorySyncJob(job.id);
+      if (result.processed && result.completed) break;
+    }
+    const [completed] = await db.select().from(metaHistorySyncJobs).where(eq(metaHistorySyncJobs.id, job.id));
+    expect(completed).toMatchObject({ status: "completed", processedConversations: 2, processedMessages: 3 });
+    const conversations = await db.select({ id: inboxConversations.id }).from(inboxConversations).where(eq(inboxConversations.storeId, storeId));
+    const messages = await db.select().from(inboxMessages).where(inArray(inboxMessages.conversationId, conversations.map(row => row.id)));
+    expect(conversations).toHaveLength(2);
+    expect(messages).toHaveLength(3);
+  });
 });
