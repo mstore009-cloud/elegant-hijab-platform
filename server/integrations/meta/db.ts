@@ -118,6 +118,13 @@ export async function listMetaConnectionOverview(storeId: number) {
   return { connections, assets, capabilities };
 }
 
+export async function getMetaAssetAccessToken(input: { storeId: number; connectionId: number; assetId: number }) {
+  const db = await requireDb();
+  const [asset] = await db.select({ externalId: metaAssets.externalId, encryptedAccessToken: metaAssets.encryptedAccessToken }).from(metaAssets).where(and(eq(metaAssets.id, input.assetId), eq(metaAssets.storeId, input.storeId), eq(metaAssets.connectionId, input.connectionId))).limit(1);
+  if (!asset?.encryptedAccessToken) throw new Error("لا يوجد Page Access Token صالح لهذا الأصل. أعد تفويض Meta.");
+  return decryptMetaToken(asset.encryptedAccessToken, metaAssetTokenContext(input.storeId, asset.externalId));
+}
+
 export async function upsertDiscoveredMetaAssets(input: { storeId: number; connectionId: number; purpose: MetaConnectionPurpose; assets: Array<{ assetType: MetaAssetType; externalId: string; displayName?: string | null; parentExternalId?: string | null; metadata?: Record<string, unknown> | null; accessToken?: string | null }> }) {
   const db = await requireDb();
   for (const asset of input.assets) {

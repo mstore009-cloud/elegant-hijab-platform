@@ -399,5 +399,6 @@
 - [x] Meta-Owner-Direct-V1-A7: تشغيل TypeScript وVitest والبناء والمراجعة البصرية وحفظ checkpoint مرشح لاختبار Owner Direct الحي.
 - [ ] Meta-Owner-Direct-V1-A8: تنفيذ اختبار القبول الحي بحساب مدير المحفظة والتأكد من ظهور الصفحة دون شاشة المحفظة المالكة المعطلة، ثم اختبار Messenger وWebhook.
 - [x] Meta-Owner-Direct-V1-A9: إبقاء الاتصال Owner Direct بحالة connected عند نجاح الصفحة والقدرات مع عرض أخطاء WhatsApp أو Catalog الاختيارية كتحذيرات لا كفشل كامل.
+- [ ] Meta-Messenger-Live-V1-A1: تشخيص وإصلاح عدم وصول رسالة Messenger الحية إلى Inbox بعد نجاح Owner Direct، مع التحقق من اشتراك الصفحة وWebhook والتوجيه ومنع التكرار.
 
 - [x] التحقق من إصلاح Repository issue عبر حفظ checkpoint جديد بطلب المستخدم (466b97f9)

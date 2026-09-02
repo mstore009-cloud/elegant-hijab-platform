@@ -5,7 +5,7 @@ import { channelAccounts, metaAssets, metaConnectionCapabilities, metaConnection
 import { getDb } from "../../db";
 import { configureChannelAccount } from "../../channels/db";
 import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
-import { buildMetaAuthorizationUrl, metaScopesByPurpose, unifiedMetaScopes } from "./oauth";
+import { buildMetaAuthorizationUrl, messengerPageSubscribedFields, metaScopesByPurpose, subscribeMessengerPage, unifiedMetaScopes } from "./oauth";
 import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext, metaPlatformSecretContext } from "./tokenCipher";
 import { loadMetaCredential } from "../../channels/metaOutbound";
 
@@ -186,5 +186,20 @@ describe("Meta Connection Center", () => {
     await markMetaConnectionVerified(connection.id, "WhatsApp: Requires business_management permission", { fatal: false });
     const [stored] = await db.select().from(metaConnections).where(eq(metaConnections.id, connection.id));
     expect(stored).toMatchObject({ status: "connected", lastError: "WhatsApp: Requires business_management permission" });
+  });
+
+  it("يشترك في Webhook Messenger باستخدام Page Token والحقول المطلوبة", async () => {
+    const calls: Array<{ url: URL; init?: RequestInit }> = [];
+    const result = await subscribeMessengerPage("page-live-test", "page-token-private", async (input, init) => {
+      calls.push({ url: new URL(String(input)), init });
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    expect(result).toEqual({ success: true, fields: [...messengerPageSubscribedFields] });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url.pathname).toContain("/page-live-test/subscribed_apps");
+    expect(calls[0].init?.method).toBe("POST");
+    expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe("Bearer page-token-private");
+    expect(String(calls[0].init?.body)).toContain("messages");
+    expect(calls[0].url.toString()).not.toContain("page-token-private");
   });
 });

@@ -7,9 +7,9 @@ import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { configureChannelAccount } from "../channels/db";
 import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
-import { carryLegacyMetaAssetSelections, createMetaOAuthState, disconnectMetaConnection, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
+import { carryLegacyMetaAssetSelections, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
-import { createMetaAuthorizationUrl, discoverMetaAssets, inspectMetaToken, metaConfigurationId, metaScopesByPurpose, unifiedMetaScopes } from "../integrations/meta/oauth";
+import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, inspectMetaToken, metaConfigurationId, metaScopesByPurpose, subscribeMessengerPage, unifiedMetaScopes } from "../integrations/meta/oauth";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 
 const purposeSchema = z.enum(metaPurposes);
@@ -18,6 +18,28 @@ async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { i
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
   await assertPermission(ctx.user, "settings.manage", ctx.operationalStore.id);
   return ctx.operationalStore;
+}
+
+async function ensureSelectedMessengerPageSubscriptions(storeId: number, connectionId: number) {
+  const overview = await listMetaConnectionOverview(storeId);
+  const pages = overview.assets.filter(asset => asset.connectionId === connectionId && asset.assetType === "page" && asset.isSelected);
+  if (!pages.length) return [] as string[];
+  const failures: string[] = [];
+  try {
+    await ensureMetaPageWebhookSubscription();
+  } catch (error) {
+    failures.push(`Webhook التطبيق: ${error instanceof Error ? error.message : "تعذر الاشتراك"}`);
+    return failures;
+  }
+  for (const page of pages) {
+    try {
+      const pageToken = await getMetaAssetAccessToken({ storeId, connectionId, assetId: page.id });
+      await subscribeMessengerPage(page.externalId, pageToken);
+    } catch (error) {
+      failures.push(`${page.displayName || page.externalId}: ${error instanceof Error ? error.message : "تعذر اشتراك الصفحة"}`);
+    }
+  }
+  return failures;
 }
 
 export const metaConnectionsRouter = router({
@@ -79,27 +101,32 @@ export const metaConnectionsRouter = router({
     await upsertDiscoveredMetaAssets({ storeId: store.id, connectionId: connection.id, purpose: "unified", assets: discovered.assets });
     await carryLegacyMetaAssetSelections(store.id, connection.id);
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: connection.id, grantedScopes: connection.grantedScopes.split(",").filter(Boolean) });
+    const subscriptionWarnings = await ensureSelectedMessengerPageSubscriptions(store.id, connection.id);
+    const selectedPage = (await listMetaConnectionOverview(store.id)).assets.find(asset => asset.connectionId === connection.id && asset.assetType === "page" && asset.isSelected);
+    if (selectedPage) await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "messenger", providerAccountId: selectedPage.externalId, providerDisplayName: selectedPage.displayName, connectionStatus: subscriptionWarnings.length ? "testing" : "connected" });
+    const warnings = [...discovered.failures, ...subscriptionWarnings];
     await markMetaConnectionVerified(
       connection.id,
-      discovered.failures.length ? discovered.failures.join(" | ").slice(0, 500) : null,
+      warnings.length ? warnings.join(" | ").slice(0, 500) : null,
       { fatal: false },
     );
-    return { discovered: discovered.assets.length, warnings: discovered.failures };
+    return { discovered: discovered.assets.length, warnings };
   }),
   setAssetSelection: protectedProcedure.input(z.object({ connectionId: z.number().int().positive(), assetId: z.number().int().positive(), selected: z.boolean() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
     const asset = await setMetaAssetSelection({ storeId: store.id, ...input });
+    const subscriptionWarnings = input.selected && asset.assetType === "page" ? await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId) : [];
     const channel = asset.connectionPurpose === "unified" || asset.connectionPurpose === "messaging" ? (asset.assetType === "whatsapp_phone" ? "whatsapp" : asset.assetType === "instagram" ? "instagram" : asset.assetType === "page" ? "messenger" : null) : null;
     if (channel) {
       const latest = await listMetaConnectionOverview(store.id);
       const compatibleType = channel === "whatsapp" ? "whatsapp_phone" : channel === "instagram" ? "instagram" : "page";
       const fallback = latest.assets.find(item => item.connectionId === input.connectionId && item.assetType === compatibleType && item.isSelected);
       const active = input.selected ? asset : fallback;
-      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? "testing" : "disabled" });
+      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? (channel === "messenger" && !subscriptionWarnings.length ? "connected" : "testing") : "disabled" });
     }
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: input.connectionId, grantedScopes: asset.grantedScopes.split(",").filter(Boolean) });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_asset", entityId: asset.id, action: input.selected ? "meta.asset_enabled" : "meta.asset_disabled", summary: `${input.selected ? "تم تفعيل" : "تم استبعاد"} أصل Meta من نوع ${asset.assetType} داخل المتجر.` });
-    return { ...asset, channel };
+    return { ...asset, channel, subscriptionWarnings };
   }),
   setAssetSelections: protectedProcedure.input(z.object({ connectionId: z.number().int().positive(), assetIds: z.array(z.number().int().positive()).min(1).max(100), selected: z.boolean() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
@@ -111,14 +138,15 @@ export const metaConnectionsRouter = router({
     }
     const latest = await listMetaConnectionOverview(store.id);
     const selected = latest.assets.filter(asset => asset.connectionId === input.connectionId && asset.isSelected);
+    const subscriptionWarnings = await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId);
     const channelTypes = [{ channel: "whatsapp" as const, assetType: "whatsapp_phone" as const }, { channel: "instagram" as const, assetType: "instagram" as const }, { channel: "messenger" as const, assetType: "page" as const }];
     for (const item of channelTypes) {
       const active = selected.find(asset => asset.assetType === item.assetType);
-      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: item.channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? "testing" : "disabled" });
+      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: item.channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? (item.channel === "messenger" && !subscriptionWarnings.length ? "connected" : "testing") : "disabled" });
     }
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: input.connectionId, grantedScopes: grantedScopes.split(",").filter(Boolean) });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_assets", entityId: String(input.connectionId), action: input.selected ? "meta.assets_bulk_enabled" : "meta.assets_bulk_disabled", summary: `${input.selected ? "تم تفعيل" : "تم استبعاد"} ${uniqueAssetIds.length} من أصول Meta دفعة واحدة.` });
-    return { updated: uniqueAssetIds.length, selected: input.selected };
+    return { updated: uniqueAssetIds.length, selected: input.selected, subscriptionWarnings };
   }),
   setCapabilityEnabled: protectedProcedure.input(z.object({ connectionId: z.number().int().positive(), purpose: purposeSchema, enabled: z.boolean() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);

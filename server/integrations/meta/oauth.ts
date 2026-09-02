@@ -113,6 +113,30 @@ async function graphGet(pathOrUrl: string, accessToken: string, graphApiVersion:
   return readMetaJson(response, "قراءة أصل Meta");
 }
 
+export const messengerPageSubscribedFields = ["messages", "messaging_postbacks", "message_deliveries", "message_reads"] as const;
+
+export async function ensureMetaPageWebhookSubscription(fetcher: typeof fetch = fetch) {
+  const runtime = await getMetaRuntimeSettings();
+  if (!runtime.appId || !runtime.appSecret || !runtime.webhookVerifyToken || !ENV.metaRedirectUri) throw new Error("إعداد Webhook لتطبيق Meta غير مكتمل.");
+  const callbackUrl = new URL("/api/webhooks/meta", new URL(ENV.metaRedirectUri).origin).toString();
+  const url = new URL(graphBase(`${runtime.appId}/subscriptions`, runtime.graphApiVersion));
+  const body = new URLSearchParams({ object: "page", callback_url: callbackUrl, fields: messengerPageSubscribedFields.join(","), verify_token: runtime.webhookVerifyToken, include_values: "true" });
+  const response = await fetcher(url, { method: "POST", headers: { Authorization: `Bearer ${runtime.appId}|${runtime.appSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body });
+  const payload = await readMetaJson(response, "اشتراك تطبيق Meta في Webhook الصفحة");
+  if (payload?.success !== true) throw new Error("لم تؤكد Meta اشتراك التطبيق في Webhook الصفحة.");
+  return { success: true as const, callbackUrl, fields: [...messengerPageSubscribedFields] };
+}
+
+export async function subscribeMessengerPage(pageId: string, pageAccessToken: string, fetcher: typeof fetch = fetch) {
+  const runtime = await getMetaRuntimeSettings();
+  const url = new URL(graphBase(`${encodeURIComponent(pageId)}/subscribed_apps`, runtime.graphApiVersion));
+  const body = new URLSearchParams({ subscribed_fields: messengerPageSubscribedFields.join(",") });
+  const response = await fetcher(url, { method: "POST", headers: { Authorization: `Bearer ${pageAccessToken}`, "Content-Type": "application/x-www-form-urlencoded" }, body });
+  const payload = await readMetaJson(response, "اشتراك صفحة Messenger بالتطبيق");
+  if (payload?.success !== true) throw new Error("لم تؤكد Meta اشتراك صفحة Messenger بالتطبيق.");
+  return { success: true as const, fields: [...messengerPageSubscribedFields] };
+}
+
 async function graphList(path: string, accessToken: string, fields: string, graphApiVersion: string) {
   const first = new URL(graphBase(path, graphApiVersion));
   first.searchParams.set("fields", fields);
