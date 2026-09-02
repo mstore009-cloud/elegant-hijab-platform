@@ -20,6 +20,7 @@ import { employeeBotRouter } from "./routers/employeeBot";
 import { financialsRouter } from "./routers/financials";
 import { channelsRouter } from "./routers/channels";
 import { metaConnectionsRouter } from "./routers/metaConnections";
+import { metaPlatformSettingsRouter } from "./routers/metaPlatformSettings";
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -52,6 +53,7 @@ export const appRouter = router({
   financials: financialsRouter,
   channels: channelsRouter,
   metaConnections: metaConnectionsRouter,
+  metaPlatformSettings: metaPlatformSettingsRouter,
 
 });
 

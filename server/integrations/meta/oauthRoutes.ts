@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { consumeMetaOAuthState, markMetaConnectionVerified, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
+import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, markMetaConnectionVerified, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
 import { discoverMetaAssets, exchangeMetaCode, getMetaProfile, inspectMetaToken, metaConfigurationId } from "./oauth";
 
 export function registerMetaOAuthRoutes(app: Express) {
@@ -23,15 +23,19 @@ export function registerMetaOAuthRoutes(app: Express) {
         grantedScopes: inspection.scopes,
         metaUserId: inspection.userId ?? profile.id,
         metaUserName: profile.name,
-        configurationId: metaConfigurationId(oauthState.purpose),
+        configurationId: await metaConfigurationId(oauthState.purpose),
         connectedByUserId: oauthState.userId,
       });
       connectionId = connection.id;
       const discovered = await discoverMetaAssets(exchanged.accessToken, oauthState.purpose);
       await upsertDiscoveredMetaAssets({ storeId: oauthState.storeId, connectionId: connection.id, purpose: oauthState.purpose, assets: discovered.assets });
+      if (oauthState.purpose === "unified") {
+        await carryLegacyMetaAssetSelections(oauthState.storeId, connection.id);
+        await syncMetaConnectionCapabilities({ storeId: oauthState.storeId, connectionId: connection.id, grantedScopes: inspection.scopes });
+      }
       await markMetaConnectionVerified(connection.id, discovered.failures.length ? discovered.failures.join(" | ").slice(0, 500) : null);
       const result = discovered.failures.length ? "partial" : "connected";
-      return res.redirect(`/meta-connections?meta=${result}&purpose=${encodeURIComponent(oauthState.purpose)}`);
+      return res.redirect(`/meta-connections?meta=${result}${oauthState.purpose === "unified" ? "&flow=unified" : `&purpose=${encodeURIComponent(oauthState.purpose)}`}`);
     } catch (error) {
       if (connectionId) await markMetaConnectionVerified(connectionId, error instanceof Error ? error.message : "فشل اتصال Meta.").catch(() => undefined);
       console.error("[Meta OAuth] Callback failed", error instanceof Error ? error.message : "unknown error");

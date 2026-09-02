@@ -30,3 +30,7 @@ export function metaConnectionTokenContext(storeId: number, purpose: string) {
 export function metaAssetTokenContext(storeId: number, externalId: string) {
   return `meta-asset:${storeId}:${externalId}`;
 }
+
+export function metaPlatformSecretContext(field: "app-secret" | "webhook-verify-token") {
+  return `meta-platform:${field}`;
+}

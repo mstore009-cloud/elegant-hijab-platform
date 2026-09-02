@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import express, { type Express, type Request, type Response } from "express";
-import { ENV } from "../_core/env";
+import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { enqueueAndProcessMetaEvent, normalizeMetaEvents } from "./metaEvents";
 import type { NormalizedInboundMessage } from "./db";
 
@@ -36,10 +36,11 @@ export function normalizeMetaWebhook(payload: any): NormalizedInboundMessage[] {
 }
 
 async function receiveMetaWebhook(req: Request, res: Response) {
-  if (!ENV.metaAppSecret) return res.status(503).json({ error: "قناة Meta غير مهيأة بعد." });
+  const runtime = await getMetaRuntimeSettings();
+  if (!runtime.appSecret) return res.status(503).json({ error: "قناة Meta غير مهيأة بعد." });
   const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
   const signature = typeof req.headers["x-hub-signature-256"] === "string" ? req.headers["x-hub-signature-256"] : undefined;
-  if (!isValidMetaSignature(rawBody, signature, ENV.metaAppSecret)) return res.status(401).json({ error: "توقيع webhook غير صالح." });
+  if (!isValidMetaSignature(rawBody, signature, runtime.appSecret)) return res.status(401).json({ error: "توقيع webhook غير صالح." });
   let payload: any;
   try {
     payload = JSON.parse(rawBody.toString("utf8"));
@@ -60,9 +61,10 @@ async function receiveMetaWebhook(req: Request, res: Response) {
 }
 
 export function registerMetaWebhookRoutes(app: Express) {
-  app.get("/api/webhooks/meta", (req, res) => {
+  app.get("/api/webhooks/meta", async (req, res) => {
+    const runtime = await getMetaRuntimeSettings();
     const query = req.query as Record<string, unknown>;
-    if (!isValidMetaChallenge({ mode: query["hub.mode"], challenge: query["hub.challenge"], verifyToken: query["hub.verify_token"] }, ENV.metaWebhookVerifyToken)) {
+    if (!isValidMetaChallenge({ mode: query["hub.mode"], challenge: query["hub.challenge"], verifyToken: query["hub.verify_token"] }, runtime.webhookVerifyToken)) {
       return res.status(403).send("Forbidden");
     }
     return res.status(200).type("text/plain").send(String(query["hub.challenge"]));

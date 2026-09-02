@@ -331,7 +331,7 @@ export const metaOAuthStates = mysqlTable(
     state: varchar("state", { length: 160 }).notNull().unique(),
     storeId: int("storeId").notNull().references(() => stores.id),
     userId: int("userId").notNull().references(() => users.id),
-    purpose: mysqlEnum("purpose", ["messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
+    purpose: mysqlEnum("purpose", ["unified", "messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
     requestedScopes: text("requestedScopes").notNull(),
     returnTo: varchar("returnTo", { length: 255 }).default("/meta-connections").notNull(),
     expiresAt: timestamp("expiresAt").notNull(),
@@ -350,7 +350,7 @@ export const metaConnections = mysqlTable(
   {
     id: int("id").autoincrement().primaryKey(),
     storeId: int("storeId").notNull().references(() => stores.id),
-    purpose: mysqlEnum("purpose", ["messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
+    purpose: mysqlEnum("purpose", ["unified", "messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
     status: mysqlEnum("status", ["connected", "expired", "revoked", "failed", "disabled"]).default("connected").notNull(),
     encryptedAccessToken: text("encryptedAccessToken"),
     tokenExpiresAt: timestamp("tokenExpiresAt"),
@@ -368,6 +368,44 @@ export const metaConnections = mysqlTable(
   table => [
     uniqueIndex("meta_conn_store_purpose_unq").on(table.storeId, table.purpose),
     index("meta_conn_store_status_idx").on(table.storeId, table.status),
+  ],
+);
+
+/** Singleton, platform-admin managed Meta application configuration. Secrets never leave the server unmasked. */
+export const metaPlatformSettings = mysqlTable("meta_platform_settings", {
+  id: int("id").primaryKey(),
+  appId: varchar("appId", { length: 80 }),
+  encryptedAppSecret: text("encryptedAppSecret"),
+  businessLoginConfigurationId: varchar("businessLoginConfigurationId", { length: 255 }),
+  whatsappEmbeddedSignupConfigurationId: varchar("whatsappEmbeddedSignupConfigurationId", { length: 255 }),
+  encryptedWebhookVerifyToken: text("encryptedWebhookVerifyToken"),
+  graphApiVersion: varchar("graphApiVersion", { length: 16 }).default("v26.0").notNull(),
+  status: mysqlEnum("status", ["incomplete", "ready", "verified", "needs_attention"]).default("incomplete").notNull(),
+  lastTestedAt: timestamp("lastTestedAt"),
+  lastError: varchar("lastError", { length: 500 }),
+  updatedByUserId: int("updatedByUserId").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Six operational capabilities projected from one encrypted delegated Meta connection. */
+export const metaConnectionCapabilities = mysqlTable(
+  "meta_connection_capabilities",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    connectionId: int("connectionId").notNull().references(() => metaConnections.id),
+    purpose: mysqlEnum("purpose", ["messaging", "content", "ads_read", "leads", "catalog", "measurement"]).notNull(),
+    status: mysqlEnum("status", ["ready", "missing_scope", "missing_asset", "disabled", "needs_setup"]).default("needs_setup").notNull(),
+    enabled: boolean("enabled").default(false).notNull(),
+    requiredScopes: text("requiredScopes").notNull(),
+    missingScopes: text("missingScopes"),
+    lastVerifiedAt: timestamp("lastVerifiedAt"),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_capability_conn_purpose_unq").on(table.connectionId, table.purpose),
+    index("meta_capability_store_status_idx").on(table.storeId, table.status),
   ],
 );
 

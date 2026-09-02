@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { channelAccounts, metaAssets, metaConnections, metaOAuthStates, stores, users } from "../../../drizzle/schema";
+import { channelAccounts, metaAssets, metaConnectionCapabilities, metaConnections, metaOAuthStates, stores, users } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { configureChannelAccount } from "../../channels/db";
-import { consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, listMetaConnectionOverview, selectMetaAsset, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
-import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext } from "./tokenCipher";
+import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, listMetaConnectionOverview, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
+import { metaScopesByPurpose, unifiedMetaScopes } from "./oauth";
+import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext, metaPlatformSecretContext } from "./tokenCipher";
+import { loadMetaCredential } from "../../channels/metaOutbound";
 
 const cleanupStoreIds: number[] = [];
 
@@ -14,6 +16,7 @@ afterEach(async () => {
   if (!db) return;
   for (const storeId of cleanupStoreIds.splice(0)) {
     await db.delete(channelAccounts).where(eq(channelAccounts.storeId, storeId));
+    await db.delete(metaConnectionCapabilities).where(eq(metaConnectionCapabilities.storeId, storeId));
     await db.delete(metaAssets).where(eq(metaAssets.storeId, storeId));
     await db.delete(metaOAuthStates).where(eq(metaOAuthStates.storeId, storeId));
     await db.delete(metaConnections).where(eq(metaConnections.storeId, storeId));
@@ -65,7 +68,7 @@ describe("Meta Connection Center", () => {
     expect(JSON.stringify(overview)).not.toContain("live-meta-token");
     expect(JSON.stringify(overview)).not.toContain("page-token-secret");
     expect(overview.assets).toHaveLength(2);
-    expect(await listMetaConnectionOverview(second.storeId)).toEqual({ connections: [], assets: [] });
+    expect(await listMetaConnectionOverview(second.storeId)).toEqual({ connections: [], assets: [], capabilities: [] });
   });
 
   it("لا يختار أصلاً من متجر آخر ويعطل الرمز والاختيار عند الإبطال", async () => {
@@ -83,5 +86,60 @@ describe("Meta Connection Center", () => {
     const [savedAsset] = await first.db.select().from(metaAssets).where(eq(metaAssets.id, asset.id));
     expect(savedConnection).toMatchObject({ status: "revoked", encryptedAccessToken: null });
     expect(savedAsset).toMatchObject({ isSelected: false, encryptedAccessToken: null });
+  });
+
+  it("يبني اتحاد صلاحيات موحداً بلا تكرار ويشفّر أسرار التطبيق بسياق مستقل", () => {
+    expect(new Set(unifiedMetaScopes).size).toBe(unifiedMetaScopes.length);
+    for (const scopes of Object.values(metaScopesByPurpose)) for (const scope of scopes) expect(unifiedMetaScopes).toContain(scope);
+    const encrypted = encryptMetaToken("meta-app-secret", metaPlatformSecretContext("app-secret"));
+    expect(encrypted).not.toContain("meta-app-secret");
+    expect(decryptMetaToken(encrypted, metaPlatformSecretContext("app-secret"))).toBe("meta-app-secret");
+    expect(() => decryptMetaToken(encrypted, metaPlatformSecretContext("webhook-verify-token"))).toThrow();
+  });
+
+  it("يحفظ اختيار عدة صفحات وحسابات إعلانية ويشغّل أو يعطل قدرة فعلية فوق اتصال واحد", async () => {
+    const { db, owner, storeId } = await setup();
+    const connection = await upsertMetaConnection({ storeId, purpose: "unified", accessToken: "unified-token", tokenExpiresAt: null, grantedScopes: unifiedMetaScopes, metaUserId: "unified-user", metaUserName: "مدير موحد", configurationId: "unified-config", connectedByUserId: owner.id });
+    await upsertDiscoveredMetaAssets({ storeId, connectionId: connection.id, purpose: "unified", assets: [
+      { assetType: "page", externalId: "page-a", displayName: "الصفحة الأولى", accessToken: "page-token-a" },
+      { assetType: "page", externalId: "page-b", displayName: "الصفحة الثانية", accessToken: "page-token-b" },
+      { assetType: "ad_account", externalId: "act-1", displayName: "حساب الإعلانات" },
+    ] });
+    const assets = (await listMetaConnectionOverview(storeId)).assets;
+    for (const asset of assets) await setMetaAssetSelection({ storeId, connectionId: connection.id, assetId: asset.id, selected: true });
+    await syncMetaConnectionCapabilities({ storeId, connectionId: connection.id, grantedScopes: unifiedMetaScopes });
+    const overview = await listMetaConnectionOverview(storeId);
+    expect(overview.assets.filter(asset => asset.assetType === "page" && asset.isSelected)).toHaveLength(2);
+    expect(overview.capabilities.find(capability => capability.purpose === "ads_read")).toMatchObject({ status: "ready", enabled: true });
+    await setMetaCapabilityEnabled({ storeId, connectionId: connection.id, purpose: "ads_read", enabled: false });
+    const [disabled] = await db.select().from(metaConnectionCapabilities).where(eq(metaConnectionCapabilities.connectionId, connection.id));
+    expect((await listMetaConnectionOverview(storeId)).capabilities.find(capability => capability.purpose === "ads_read")).toMatchObject({ status: "disabled", enabled: false });
+    expect(disabled).toBeTruthy();
+  });
+
+  it("ينقل اختيارات الأصول المتطابقة من الاتصال القديم إلى الموحد دون حذف القديم", async () => {
+    const { owner, storeId } = await setup();
+    const legacy = await upsertMetaConnection({ storeId, purpose: "messaging", accessToken: "legacy-token", tokenExpiresAt: null, grantedScopes: ["pages_messaging"], metaUserId: "legacy-user", metaUserName: null, configurationId: null, connectedByUserId: owner.id });
+    await upsertDiscoveredMetaAssets({ storeId, connectionId: legacy.id, purpose: "messaging", assets: [{ assetType: "page", externalId: "page-shared", displayName: "صفحة مشتركة", accessToken: "legacy-page-token" }] });
+    const legacyAsset = (await listMetaConnectionOverview(storeId)).assets.find(asset => asset.connectionId === legacy.id)!;
+    await setMetaAssetSelection({ storeId, connectionId: legacy.id, assetId: legacyAsset.id, selected: true });
+    const unified = await upsertMetaConnection({ storeId, purpose: "unified", accessToken: "unified-token", tokenExpiresAt: null, grantedScopes: unifiedMetaScopes, metaUserId: "unified-user", metaUserName: null, configurationId: "config", connectedByUserId: owner.id });
+    await upsertDiscoveredMetaAssets({ storeId, connectionId: unified.id, purpose: "unified", assets: [{ assetType: "page", externalId: "page-shared", displayName: "صفحة مشتركة", accessToken: "unified-page-token" }] });
+    expect(await carryLegacyMetaAssetSelections(storeId, unified.id)).toBe(1);
+    const overview = await listMetaConnectionOverview(storeId);
+    expect(overview.assets.find(asset => asset.connectionId === unified.id)).toMatchObject({ isSelected: true });
+    expect(overview.connections.find(connection => connection.id === legacy.id)).toMatchObject({ status: "connected" });
+  });
+
+  it("لا يعود إلى رمز الرسائل القديم بعد وجود اتصال موحد مبطل", async () => {
+    const { owner, storeId } = await setup();
+    const legacy = await upsertMetaConnection({ storeId, purpose: "messaging", accessToken: "legacy-token", tokenExpiresAt: null, grantedScopes: ["pages_messaging"], metaUserId: "legacy-user", metaUserName: null, configurationId: null, connectedByUserId: owner.id });
+    await upsertDiscoveredMetaAssets({ storeId, connectionId: legacy.id, purpose: "messaging", assets: [{ assetType: "page", externalId: "page-blocked", displayName: "صفحة قديمة", accessToken: "legacy-page-token" }] });
+    const legacyAsset = (await listMetaConnectionOverview(storeId)).assets.find(asset => asset.connectionId === legacy.id)!;
+    await setMetaAssetSelection({ storeId, connectionId: legacy.id, assetId: legacyAsset.id, selected: true });
+    const account = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "messenger", providerAccountId: "page-blocked", providerDisplayName: "صفحة قديمة", connectionStatus: "testing" });
+    await upsertMetaConnection({ storeId, purpose: "unified", accessToken: "new-token", tokenExpiresAt: null, grantedScopes: unifiedMetaScopes, metaUserId: "unified-user", metaUserName: null, configurationId: "config", connectedByUserId: owner.id });
+    await disconnectMetaConnection(storeId, "unified");
+    await expect(loadMetaCredential(storeId, account)).rejects.toThrow("اتصال Meta الموحد غير صالح");
   });
 });

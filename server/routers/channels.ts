@@ -1,10 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { ENV } from "../_core/env";
 import { protectedProcedure, router } from "../_core/trpc";
 import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { configureChannelAccount, externalChannels, listChannelAccounts } from "../channels/db";
+import { listMetaConnectionOverview } from "../integrations/meta/db";
+import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }) {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
@@ -29,10 +30,13 @@ const accountInput = z.object({
 export const channelsRouter = router({
   accounts: protectedProcedure.query(async ({ ctx }) => {
     const store = await requireStore(ctx);
+    const [runtime, metaOverview] = await Promise.all([getMetaRuntimeSettings(), listMetaConnectionOverview(store.id)]);
+    const unifiedConnection = metaOverview.connections.find(connection => connection.purpose === "unified");
+    const delegatedConnection = unifiedConnection ? (unifiedConnection.status === "connected" ? unifiedConnection : null) : metaOverview.connections.find(connection => connection.purpose === "messaging" && connection.status === "connected");
     return {
       accounts: await listChannelAccounts(store.id),
       webhookUrl: getPublicWebhookUrl(ctx.req),
-      credentialsConfigured: Boolean(ENV.metaAppSecret && ENV.metaWebhookVerifyToken && ENV.metaGraphAccessToken),
+      credentialsConfigured: Boolean(runtime.appSecret && runtime.webhookVerifyToken && delegatedConnection),
       externalSendingEnabled: false,
     };
   }),
@@ -42,7 +46,10 @@ export const channelsRouter = router({
     if (["testing", "connected"].includes(input.connectionStatus) && !providerAccountId) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "أدخل معرّف حساب القناة قبل وضعه في حالة اختبار أو اتصال." });
     }
-    if (input.connectionStatus === "connected" && !(ENV.metaAppSecret && ENV.metaWebhookVerifyToken && ENV.metaGraphAccessToken)) {
+    const [runtime, metaOverview] = await Promise.all([getMetaRuntimeSettings(), listMetaConnectionOverview(store.id)]);
+    const unifiedConnection = metaOverview.connections.find(connection => connection.purpose === "unified");
+    const delegatedConnection = unifiedConnection ? (unifiedConnection.status === "connected" ? unifiedConnection : null) : metaOverview.connections.find(connection => connection.purpose === "messaging" && connection.status === "connected");
+    if (input.connectionStatus === "connected" && !(runtime.appSecret && runtime.webhookVerifyToken && delegatedConnection)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إعلان اتصال حي قبل إضافة أسرار Meta والتحقق من webhook. استخدم «اختبار» حتى ذلك الحين." });
     }
     const account = await configureChannelAccount({ ...input, providerAccountId, storeId: store.id, actorUserId: ctx.user.id });

@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { channelAccounts, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnections, metaOutboundMessages } from "../../drizzle/schema";
-import { ENV } from "../_core/env";
 import { getDb } from "../db";
+import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { decryptMetaToken, metaAssetTokenContext, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
 
 type SupportedChannel = "whatsapp" | "instagram" | "messenger";
@@ -15,7 +15,8 @@ function duplicateError(error: unknown): boolean {
 }
 
 async function defaultTransport(input: Parameters<MetaSendTransport>[0]) {
-  const endpoint = `https://graph.facebook.com/${ENV.metaGraphApiVersion}/${input.providerAccountId}/messages`;
+  const runtime = await getMetaRuntimeSettings();
+  const endpoint = `https://graph.facebook.com/${runtime.graphApiVersion}/${input.providerAccountId}/messages`;
   const payload = input.channel === "whatsapp"
     ? { messaging_product: "whatsapp", to: input.recipientExternalId, type: "text", text: { preview_url: false, body: input.body } }
     : { recipient: { id: input.recipientExternalId }, messaging_type: input.channel === "messenger" ? "RESPONSE" : undefined, message: { text: input.body } };
@@ -27,9 +28,12 @@ async function defaultTransport(input: Parameters<MetaSendTransport>[0]) {
   return { externalMessageId: String(externalMessageId) };
 }
 
-async function loadCredential(storeId: number, channelAccount: typeof channelAccounts.$inferSelect) {
+export async function loadMetaCredential(storeId: number, channelAccount: typeof channelAccounts.$inferSelect) {
   const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة.");
-  const [asset] = await db.select({ assetId: metaAssets.id, assetExternalId: metaAssets.externalId, assetType: metaAssets.assetType, parentExternalId: metaAssets.parentExternalId, encryptedAssetToken: metaAssets.encryptedAccessToken, connectionId: metaConnections.id, connectionStatus: metaConnections.status, encryptedConnectionToken: metaConnections.encryptedAccessToken }).from(metaAssets).innerJoin(metaConnections, eq(metaAssets.connectionId, metaConnections.id)).where(and(eq(metaAssets.storeId, storeId), eq(metaAssets.externalId, channelAccount.providerAccountId!), eq(metaConnections.storeId, storeId), eq(metaConnections.purpose, "messaging"), eq(metaAssets.isSelected, true))).limit(1);
+  const [unifiedConnection] = await db.select({ id: metaConnections.id, status: metaConnections.status }).from(metaConnections).where(and(eq(metaConnections.storeId, storeId), eq(metaConnections.purpose, "unified"))).limit(1);
+  const candidates = await db.select({ assetId: metaAssets.id, assetExternalId: metaAssets.externalId, assetType: metaAssets.assetType, parentExternalId: metaAssets.parentExternalId, encryptedAssetToken: metaAssets.encryptedAccessToken, connectionId: metaConnections.id, connectionPurpose: metaConnections.purpose, connectionStatus: metaConnections.status, encryptedConnectionToken: metaConnections.encryptedAccessToken }).from(metaAssets).innerJoin(metaConnections, eq(metaAssets.connectionId, metaConnections.id)).where(and(eq(metaAssets.storeId, storeId), eq(metaAssets.externalId, channelAccount.providerAccountId!), eq(metaConnections.storeId, storeId), eq(metaAssets.isSelected, true)));
+  if (unifiedConnection && unifiedConnection.status !== "connected") throw new Error("اتصال Meta الموحد غير صالح حالياً. أعد الربط قبل الإرسال.");
+  const asset = unifiedConnection ? candidates.find(candidate => candidate.connectionPurpose === "unified") : candidates.find(candidate => candidate.connectionPurpose === "messaging");
   if (!asset || asset.connectionStatus === "revoked") throw new Error("أصل Meta المحدد لهذه القناة غير مفوض حالياً.");
   let encryptedToken = asset.encryptedAssetToken;
   let tokenContext = metaAssetTokenContext(storeId, asset.assetExternalId);
@@ -37,7 +41,7 @@ async function loadCredential(storeId: number, channelAccount: typeof channelAcc
     const [parent] = await db.select().from(metaAssets).where(and(eq(metaAssets.storeId, storeId), eq(metaAssets.connectionId, asset.connectionId), eq(metaAssets.externalId, asset.parentExternalId))).limit(1);
     if (parent?.encryptedAccessToken) { encryptedToken = parent.encryptedAccessToken; tokenContext = metaAssetTokenContext(storeId, parent.externalId); }
   }
-  if (!encryptedToken && asset.encryptedConnectionToken) { encryptedToken = asset.encryptedConnectionToken; tokenContext = metaConnectionTokenContext(storeId, "messaging"); }
+  if (!encryptedToken && asset.encryptedConnectionToken) { encryptedToken = asset.encryptedConnectionToken; tokenContext = metaConnectionTokenContext(storeId, asset.connectionPurpose); }
   if (!encryptedToken) throw new Error("لا يوجد رمز وصول صالح للأصل المحدد. أعد تفويض نطاق الرسائل.");
   return { accessToken: decryptMetaToken(encryptedToken, tokenContext), providerAccountId: asset.assetType === "instagram" && asset.parentExternalId ? asset.parentExternalId : asset.assetExternalId };
 }
@@ -74,7 +78,7 @@ export async function sendMetaConversationMessage(input: { storeId: number; conv
 
   await db.update(metaOutboundMessages).set({ status: "sending", errorCode: null, errorSummary: null }).where(eq(metaOutboundMessages.id, outboxId));
   try {
-    const credential = await loadCredential(input.storeId, account);
+    const credential = await loadMetaCredential(input.storeId, account);
     const delivered = await transport({ channel, providerAccountId: credential.providerAccountId, recipientExternalId, body, accessToken: credential.accessToken });
     const messageId = await db.transaction(async tx => {
       const createdMessage = await tx.insert(inboxMessages).values({ conversationId: conversation.id, direction: "outbound", body, externalMessageId: delivered.externalMessageId, actorUserId: input.actorUserId ?? null, deliveryStatus: "sent", deliveredAt: null });

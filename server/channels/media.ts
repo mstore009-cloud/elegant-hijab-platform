@@ -1,9 +1,10 @@
 import crypto from "crypto";
 import { and, eq } from "drizzle-orm";
 import { channelAccounts, inboxMessageMedia } from "../../drizzle/schema";
-import { ENV } from "../_core/env";
 import { getDb } from "../db";
+import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { storagePut } from "../storage";
+import { loadMetaCredential } from "./metaOutbound";
 
 const MAX_WHATSAPP_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_INSTAGRAM_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -34,11 +35,10 @@ async function requireDb() {
   return db;
 }
 
-async function getWhatsAppMediaUrl(providerMediaId: string, phoneNumberId: string, fetcher: FetchLike) {
-  if (!ENV.metaGraphAccessToken) throw new Error("رمز وصول Meta غير مهيأ لتنزيل وسائط واتساب.");
-  const endpoint = new URL(`https://graph.facebook.com/v26.0/${encodeURIComponent(providerMediaId)}`);
+async function getWhatsAppMediaUrl(providerMediaId: string, phoneNumberId: string, accessToken: string, graphApiVersion: string, fetcher: FetchLike) {
+  const endpoint = new URL(`https://graph.facebook.com/${graphApiVersion}/${encodeURIComponent(providerMediaId)}`);
   endpoint.searchParams.set("phone_number_id", phoneNumberId);
-  const response = await fetcher(endpoint, { headers: { Authorization: `Bearer ${ENV.metaGraphAccessToken}` }, signal: AbortSignal.timeout(10_000) });
+  const response = await fetcher(endpoint, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error(`تعذر الحصول على رابط وسائط واتساب (${response.status}).`);
   const payload = await response.json() as { url?: string; mime_type?: string };
   if (!payload.url || !validHttpsUrl(payload.url)) throw new Error("لم يرجع مزود القناة رابط صورة صالحاً.");
@@ -57,13 +57,16 @@ export async function storeInboundImageFromProvider(input: { storeId: number; me
 
   const fetcher = input.fetcher ?? fetch;
   try {
+    let credential: Awaited<ReturnType<typeof loadMetaCredential>> | null = null;
+    try { credential = await loadMetaCredential(input.storeId, account); } catch { /* Signed source URLs can be downloaded without a delegated header. */ }
+    const runtime = await getMetaRuntimeSettings();
     const providerAsset = input.sourceUrl && validHttpsUrl(input.sourceUrl)
       ? { url: input.sourceUrl, mimeType: media.mimeType }
       : account.channel === "whatsapp" && media.providerMediaId && account.providerAccountId
-        ? await getWhatsAppMediaUrl(media.providerMediaId, account.providerAccountId, fetcher)
+        ? credential ? await getWhatsAppMediaUrl(media.providerMediaId, account.providerAccountId, credential.accessToken, runtime.graphApiVersion, fetcher) : null
         : null;
     if (!providerAsset) throw new Error("لا يتوفر رابط تنزيل مؤقت صالح لصورة القناة.");
-    const response = await fetcher(providerAsset.url, { headers: ENV.metaGraphAccessToken ? { Authorization: `Bearer ${ENV.metaGraphAccessToken}` } : undefined, signal: AbortSignal.timeout(15_000) });
+    const response = await fetcher(providerAsset.url, { headers: credential ? { Authorization: `Bearer ${credential.accessToken}` } : undefined, signal: AbortSignal.timeout(15_000) });
     if (!response.ok) throw new Error(`تعذر تنزيل صورة الرسالة (${response.status}).`);
     const contentType = (response.headers.get("content-type") || providerAsset.mimeType || media.mimeType || "").split(";")[0].trim().toLowerCase();
     if (!SUPPORTED_IMAGE_TYPES.has(contentType)) throw new Error("نوع صورة الرسالة غير مدعوم. يُسمح بـJPEG أو PNG فقط.");

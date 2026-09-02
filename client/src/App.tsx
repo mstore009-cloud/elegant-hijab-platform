@@ -22,6 +22,7 @@ import Notifications from "./pages/Notifications";
 import EmployeeBot from "./pages/EmployeeBot";
 import Financials from "./pages/Financials";
 import MetaConnections from "./pages/MetaConnections";
+import MetaPlatformSettings from "./pages/MetaPlatformSettings";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -42,6 +43,7 @@ function Router() {
       <Route path={"/settings/store"} component={StoreSettings} />
       <Route path={"/settings/delivery"} component={StoreSettings} />
       <Route path={"/meta-connections"} component={MetaConnections} />
+      <Route path={"/settings/meta-app"} component={MetaPlatformSettings} />
       <Route path={"/content-posts"} component={ContentPosts} />
       <Route path={"/marketing"} component={Marketing} />
       <Route path={"/analytics"} component={Analytics} />
