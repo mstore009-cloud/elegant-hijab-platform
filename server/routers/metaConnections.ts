@@ -7,9 +7,9 @@ import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { configureChannelAccount } from "../channels/db";
 import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
-import { carryLegacyMetaAssetSelections, createMetaOAuthState, disconnectMetaConnection, getMetaConnection, listMetaConnectionOverview, markMetaConnectionVerified, metaPurposes, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
+import { carryLegacyMetaAssetSelections, createMetaOAuthState, disconnectMetaConnection, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
-import { createMetaAuthorizationUrl, discoverMetaAssets, metaConfigurationId, metaScopesByPurpose, unifiedMetaScopes } from "../integrations/meta/oauth";
+import { createMetaAuthorizationUrl, discoverMetaAssets, inspectMetaToken, metaConfigurationId, metaScopesByPurpose, unifiedMetaScopes } from "../integrations/meta/oauth";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 
 const purposeSchema = z.enum(metaPurposes);
@@ -30,7 +30,7 @@ export const metaConnectionsRouter = router({
       ...connectionOverview,
       eventHealth,
       retryStatus,
-      configured: Boolean(runtime.appId && runtime.appSecret && runtime.businessLoginConfigurationId && ENV.metaRedirectUri),
+      configured: Boolean(runtime.appId && runtime.appSecret && ENV.metaRedirectUri),
       callbackUrl: ENV.metaRedirectUri || "/api/meta/oauth/callback",
       graphVersion: runtime.graphApiVersion,
       purposes: metaPurposes.map(purpose => ({ purpose, scopes: metaScopesByPurpose[purpose], configurationIdConfigured: Boolean(runtime.businessLoginConfigurationId) })),
@@ -46,17 +46,29 @@ export const metaConnectionsRouter = router({
   beginUnifiedAuthorization: protectedProcedure.mutation(async ({ ctx }) => {
     const store = await requireStore(ctx);
     const runtime = await getMetaRuntimeSettings();
-    if (!runtime.appId || !runtime.appSecret || !runtime.businessLoginConfigurationId || !ENV.metaRedirectUri) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "أكمل إعداد تطبيق Meta المركزي واختبره قبل بدء الربط." });
+    if (!runtime.appId || !runtime.appSecret || !ENV.metaRedirectUri) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "أكمل إعداد تطبيق Meta المركزي واختبره قبل بدء الربط." });
     const state = randomBytes(32).toString("base64url");
-    await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: "unified", requestedScopes: unifiedMetaScopes, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
-    return { authorizationUrl: await createMetaAuthorizationUrl({ state, purpose: "unified" }) };
+    await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: "unified", authMode: "owner_direct", requestedScopes: unifiedMetaScopes, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "unified", action: "meta.owner_direct_started", summary: "بدأ ربط أصول محفظة مالك تطبيق Meta بتسجيل دخول إداري مباشر." });
+    return { authorizationUrl: await createMetaAuthorizationUrl({ state, purpose: "unified", authMode: "owner_direct" }) };
+  }),
+  beginExternalBusinessAuthorization: protectedProcedure.mutation(async ({ ctx }) => {
+    const store = await requireStore(ctx);
+    const runtime = await getMetaRuntimeSettings();
+    if (!runtime.appId || !runtime.appSecret || !runtime.businessLoginConfigurationId || !ENV.metaRedirectUri) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "أدخل Business Login Configuration ID قبل ربط محفظة عميل خارجي." });
+    const state = randomBytes(32).toString("base64url");
+    await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: "unified", authMode: "external_business", requestedScopes: unifiedMetaScopes, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "unified", action: "meta.external_business_started", summary: "بدأ ربط محفظة عميل خارجي عبر Facebook Login for Business." });
+    return { authorizationUrl: await createMetaAuthorizationUrl({ state, purpose: "unified", authMode: "external_business" }) };
   }),
   repairUnifiedAuthorization: protectedProcedure.input(z.object({ focusPurpose: purposeSchema.optional() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
+    const connection = await getMetaConnection(store.id, "unified");
+    const authMode = connection?.authMode ?? "owner_direct";
     const state = randomBytes(32).toString("base64url");
-    await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: "unified", requestedScopes: unifiedMetaScopes, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: "unified", authMode, requestedScopes: unifiedMetaScopes, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "unified", action: "meta.unified_repair_started", summary: `بدأ إصلاح صلاحيات اتصال Meta الموحد${input.focusPurpose ? ` لقدرة ${input.focusPurpose}` : ""}.` });
-    return { authorizationUrl: await createMetaAuthorizationUrl({ state, purpose: "unified" }) };
+    return { authorizationUrl: await createMetaAuthorizationUrl({ state, purpose: "unified", authMode, rerequest: true }) };
   }),
   refreshUnifiedAssets: protectedProcedure.mutation(async ({ ctx }) => {
     const store = await requireStore(ctx);
@@ -116,13 +128,45 @@ export const metaConnectionsRouter = router({
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "unified", action: "meta.unified_revoked", summary: "تم إبطال اتصال Meta الموحد وحذف رمز الوصول المشفر وتعطيل أصوله وقدراته." });
     return { disconnected };
   }),
+  saveWhatsAppSystemUserToken: protectedProcedure.input(z.object({ token: z.string().trim().min(20).max(4000) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx);
+    const inspection = await inspectMetaToken(input.token);
+    const requiredScopes = ["whatsapp_business_management", "whatsapp_business_messaging"];
+    const missingScopes = requiredScopes.filter(scope => !inspection.scopes.includes(scope));
+    if (missingScopes.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `رمز System User لا يملك صلاحيات WhatsApp المطلوبة: ${missingScopes.join(", ")}` });
+    const result = await saveMetaSystemUserToken({ storeId: store.id, token: input.token });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "whatsapp_system_user", action: "meta.whatsapp_system_token_saved", summary: "تم اختبار وحفظ اعتماد WhatsApp الدائم بصورة مشفرة من دون تسجيل قيمة الرمز." });
+    return { status: result.status, testedAt: result.testedAt, scopes: requiredScopes };
+  }),
+  testWhatsAppSystemUserToken: protectedProcedure.mutation(async ({ ctx }) => {
+    const store = await requireStore(ctx);
+    const token = await getMetaSystemUserToken(store.id);
+    if (!token) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لا يوجد System User Token صالح محفوظ لهذا المتجر." });
+    try {
+      const inspection = await inspectMetaToken(token);
+      const requiredScopes = ["whatsapp_business_management", "whatsapp_business_messaging"];
+      const missingScopes = requiredScopes.filter(scope => !inspection.scopes.includes(scope));
+      if (missingScopes.length) throw new Error(`الصلاحيات الناقصة: ${missingScopes.join(", ")}`);
+      await markMetaSystemUserTokenStatus(store.id, "ready");
+      return { status: "ready" as const, scopes: requiredScopes };
+    } catch (error) {
+      await markMetaSystemUserTokenStatus(store.id, "invalid");
+      throw new TRPCError({ code: "BAD_GATEWAY", message: error instanceof Error ? error.message : "تعذر اختبار اعتماد WhatsApp الدائم." });
+    }
+  }),
+  revokeWhatsAppSystemUserToken: protectedProcedure.input(z.object({ confirm: z.literal(true) })).mutation(async ({ ctx }) => {
+    const store = await requireStore(ctx);
+    const revoked = await revokeMetaSystemUserToken(store.id);
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_connection", entityId: "whatsapp_system_user", action: "meta.whatsapp_system_token_revoked", summary: "تم إبطال اعتماد WhatsApp الدائم وحذف قيمته المشفرة." });
+    return { revoked };
+  }),
   beginAuthorization: protectedProcedure.input(z.object({ purpose: purposeSchema })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);
     const runtime = await getMetaRuntimeSettings();
     if (!runtime.appId || !runtime.appSecret || !ENV.metaRedirectUri) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "أكمل إعداد تطبيق Meta المركزي ورابط العودة قبل بدء التفويض." });
     const state = randomBytes(32).toString("base64url");
-    await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: input.purpose, requestedScopes: metaScopesByPurpose[input.purpose], expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
-    return { authorizationUrl: await createMetaAuthorizationUrl({ state, purpose: input.purpose }) };
+    await createMetaOAuthState({ state, storeId: store.id, userId: ctx.user.id, purpose: input.purpose, authMode: "external_business", requestedScopes: metaScopesByPurpose[input.purpose], expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    return { authorizationUrl: await createMetaAuthorizationUrl({ state, purpose: input.purpose, authMode: "external_business" }) };
   }),
   refreshAssets: protectedProcedure.input(z.object({ purpose: purposeSchema })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);

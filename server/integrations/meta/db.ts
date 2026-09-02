@@ -1,12 +1,14 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { metaAssets, metaConnectionCapabilities, metaConnections, metaOAuthStates } from "../../../drizzle/schema";
 import { getDb } from "../../db";
-import { encryptMetaToken, metaAssetTokenContext, metaConnectionTokenContext } from "./tokenCipher";
+import { decryptMetaToken, encryptMetaToken, metaAssetTokenContext, metaConnectionTokenContext, metaSystemUserTokenContext } from "./tokenCipher";
 
 export const metaPurposes = ["messaging", "content", "ads_read", "leads", "catalog", "measurement"] as const;
 export type MetaPurpose = (typeof metaPurposes)[number];
 export const metaConnectionPurposes = ["unified", ...metaPurposes] as const;
 export type MetaConnectionPurpose = (typeof metaConnectionPurposes)[number];
+export const metaAuthModes = ["owner_direct", "external_business"] as const;
+export type MetaAuthMode = (typeof metaAuthModes)[number];
 export type MetaAssetType = "business" | "page" | "instagram" | "whatsapp_business" | "whatsapp_phone" | "ad_account" | "dataset" | "pixel" | "catalog";
 
 const capabilityAssetTypes: Record<MetaPurpose, MetaAssetType[]> = {
@@ -33,9 +35,9 @@ async function requireDb() {
   return db;
 }
 
-export async function createMetaOAuthState(input: { state: string; storeId: number; userId: number; purpose: MetaConnectionPurpose; requestedScopes: string[]; expiresAt: Date }) {
+export async function createMetaOAuthState(input: { state: string; storeId: number; userId: number; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; requestedScopes: string[]; expiresAt: Date }) {
   const db = await requireDb();
-  await db.insert(metaOAuthStates).values({ ...input, requestedScopes: input.requestedScopes.join(","), returnTo: "/meta-connections" });
+  await db.insert(metaOAuthStates).values({ ...input, authMode: input.authMode ?? "external_business", requestedScopes: input.requestedScopes.join(","), returnTo: "/meta-connections" });
 }
 
 export async function consumeMetaOAuthState(state: string) {
@@ -46,12 +48,13 @@ export async function consumeMetaOAuthState(state: string) {
   return item;
 }
 
-export async function upsertMetaConnection(input: { storeId: number; purpose: MetaConnectionPurpose; accessToken: string; tokenExpiresAt: Date | null; grantedScopes: string[]; metaUserId: string | null; metaUserName: string | null; configurationId: string | null; connectedByUserId: number }) {
+export async function upsertMetaConnection(input: { storeId: number; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; accessToken: string; tokenExpiresAt: Date | null; grantedScopes: string[]; metaUserId: string | null; metaUserName: string | null; configurationId: string | null; connectedByUserId: number }) {
   const db = await requireDb();
   const encryptedAccessToken = encryptMetaToken(input.accessToken, metaConnectionTokenContext(input.storeId, input.purpose));
   const values = {
     storeId: input.storeId,
     purpose: input.purpose,
+    authMode: input.authMode ?? "external_business",
     status: "connected" as const,
     encryptedAccessToken,
     tokenExpiresAt: input.tokenExpiresAt,
@@ -76,9 +79,40 @@ export async function getMetaConnection(storeId: number, purpose: MetaConnection
   return connection ?? null;
 }
 
+export async function saveMetaSystemUserToken(input: { storeId: number; token: string }) {
+  const db = await requireDb();
+  const connection = await getMetaConnection(input.storeId, "unified");
+  if (!connection) throw new Error("اربط Meta أولاً قبل إضافة اعتماد WhatsApp الدائم.");
+  const encryptedSystemUserToken = encryptMetaToken(input.token, metaSystemUserTokenContext(input.storeId));
+  const testedAt = new Date();
+  await db.update(metaConnections).set({ encryptedSystemUserToken, systemUserTokenStatus: "ready", systemUserTokenLastTestedAt: testedAt }).where(and(eq(metaConnections.id, connection.id), eq(metaConnections.storeId, input.storeId)));
+  return { status: "ready" as const, testedAt };
+}
+
+export async function getMetaSystemUserToken(storeId: number) {
+  const connection = await getMetaConnection(storeId, "unified");
+  if (!connection?.encryptedSystemUserToken || connection.systemUserTokenStatus !== "ready") return null;
+  return decryptMetaToken(connection.encryptedSystemUserToken, metaSystemUserTokenContext(storeId));
+}
+
+export async function revokeMetaSystemUserToken(storeId: number) {
+  const db = await requireDb();
+  const connection = await getMetaConnection(storeId, "unified");
+  if (!connection) return false;
+  await db.update(metaConnections).set({ encryptedSystemUserToken: null, systemUserTokenStatus: "revoked", systemUserTokenLastTestedAt: null }).where(and(eq(metaConnections.id, connection.id), eq(metaConnections.storeId, storeId)));
+  return true;
+}
+
+export async function markMetaSystemUserTokenStatus(storeId: number, status: "ready" | "invalid") {
+  const db = await requireDb();
+  const connection = await getMetaConnection(storeId, "unified");
+  if (!connection) throw new Error("لا يوجد اتصال Meta موحد لهذا المتجر.");
+  await db.update(metaConnections).set({ systemUserTokenStatus: status, systemUserTokenLastTestedAt: new Date() }).where(and(eq(metaConnections.id, connection.id), eq(metaConnections.storeId, storeId)));
+}
+
 export async function listMetaConnectionOverview(storeId: number) {
   const db = await requireDb();
-  const connections = await db.select({ id: metaConnections.id, purpose: metaConnections.purpose, status: metaConnections.status, tokenExpiresAt: metaConnections.tokenExpiresAt, grantedScopes: metaConnections.grantedScopes, metaUserId: metaConnections.metaUserId, metaUserName: metaConnections.metaUserName, configurationId: metaConnections.configurationId, connectedAt: metaConnections.connectedAt, lastVerifiedAt: metaConnections.lastVerifiedAt, revokedAt: metaConnections.revokedAt, lastError: metaConnections.lastError, updatedAt: metaConnections.updatedAt }).from(metaConnections).where(eq(metaConnections.storeId, storeId));
+  const connections = await db.select({ id: metaConnections.id, purpose: metaConnections.purpose, authMode: metaConnections.authMode, status: metaConnections.status, tokenExpiresAt: metaConnections.tokenExpiresAt, grantedScopes: metaConnections.grantedScopes, metaUserId: metaConnections.metaUserId, metaUserName: metaConnections.metaUserName, configurationId: metaConnections.configurationId, systemUserTokenStatus: metaConnections.systemUserTokenStatus, systemUserTokenLastTestedAt: metaConnections.systemUserTokenLastTestedAt, connectedAt: metaConnections.connectedAt, lastVerifiedAt: metaConnections.lastVerifiedAt, revokedAt: metaConnections.revokedAt, lastError: metaConnections.lastError, updatedAt: metaConnections.updatedAt }).from(metaConnections).where(eq(metaConnections.storeId, storeId));
   const assets = await db.select({ id: metaAssets.id, connectionId: metaAssets.connectionId, assetType: metaAssets.assetType, externalId: metaAssets.externalId, displayName: metaAssets.displayName, parentExternalId: metaAssets.parentExternalId, metadataJson: metaAssets.metadataJson, isSelected: metaAssets.isSelected, lastDiscoveredAt: metaAssets.lastDiscoveredAt }).from(metaAssets).where(eq(metaAssets.storeId, storeId));
   const capabilities = await db.select().from(metaConnectionCapabilities).where(eq(metaConnectionCapabilities.storeId, storeId));
   return { connections, assets, capabilities };
@@ -163,7 +197,7 @@ export async function disconnectMetaConnection(storeId: number, purpose: MetaCon
   const [connection] = await db.select().from(metaConnections).where(and(eq(metaConnections.storeId, storeId), eq(metaConnections.purpose, purpose))).limit(1);
   if (!connection) return false;
   await db.transaction(async tx => {
-    await tx.update(metaConnections).set({ status: "revoked", encryptedAccessToken: null, revokedAt: new Date(), lastError: null }).where(eq(metaConnections.id, connection.id));
+    await tx.update(metaConnections).set({ status: "revoked", encryptedAccessToken: null, encryptedSystemUserToken: null, systemUserTokenStatus: "revoked", systemUserTokenLastTestedAt: null, revokedAt: new Date(), lastError: null }).where(eq(metaConnections.id, connection.id));
     await tx.update(metaAssets).set({ isSelected: false, encryptedAccessToken: null }).where(and(eq(metaAssets.storeId, storeId), eq(metaAssets.connectionId, connection.id)));
     await tx.update(metaConnectionCapabilities).set({ enabled: false, status: "disabled" }).where(and(eq(metaConnectionCapabilities.storeId, storeId), eq(metaConnectionCapabilities.connectionId, connection.id)));
   });

@@ -1,5 +1,5 @@
 import { ENV } from "../../_core/env";
-import { metaPurposes, type MetaAssetType, type MetaConnectionPurpose, type MetaPurpose } from "./db";
+import { metaPurposes, type MetaAssetType, type MetaAuthMode, type MetaConnectionPurpose, type MetaPurpose } from "./db";
 import { getMetaRuntimeSettings } from "./platformSettings";
 
 export const metaScopesByPurpose: Record<MetaPurpose, string[]> = {
@@ -30,19 +30,33 @@ export async function metaConfigurationId(purpose: MetaConnectionPurpose) {
   return configurationByPurpose[purpose]().trim() || null;
 }
 
-export async function createMetaAuthorizationUrl(input: { state: string; purpose: MetaConnectionPurpose; redirectUri?: string }) {
+export function buildMetaAuthorizationUrl(input: { appId: string; graphApiVersion: string; redirectUri: string; state: string; scopes: string[]; authMode: MetaAuthMode; configurationId?: string | null; rerequest?: boolean }) {
+  const url = new URL(`https://www.facebook.com/${input.graphApiVersion}/dialog/oauth`);
+  url.searchParams.set("client_id", input.appId);
+  url.searchParams.set("redirect_uri", input.redirectUri);
+  url.searchParams.set("state", input.state);
+  url.searchParams.set("response_type", "code");
+  if (input.rerequest) url.searchParams.set("auth_type", "rerequest");
+  if (input.authMode === "external_business" && input.configurationId) url.searchParams.set("config_id", input.configurationId);
+  else url.searchParams.set("scope", Array.from(new Set(input.scopes)).sort().join(","));
+  return url.toString();
+}
+
+export async function createMetaAuthorizationUrl(input: { state: string; purpose: MetaConnectionPurpose; authMode?: MetaAuthMode; redirectUri?: string; rerequest?: boolean }) {
   const runtime = await getMetaRuntimeSettings();
   const redirectUri = input.redirectUri || ENV.metaRedirectUri;
   if (!runtime.appId || !redirectUri) throw new Error("أكمل إعداد تطبيق Meta ورابط العودة قبل بدء التفويض.");
-  const url = new URL(`https://www.facebook.com/${runtime.graphApiVersion}/dialog/oauth`);
-  url.searchParams.set("client_id", runtime.appId);
-  url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("state", input.state);
-  url.searchParams.set("response_type", "code");
-  const configurationId = await metaConfigurationId(input.purpose);
-  if (configurationId) url.searchParams.set("config_id", configurationId);
-  else url.searchParams.set("scope", (input.purpose === "unified" ? unifiedMetaScopes : metaScopesByPurpose[input.purpose]).join(","));
-  return url.toString();
+  const authMode = input.authMode ?? "external_business";
+  return buildMetaAuthorizationUrl({
+    appId: runtime.appId,
+    graphApiVersion: runtime.graphApiVersion,
+    redirectUri,
+    state: input.state,
+    scopes: input.purpose === "unified" ? unifiedMetaScopes : metaScopesByPurpose[input.purpose],
+    authMode,
+    configurationId: authMode === "external_business" ? await metaConfigurationId(input.purpose) : null,
+    rerequest: input.rerequest,
+  });
 }
 
 async function readMetaJson(response: Response, operation: string) {
@@ -138,11 +152,13 @@ export async function discoverMetaAssets(accessToken: string, purpose: MetaConne
 
   if (["messaging", "content", "leads"].some(item => requestedPurposes.has(item as MetaPurpose))) {
     await attempt("الصفحات", async () => {
-      const pages = await graphList("me/accounts", accessToken, "id,name,access_token,instagram_business_account{id,name,username}", runtime.graphApiVersion);
+      const pages = await graphList("me/accounts", accessToken, "id,name,access_token,tasks,instagram_business_account{id,name,username}", runtime.graphApiVersion);
       for (const page of pages) {
-        assets.push({ assetType: "page", externalId: String(page.id), displayName: page.name ? String(page.name) : null, accessToken: page.access_token ? String(page.access_token) : null });
+        const pageToken = page.access_token ? String(page.access_token) : null;
+        const tasks = Array.isArray(page.tasks) ? page.tasks.map(String) : [];
+        assets.push({ assetType: "page", externalId: String(page.id), displayName: page.name ? String(page.name) : null, accessToken: pageToken, metadata: { tasks } });
         const instagram = page.instagram_business_account;
-        if (instagram?.id) assets.push({ assetType: "instagram", externalId: String(instagram.id), displayName: instagram.username ? `@${instagram.username}` : instagram.name ? String(instagram.name) : null, parentExternalId: String(page.id), metadata: { username: instagram.username || null } });
+        if (instagram?.id) assets.push({ assetType: "instagram", externalId: String(instagram.id), displayName: instagram.username ? `@${instagram.username}` : instagram.name ? String(instagram.name) : null, parentExternalId: String(page.id), metadata: { username: instagram.username || null, pageId: String(page.id), pageTasks: tasks }, accessToken: pageToken });
       }
     });
   }

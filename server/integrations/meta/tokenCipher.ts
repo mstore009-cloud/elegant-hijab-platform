@@ -31,6 +31,10 @@ export function metaAssetTokenContext(storeId: number, externalId: string) {
   return `meta-asset:${storeId}:${externalId}`;
 }
 
+export function metaSystemUserTokenContext(storeId: number) {
+  return `meta-whatsapp-system-user:${storeId}`;
+}
+
 export function metaPlatformSecretContext(field: "app-secret" | "webhook-verify-token") {
   return `meta-platform:${field}`;
 }

@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { channelAccounts, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnections, metaOutboundMessages } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
+import { getMetaSystemUserToken } from "../integrations/meta/db";
 import { decryptMetaToken, metaAssetTokenContext, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
 
 type SupportedChannel = "whatsapp" | "instagram" | "messenger";
@@ -35,6 +36,10 @@ export async function loadMetaCredential(storeId: number, channelAccount: typeof
   if (unifiedConnection && unifiedConnection.status !== "connected") throw new Error("اتصال Meta الموحد غير صالح حالياً. أعد الربط قبل الإرسال.");
   const asset = unifiedConnection ? candidates.find(candidate => candidate.connectionPurpose === "unified") : candidates.find(candidate => candidate.connectionPurpose === "messaging");
   if (!asset || asset.connectionStatus === "revoked") throw new Error("أصل Meta المحدد لهذه القناة غير مفوض حالياً.");
+  if (channelAccount.channel === "whatsapp") {
+    const systemUserToken = await getMetaSystemUserToken(storeId);
+    if (systemUserToken) return { accessToken: systemUserToken, providerAccountId: asset.assetExternalId };
+  }
   let encryptedToken = asset.encryptedAssetToken;
   let tokenContext = metaAssetTokenContext(storeId, asset.assetExternalId);
   if (!encryptedToken && asset.assetType === "instagram" && asset.parentExternalId) {

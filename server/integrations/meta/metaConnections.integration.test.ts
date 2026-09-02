@@ -4,8 +4,8 @@ import { eq } from "drizzle-orm";
 import { channelAccounts, metaAssets, metaConnectionCapabilities, metaConnections, metaOAuthStates, stores, users } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { configureChannelAccount } from "../../channels/db";
-import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, listMetaConnectionOverview, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
-import { metaScopesByPurpose, unifiedMetaScopes } from "./oauth";
+import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
+import { buildMetaAuthorizationUrl, metaScopesByPurpose, unifiedMetaScopes } from "./oauth";
 import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext, metaPlatformSecretContext } from "./tokenCipher";
 import { loadMetaCredential } from "../../channels/metaOutbound";
 
@@ -47,16 +47,26 @@ describe("Meta Connection Center", () => {
   it("يستهلك state صالحاً مرة واحدة ويرفض إعادة استخدامه", async () => {
     const { owner, storeId } = await setup();
     const state = randomUUID();
-    await createMetaOAuthState({ state, storeId, userId: owner.id, purpose: "messaging", requestedScopes: ["pages_messaging"], expiresAt: new Date(Date.now() + 60_000) });
+    await createMetaOAuthState({ state, storeId, userId: owner.id, purpose: "unified", authMode: "owner_direct", requestedScopes: ["pages_messaging"], expiresAt: new Date(Date.now() + 60_000) });
     const first = await consumeMetaOAuthState(state);
-    expect(first).toMatchObject({ storeId, userId: owner.id, purpose: "messaging", requestedScopes: "pages_messaging" });
+    expect(first).toMatchObject({ storeId, userId: owner.id, purpose: "unified", authMode: "owner_direct", requestedScopes: "pages_messaging" });
     expect(await consumeMetaOAuthState(state)).toBeNull();
+  });
+
+  it("لا يرسل config_id في Owner Direct ويحتفظ به لمسار العميل الخارجي فقط", () => {
+    const common = { appId: "123456789", graphApiVersion: "v26.0", redirectUri: "https://example.com/api/meta/oauth/callback", state: "safe-state", scopes: ["pages_show_list", "pages_messaging"], configurationId: "config-external" };
+    const ownerUrl = new URL(buildMetaAuthorizationUrl({ ...common, authMode: "owner_direct" }));
+    expect(ownerUrl.searchParams.has("config_id")).toBe(false);
+    expect(ownerUrl.searchParams.get("scope")).toContain("pages_show_list");
+    const externalUrl = new URL(buildMetaAuthorizationUrl({ ...common, authMode: "external_business" }));
+    expect(externalUrl.searchParams.get("config_id")).toBe("config-external");
+    expect(externalUrl.searchParams.has("scope")).toBe(false);
   });
 
   it("يحفظ الرمز مشفراً ولا يعيده في ملخص الاتصال ويعزل الأصول حسب المتجر", async () => {
     const first = await setup();
     const second = await setup();
-    const connection = await upsertMetaConnection({ storeId: first.storeId, purpose: "messaging", accessToken: "live-meta-token", tokenExpiresAt: new Date(Date.now() + 3_600_000), grantedScopes: ["pages_messaging", "pages_show_list"], metaUserId: "meta-user-1", metaUserName: "مدير Meta", configurationId: "config-1", connectedByUserId: first.owner.id });
+    const connection = await upsertMetaConnection({ storeId: first.storeId, purpose: "messaging", authMode: "owner_direct", accessToken: "live-meta-token", tokenExpiresAt: new Date(Date.now() + 3_600_000), grantedScopes: ["pages_messaging", "pages_show_list"], metaUserId: "meta-user-1", metaUserName: "مدير Meta", configurationId: null, connectedByUserId: first.owner.id });
     expect(connection.encryptedAccessToken).not.toBe("live-meta-token");
     await upsertDiscoveredMetaAssets({ storeId: first.storeId, connectionId: connection.id, purpose: "messaging", assets: [
       { assetType: "page", externalId: "page-1", displayName: "صفحة الاختبار", accessToken: "page-token-secret" },
@@ -64,6 +74,7 @@ describe("Meta Connection Center", () => {
     ] });
     const overview = await listMetaConnectionOverview(first.storeId);
     expect(overview.connections).toHaveLength(1);
+    expect(overview.connections[0]).toMatchObject({ authMode: "owner_direct", configurationId: null });
     expect(overview.connections[0]).not.toHaveProperty("encryptedAccessToken");
     expect(JSON.stringify(overview)).not.toContain("live-meta-token");
     expect(JSON.stringify(overview)).not.toContain("page-token-secret");
@@ -141,5 +152,31 @@ describe("Meta Connection Center", () => {
     await upsertMetaConnection({ storeId, purpose: "unified", accessToken: "new-token", tokenExpiresAt: null, grantedScopes: unifiedMetaScopes, metaUserId: "unified-user", metaUserName: null, configurationId: "config", connectedByUserId: owner.id });
     await disconnectMetaConnection(storeId, "unified");
     await expect(loadMetaCredential(storeId, account)).rejects.toThrow("اتصال Meta الموحد غير صالح");
+  });
+
+  it("يشفّر System User Token لكل متجر ولا يعيده في الملخص ويحذفه عند الإبطال", async () => {
+    const { db, owner, storeId } = await setup();
+    const connection = await upsertMetaConnection({ storeId, purpose: "unified", authMode: "owner_direct", accessToken: "owner-user-token", tokenExpiresAt: null, grantedScopes: unifiedMetaScopes, metaUserId: "owner-user", metaUserName: "مالك المحفظة", configurationId: null, connectedByUserId: owner.id });
+    await saveMetaSystemUserToken({ storeId, token: "whatsapp-system-user-token-secret" });
+    const [stored] = await db.select().from(metaConnections).where(eq(metaConnections.id, connection.id));
+    expect(stored.encryptedSystemUserToken).not.toBe("whatsapp-system-user-token-secret");
+    expect(await getMetaSystemUserToken(storeId)).toBe("whatsapp-system-user-token-secret");
+    const overview = await listMetaConnectionOverview(storeId);
+    expect(overview.connections[0]).not.toHaveProperty("encryptedSystemUserToken");
+    expect(JSON.stringify(overview)).not.toContain("whatsapp-system-user-token-secret");
+    expect(overview.connections[0]).toMatchObject({ systemUserTokenStatus: "ready" });
+    expect(await revokeMetaSystemUserToken(storeId)).toBe(true);
+    expect(await getMetaSystemUserToken(storeId)).toBeNull();
+  });
+
+  it("يفضّل اعتماد System User الدائم عند تحميل رمز إرسال WhatsApp", async () => {
+    const { owner, storeId } = await setup();
+    const connection = await upsertMetaConnection({ storeId, purpose: "unified", authMode: "owner_direct", accessToken: "temporary-owner-token", tokenExpiresAt: null, grantedScopes: unifiedMetaScopes, metaUserId: "owner-user", metaUserName: null, configurationId: null, connectedByUserId: owner.id });
+    await upsertDiscoveredMetaAssets({ storeId, connectionId: connection.id, purpose: "unified", assets: [{ assetType: "whatsapp_phone", externalId: "phone-system-token", displayName: "رقم الاختبار" }] });
+    const asset = (await listMetaConnectionOverview(storeId)).assets.find(item => item.externalId === "phone-system-token")!;
+    await setMetaAssetSelection({ storeId, connectionId: connection.id, assetId: asset.id, selected: true });
+    const account = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: asset.externalId, providerDisplayName: asset.displayName, connectionStatus: "testing" });
+    await saveMetaSystemUserToken({ storeId, token: "preferred-whatsapp-system-user-token" });
+    await expect(loadMetaCredential(storeId, account)).resolves.toEqual({ accessToken: "preferred-whatsapp-system-user-token", providerAccountId: "phone-system-token" });
   });
 });

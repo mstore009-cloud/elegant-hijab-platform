@@ -390,5 +390,13 @@
 - [x] Meta-Unified-Auth-V2-A5: تشغيل TypeScript وVitest والمراجعة البصرية والتحقق من عدم تسرب الأسرار ثم حفظ checkpoint مستقل.
 - [x] Meta-Unified-Auth-V2-A6: تنفيذ تبديل فعلي وسهل بين الصفحات وحسابات Instagram وأرقام WhatsApp والحسابات الإعلانية وPixels وCatalogs مع حفظ الاختيار.
 - [x] Meta-Unified-Auth-V2-A7: تنفيذ تعطيل وإعادة تفعيل قدرة محددة وإصلاح صلاحياتها وإبطال الاتصال الموحد أو إعادة ربطه مع حالات نجاح وفشل قابلة للتحقق.
+- [x] Meta-Owner-Direct-V1-A1: إضافة نوعي التفويض owner_direct وexternal_business إلى اتصال Meta الموحد وOAuth state بترحيل غير مدمر.
+- [x] Meta-Owner-Direct-V1-A2: تنفيذ OAuth مباشر لمالك التطبيق دون config_id واكتشاف Pages عبر me/accounts مع حفظ Page Tokens مشفرة.
+- [x] Meta-Owner-Direct-V1-A3: إبقاء Facebook Login for Business خياراً متقدماً لمحافظ العملاء الخارجية دون إعادته إلى القدرات الست.
+- [x] Meta-Owner-Direct-V1-A4: إضافة System User Token مشفر لواتساب مع اختبار وتدوير وإبطال من داخل إعدادات التطبيق.
+- [x] Meta-Owner-Direct-V1-A5: تحديث واجهة الربط ليكون «ربط محفظتي وأصولي» هو المسار الافتراضي مع شرح القيود والحالات الفعلية.
+- [x] Meta-Owner-Direct-V1-A6: إضافة اختبارات تمنع config_id في Owner Direct وتتحقق من اكتشاف الصفحات والتشفير والعزل والإبطال والتوافق.
+- [x] Meta-Owner-Direct-V1-A7: تشغيل TypeScript وVitest والبناء والمراجعة البصرية وحفظ checkpoint مرشح لاختبار Owner Direct الحي.
+- [ ] Meta-Owner-Direct-V1-A8: تنفيذ اختبار القبول الحي بحساب مدير المحفظة والتأكد من ظهور الصفحة دون شاشة المحفظة المالكة المعطلة، ثم اختبار Messenger وWebhook.
 
 - [x] التحقق من إصلاح Repository issue عبر حفظ checkpoint جديد بطلب المستخدم (466b97f9)

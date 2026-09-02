@@ -18,12 +18,13 @@ export function registerMetaOAuthRoutes(app: Express) {
       const connection = await upsertMetaConnection({
         storeId: oauthState.storeId,
         purpose: oauthState.purpose,
+        authMode: oauthState.authMode,
         accessToken: exchanged.accessToken,
         tokenExpiresAt: inspection.expiresAt ?? (exchanged.expiresIn ? new Date(Date.now() + exchanged.expiresIn * 1000) : null),
         grantedScopes: inspection.scopes,
         metaUserId: inspection.userId ?? profile.id,
         metaUserName: profile.name,
-        configurationId: await metaConfigurationId(oauthState.purpose),
+        configurationId: oauthState.authMode === "external_business" ? await metaConfigurationId(oauthState.purpose) : null,
         connectedByUserId: oauthState.userId,
       });
       connectionId = connection.id;
@@ -35,7 +36,7 @@ export function registerMetaOAuthRoutes(app: Express) {
       }
       await markMetaConnectionVerified(connection.id, discovered.failures.length ? discovered.failures.join(" | ").slice(0, 500) : null);
       const result = discovered.failures.length ? "partial" : "connected";
-      return res.redirect(`/meta-connections?meta=${result}${oauthState.purpose === "unified" ? "&flow=unified" : `&purpose=${encodeURIComponent(oauthState.purpose)}`}`);
+      return res.redirect(`/meta-connections?meta=${result}${oauthState.purpose === "unified" ? `&flow=unified&authMode=${encodeURIComponent(oauthState.authMode)}` : `&purpose=${encodeURIComponent(oauthState.purpose)}`}`);
     } catch (error) {
       if (connectionId) await markMetaConnectionVerified(connectionId, error instanceof Error ? error.message : "فشل اتصال Meta.").catch(() => undefined);
       console.error("[Meta OAuth] Callback failed", error instanceof Error ? error.message : "unknown error");

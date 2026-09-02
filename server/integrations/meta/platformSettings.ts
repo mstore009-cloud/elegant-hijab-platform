@@ -97,7 +97,6 @@ export async function saveMetaPlatformSettings(input: {
   const businessLoginConfigurationId = input.businessLoginConfigurationId.trim();
   const appSecret = input.appSecret?.trim();
   if (!/^\d{5,80}$/.test(appId)) throw new Error("معرّف تطبيق Meta يجب أن يتكون من أرقام فقط.");
-  if (!businessLoginConfigurationId) throw new Error("أدخل Business Login Configuration ID الموحد.");
   if (!current?.encryptedAppSecret && !appSecret) throw new Error("أدخل App Secret عند الإعداد الأول.");
   const verifyTokenPlain = current?.encryptedWebhookVerifyToken ? null : randomBytes(32).toString("base64url");
   const values = {
@@ -137,7 +136,7 @@ export async function rotateMetaWebhookVerifyToken(actorUserId: number) {
 export async function testMetaPlatformSettings(fetcher: typeof fetch = fetch) {
   const db = await requireDb();
   const runtime = await getMetaRuntimeSettings();
-  if (!runtime.appId || !runtime.appSecret || !runtime.businessLoginConfigurationId) throw new Error("أكمل إعداد تطبيق Meta الموحد أولاً.");
+  if (!runtime.appId || !runtime.appSecret) throw new Error("أكمل App ID وApp Secret لتطبيق Meta أولاً.");
   const url = new URL(`https://graph.facebook.com/${runtime.graphApiVersion}/${runtime.appId}`);
   url.searchParams.set("fields", "id,name");
   url.searchParams.set("access_token", `${runtime.appId}|${runtime.appSecret}`);

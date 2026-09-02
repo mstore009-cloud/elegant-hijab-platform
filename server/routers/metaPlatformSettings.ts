@@ -25,7 +25,7 @@ function getPublicOrigin(req: { protocol?: string; get?: (name: string) => strin
 const settingsInput = z.object({
   appId: z.string().trim().regex(/^\d{5,80}$/, "معرّف تطبيق Meta يجب أن يتكون من أرقام فقط."),
   appSecret: z.string().trim().max(500).optional(),
-  businessLoginConfigurationId: z.string().trim().min(1).max(255),
+  businessLoginConfigurationId: z.string().trim().max(255),
   whatsappEmbeddedSignupConfigurationId: z.string().trim().max(255).optional(),
   graphApiVersion: z.enum(allowedMetaGraphVersions),
 });
