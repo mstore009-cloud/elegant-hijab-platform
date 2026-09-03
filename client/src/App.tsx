@@ -23,11 +23,15 @@ import EmployeeBot from "./pages/EmployeeBot";
 import Financials from "./pages/Financials";
 import MetaConnections from "./pages/MetaConnections";
 import MetaPlatformSettings from "./pages/MetaPlatformSettings";
+import PublicLegal from "./pages/PublicLegal";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
+      <Route path={"/privacy-policy"} component={PublicLegal} />
+      <Route path={"/terms"} component={PublicLegal} />
+      <Route path={"/data-deletion"} component={PublicLegal} />
       <Route path={"/store/:productCode"} component={Storefront} />
       <Route path={"/store"} component={Storefront} />
       <Route path={"/"} component={OperationsOverview} />
@@ -78,7 +82,7 @@ function App() {
 
 function PublicOrDashboard() {
   const [location] = useLocation();
-  if (location === "/store" || location.startsWith("/store/")) return <Router />;
+  if (location === "/store" || location.startsWith("/store/") || location === "/privacy-policy" || location === "/terms" || location === "/data-deletion") return <Router />;
   return <DashboardLayout><Router /></DashboardLayout>;
 }
 
