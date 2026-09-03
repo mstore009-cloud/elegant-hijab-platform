@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 type InboxStatus = "open" | "waiting_customer" | "snoozed" | "closed";
 type InboxChannel = "manual" | "whatsapp" | "instagram" | "messenger";
 type MessageDirection = "inbound" | "outbound" | "internal_note";
+const REALTIME_INBOX_REFRESH_MS = 3_000;
 
 const statusMeta: Record<InboxStatus, { label: string; className: string }> = {
   open: { label: "مفتوحة", className: "bg-emerald-50 text-emerald-800 ring-emerald-200" },
@@ -46,8 +47,8 @@ export default function Inbox() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const listInput = useMemo(() => ({ search: search.trim() || undefined, status: status === "all" ? undefined : status, channel: channel === "all" ? undefined : channel, assignment: assignment === "all" ? undefined : assignment }), [search, status, channel, assignment]);
   const detailInput = useMemo(() => selectedId ? { conversationId: selectedId } : skipToken, [selectedId]);
-  const conversations = trpc.inbox.list.useQuery(listInput, { enabled: canRead });
-  const detail = trpc.inbox.detail.useQuery(detailInput, { enabled: canRead && detailInput !== skipToken });
+  const conversations = trpc.inbox.list.useQuery(listInput, { enabled: canRead, refetchInterval: REALTIME_INBOX_REFRESH_MS, refetchOnWindowFocus: true });
+  const detail = trpc.inbox.detail.useQuery(detailInput, { enabled: canRead && detailInput !== skipToken, refetchInterval: REALTIME_INBOX_REFRESH_MS, refetchOnWindowFocus: true });
   const botRunInput = useMemo(() => selectedId ? { conversationId: selectedId } : skipToken, [selectedId]);
   const botRuns = trpc.customerBot.runs.useQuery(botRunInput, { enabled: canRead && botRunInput !== skipToken });
   const assignees = trpc.inbox.assignees.useQuery(undefined, { enabled: canRead });
