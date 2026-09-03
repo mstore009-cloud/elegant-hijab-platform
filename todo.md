@@ -455,3 +455,21 @@
 - [x] Meta-Instagram-Dashboard-Webhook-V1-A3: إزالة افتراض نجاح POST Graph كاشتراك Instagram وتعديل مركز Meta ليعرض إرشاداً صريحاً بدلاً من جاهزية زائفة.
 - [x] Meta-Instagram-Facebook-Login-V1-A1: توثيق أن instagram_manage_messages هو المسار الفعلي المستخدم مع Facebook Login وأن instagram_business_manage_messages غير مستخدم.
 - [ ] Meta-Instagram-Facebook-Login-V1-A2: تحديد موضع إعداد Instagram Webhook ضمن Use Case Facebook Login ثم اختباره دون تغيير مسار Instagram Login.
+
+- [ ] Meta-Instagram-Account-Subscribe-V1-A1: التحقق من استدعاء POST /me/subscribed_apps بالحساب الاحترافي عبر Page token بعد ضبط حقول لوحة Meta.
+- [ ] Meta-Instagram-Account-Subscribe-V1-A2: تصحيح تمكين الحساب الاحترافي لحقول messages وmessaging_postbacks وإضافة اختبار يمنع جاهزية زائفة.
+- [ ] Meta-Instagram-Account-Subscribe-V1-A3: إعادة إصلاح Instagram ثم اختبار رسالة Direct حية وتوثيق الزمن وعدم التكرار.
+
+- [x] Meta-Instagram-PostSetup-Live-V1-A1: التحقق من عدم وصول حدث Instagram بعد اكتمال حقول Webhook وAllow access to messages وتمكين الصفحة؛ لا يوجد حدث جديد في السجل وlastInboundAt فارغ، ما يحصر العائق في مستوى وصول Meta.
+- [ ] Meta-Instagram-PostSetup-Live-V1-A2: توجيه طلب Advanced Access وBusiness Verification لمسار instagram_manage_messages الصحيح ثم إعادة اختبار الرسالة العامة.
+
+- [ ] Meta-Tech-Provider-V1-A1: بدء تعريف التطبيق كـTech Provider بعد اعتماد الإدارة وتوثيق متطلبات Business Verification وAccess Verification وApp Review.
+- [ ] Meta-Tech-Provider-V1-A2: إكمال مراحل التحقق المطلوبة ثم تقديم Advanced Access لصلاحية instagram_manage_messages فقط.
+
+- [ ] Meta-App-Review-Minimum-Scopes-V1-A1: إزالة طلبات App Review التي أضافتها Use Cases غير الجاهزة والإبقاء على الحد الأدنى لمسار Instagram Direct عبر Facebook Login.
+- [ ] Meta-App-Review-Minimum-Scopes-V1-A2: مراجعة قائمة الصلاحيات المختصرة قبل الضغط على Next أو إدخال إجابات App Review.
+
+- [x] Meta-App-Icon-V1-A1: إنشاء أيقونة مربعة أصلية لمنصة Elegant Hijab Customer Assistant متوافقة مع رفع Meta بين 512 و1024 بكسل.
+- [x] Meta-App-Icon-V1-A2: التحقق من صيغة ومقاس الملف وتسليمه للرفع في App Review.
+
+- [x] Meta-App-Icon-Reference-V1-A1: تحويل الشعار المرفوع لعالم الحجابات الأنيقة إلى أيقونة Meta مختصرة بلا نصوص دقيقة مع الحفاظ على الهوية البصرية.
