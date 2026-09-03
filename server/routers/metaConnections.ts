@@ -8,7 +8,7 @@ import { configureChannelAccount, listChannelAccounts, updateChannelSubscription
 import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
 import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
-import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, ensureMetaPlatformWebhookSubscriptions, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
+import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, ensureMetaPlatformWebhookSubscriptions, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectInstagramWebhookSubscription, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { enableWhatsAppHistorySyncJob, ensureMetaHistorySyncJobs, listMetaHistorySyncJobs, processDueMetaHistorySyncJobs, processMetaHistorySyncJob, setMetaHistorySyncStatus } from "../integrations/meta/historySync";
 import { listWhatsAppOnboardings, markWhatsAppSyncRequested, upsertWhatsAppOnboarding } from "../integrations/meta/whatsappCoexistence";
@@ -56,6 +56,7 @@ async function ensureSelectedInstagramSubscriptions(storeId: number, connectionI
   const platform = await ensureMetaPlatformWebhookSubscriptions();
   const instagramWebhook = platform.find(item => item.object === "instagram");
   if (!instagramWebhook?.ready) failures.push(`Webhook Instagram: ${instagramWebhook?.error || "اشتراك التطبيق غير جاهز"}`);
+  let appSubscriptionVerified = false;
   for (const instagram of instagramAccounts) {
     const page = overview.assets.find(asset => asset.connectionId === connectionId && asset.assetType === "page" && asset.externalId === instagram.parentExternalId);
     if (!page) {
@@ -65,6 +66,14 @@ async function ensureSelectedInstagramSubscriptions(storeId: number, connectionI
     try {
       const pageToken = await getMetaAssetAccessToken({ storeId, connectionId, assetId: page.id });
       await subscribeMessengerPage(page.externalId, pageToken);
+      const health = await inspectInstagramWebhookSubscription(page.externalId, pageToken);
+      if (!health.appReady && !appSubscriptionVerified) {
+        failures.push(`Webhook تطبيق Instagram غير مكتمل${health.missingAppFields.length ? `: ${health.missingAppFields.join(", ")}` : " أو رابط callback لا يطابق النطاق المنشور"}`);
+      }
+      appSubscriptionVerified = appSubscriptionVerified || health.appReady;
+      if (!health.assetReady) {
+        failures.push(`${instagram.displayName || instagram.externalId}: ربط الصفحة المرتبطة غير مكتمل${health.missingPageFields.length ? `: ${health.missingPageFields.join(", ")}` : ""}`);
+      }
     } catch (error) {
       failures.push(`${instagram.displayName || instagram.externalId}: ${error instanceof Error ? error.message : "تعذر تثبيت التطبيق على الصفحة المرتبطة"}`);
     }

@@ -226,6 +226,40 @@ export async function inspectMessengerPageWebhookSubscription(pageId: string, pa
   };
 }
 
+/**
+ * Verifies the two subscriptions Meta requires for Instagram Messaging:
+ * the app-level `instagram` callback and the linked Facebook Page app binding.
+ * A successful POST to /subscriptions alone is not treated as evidence of a live subscription.
+ */
+export async function inspectInstagramWebhookSubscription(pageId: string, pageAccessToken: string, fetcher: typeof fetch = fetch) {
+  const runtime = await getMetaRuntimeSettings();
+  if (!runtime.appId || !runtime.appSecret || !runtime.publicBaseUrl) throw new Error("إعداد تطبيق Meta المركزي غير مكتمل.");
+  const expectedCallbackUrl = buildMetaPlatformUrls(runtime.publicBaseUrl).webhookCallbackUrl;
+
+  const appUrl = new URL(graphBase(`${runtime.appId}/subscriptions`, runtime.graphApiVersion));
+  const appResponse = await fetcher(appUrl, { headers: { Authorization: `Bearer ${runtime.appId}|${runtime.appSecret}` } });
+  const appPayload = await readMetaJson(appResponse, "فحص اشتراك تطبيق Instagram");
+  const appSubscription = Array.isArray(appPayload?.data) ? appPayload.data.find((item: any) => item?.object === "instagram" && String(item?.callback_url || "") === expectedCallbackUrl) : null;
+  const appSubscribedFields = Array.isArray(appSubscription?.fields) ? appSubscription.fields.map(String) : [];
+  const missingAppFields = instagramSubscribedFields.filter(field => !appSubscribedFields.includes(field));
+
+  const pageUrl = new URL(graphBase(`${encodeURIComponent(pageId)}/subscribed_apps`, runtime.graphApiVersion));
+  pageUrl.searchParams.set("fields", "id,name,subscribed_fields");
+  const pageResponse = await fetcher(pageUrl, { headers: { Authorization: `Bearer ${pageAccessToken}` } });
+  const pagePayload = await readMetaJson(pageResponse, "فحص ربط صفحة Instagram المرتبطة");
+  const pageSubscription = Array.isArray(pagePayload?.data) ? pagePayload.data.find((item: any) => String(item?.id || "") === runtime.appId) : null;
+  const pageSubscribedFields = Array.isArray(pageSubscription?.subscribed_fields) ? pageSubscription.subscribed_fields.map(String) : [];
+  const missingPageFields = ["messages"].filter(field => !pageSubscribedFields.includes(field));
+
+  return {
+    appReady: Boolean(appSubscription) && missingAppFields.length === 0,
+    assetReady: Boolean(pageSubscription) && missingPageFields.length === 0,
+    expectedCallbackUrl,
+    missingAppFields,
+    missingPageFields,
+  };
+}
+
 async function graphList(path: string, accessToken: string, fields: string, graphApiVersion: string) {
   const first = new URL(graphBase(path, graphApiVersion));
   first.searchParams.set("fields", fields);

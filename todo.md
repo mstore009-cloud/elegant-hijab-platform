@@ -434,3 +434,16 @@
 - [x] Meta-Instagram-Health-UI-V1-A1: إظهار بطاقة حالة Instagram وزر إصلاح استقبال Instagram داخل تبويب Webhook والصحة عند اختيار حساب Instagram.
 - [x] Meta-Instagram-Health-UI-V1-A2: ربط الزر بإجراء repairInstagramReception وعرض نجاح أو خطأ الاشتراك بشكل واضح دون كشف رموز.
 - [ ] Meta-Instagram-Health-UI-V1-A3: اختبار العقد والواجهة والحالة الفعلية ثم متابعة اختبار الرسالة الحية.
+- [ ] Meta-Instagram-Retry-Fix-V1-A1: تحليل آخر حدث Instagram بحالة retry_pending ورسالة الخطأ وعلاقته بحساب القناة والأصل.
+- [ ] Meta-Instagram-Retry-Fix-V1-A2: إصلاح سبب فشل تطبيع أو حفظ رسالة Instagram الحية مع اختبار تكاملي يمنع التراجع.
+- [ ] Meta-Instagram-Retry-Fix-V1-A3: إعادة معالجة الحدث المتعثر ثم إعادة اختبار رسالة Instagram حية ومنع التكرار.
+- [ ] Meta-Instagram-App-Review-V1-A1: التحقق من مستوى وصول instagram_manage_messages وinstagram_basic وpages_manage_metadata في Meta، وتمييز اختبار دور التطبيق عن الاستخدام العام.
+- [ ] Meta-Instagram-App-Review-V1-A2: تجهيز طلب Advanced Access/App Review للرسائل العامة أو إضافة حساب الاختبار كـTester مؤقتاً، ثم إعادة إرسال رسالة Instagram.
+- [ ] Meta-Instagram-Sender-Identity-V1-A1: التحقق من أثر كون حساب Instagram المرسل حساب أعمال في المحفظة ذاتها لكنه ليس هوية App Role مستقلة.
+- [ ] Meta-Instagram-Sender-Identity-V1-A2: تنفيذ اختبار حاسم بهوية App Role أو إعداد App Review ثم توثيق سبب عدم وصول Webhook.
+- [ ] Meta-Instagram-Advanced-Access-V1-A1: توثيق أن instagram_business_manage_messages بحالة Ready for testing تمنع الاستقبال العام رغم نشر التطبيق وجاهزية الاشتراك.
+- [ ] Meta-Instagram-Advanced-Access-V1-A2: إعداد وتقديم Advanced Access/App Review لصلاحية رسائل Instagram المطلوبة، ثم إعادة اختبار الرسائل العامة.
+- [ ] Meta-Instagram-Login-Path-V1-A1: مطابقة ظهور instagram_business_manage_messages في App Review مع مسار Facebook Login for Business والصلاحية instagram_manage_messages التي يمنحها الاتصال الموحد.
+- [ ] Meta-Instagram-Login-Path-V1-A2: تحديد مسار Meta الصحيح لطلب الوصول أو الاختبار وفق نوع Login، ثم إعادة اختبار Webhook.
+- [x] Meta-Instagram-Subscription-Verify-V1-A1: فحص اشتراك تطبيق Instagram والصفحة المرتبطة عبر Graph GET وتحديث صحة القناة من النتيجة الفعلية لا من نجاح طلب الاشتراك فقط.
+- [x] Meta-Instagram-Subscription-Verify-V1-A2: إضافة اختبار يثبت كشف callback أو messages الناقصين قبل إعادة اختبار الرسالة الحية.
