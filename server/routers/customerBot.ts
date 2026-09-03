@@ -15,8 +15,19 @@ async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { i
 }
 
 const settingsInput = z.object({
-  enabled: z.boolean(), mode: z.enum(botModes), fastModel: z.string().trim().min(1).max(80), escalationModel: z.string().trim().min(1).max(80),
-  minimumConfidence: z.number().int().min(1).max(100), maxDailyReplies: z.number().int().min(1).max(1000), maxDailyEscalations: z.number().int().min(1).max(500),
+  enabled: z.boolean(),
+  mode: z.enum(botModes),
+  messengerEnabled: z.boolean(),
+  instagramEnabled: z.boolean(),
+  whatsappEnabled: z.boolean(),
+  dialect: z.string().trim().min(2).max(80),
+  tone: z.enum(["warm", "professional", "concise"]),
+  operatorInstructions: z.string().trim().max(12000).nullable(),
+  fastModel: z.string().trim().min(1).max(80),
+  escalationModel: z.string().trim().min(1).max(80),
+  minimumConfidence: z.number().int().min(1).max(100),
+  maxDailyReplies: z.number().int().min(1).max(1000),
+  maxDailyEscalations: z.number().int().min(1).max(500),
 });
 const knowledgeInput = z.object({ title: z.string().trim().min(3).max(240), kind: z.enum(knowledgeKinds), body: z.string().trim().min(12).max(12000) });
 
@@ -29,12 +40,13 @@ export const customerBotRouter = router({
   }),
   updateSettings: protectedProcedure.input(settingsInput).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.manage");
-    if (input.mode === "auto_reply") throw new TRPCError({ code: "BAD_REQUEST", message: "الإرسال الآلي غير متاح قبل ربط قناة رسمية واختبارها. استخدم وضع المسودات للمراجعة." });
+    if (input.mode === "auto_reply" && !input.enabled) throw new TRPCError({ code: "BAD_REQUEST", message: "فعّل البوت أولاً أو استخدم وضع المسودات قبل حفظ الرد الآلي." });
+    if (input.mode === "auto_reply" && !input.messengerEnabled && !input.instagramEnabled && !input.whatsappEnabled) throw new TRPCError({ code: "BAD_REQUEST", message: "اختر قناة واحدة على الأقل قبل تفعيل الرد الآلي." });
     const available = await listLLMModels();
     const ids = new Set(available.data.map(model => model.id));
     if (!ids.has(input.fastModel) || !ids.has(input.escalationModel)) throw new TRPCError({ code: "BAD_REQUEST", message: "النموذج المختار لم يعد متاحاً في كتالوج المنصة الحي." });
     const settings = await updateCustomerBotSettings({ ...input, storeId: store.id, actorUserId: ctx.user.id });
-    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_settings", entityId: settings.id, action: "bot.settings_updated", summary: `تم تحديث إعدادات البوت: سريع ${settings.fastModel}، وتصعيد ${settings.escalationModel}.` });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_settings", entityId: settings.id, action: "bot.settings_updated", summary: `تم تحديث إعدادات البوت: وضع ${settings.mode}، سريع ${settings.fastModel}، وتصعيد ${settings.escalationModel}.` });
     return settings;
   }),
   runs: protectedProcedure.input(z.object({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => listCustomerBotRuns((await requireStore(ctx, "inbox.read")).id, input.conversationId)),

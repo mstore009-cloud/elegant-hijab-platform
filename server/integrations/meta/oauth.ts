@@ -253,6 +253,9 @@ export async function inspectInstagramPageWebhookSubscription(pageId: string, pa
   };
 }
 
+// Backward-compatible export used by the Meta connections router.
+export const inspectInstagramWebhookSubscription = inspectInstagramPageWebhookSubscription;
+
 async function graphList(path: string, accessToken: string, fields: string, graphApiVersion: string) {
   const first = new URL(graphBase(path, graphApiVersion));
   first.searchParams.set("fields", fields);

@@ -52,7 +52,7 @@ async function setup(message: string) {
   const conversation = await createManualConversation({ storeId, actorUserId: owner.id, contactName: "عميلة اختبار", contactPhone: "07700000000", subject: "سؤال عن حجاب" });
   const incoming = await recordInboxMessage({ storeId, conversationId: conversation.conversationId, direction: "inbound", body: message, actorUserId: owner.id });
   cleanups.push({ storeId, conversationIds: [conversation.conversationId], productIds: [productId] });
-  await updateCustomerBotSettings({ storeId, actorUserId: owner.id, enabled: true, mode: "draft_only", fastModel: "gpt-5-mini", escalationModel: "gpt-5", minimumConfidence: 75, maxDailyReplies: 10, maxDailyEscalations: 4 });
+  await updateCustomerBotSettings({ storeId, actorUserId: owner.id, enabled: true, mode: "draft_only", messengerEnabled: false, instagramEnabled: false, whatsappEnabled: false, dialect: "عربية عراقية بسيطة", tone: "warm", operatorInstructions: null, fastModel: "gpt-5-mini", escalationModel: "gpt-5", minimumConfidence: 75, maxDailyReplies: 10, maxDailyEscalations: 4 });
   return { db, owner, storeId, productId, conversationId: conversation.conversationId, messageId: incoming.messageId };
 }
 
@@ -80,6 +80,15 @@ describe("بوت العملاء الهجين", () => {
     expect(run.factsSnapshot).toContain("18000.00");
     expect(run.factsSnapshot).toContain("زيتي");
     expect(run.factsSnapshot).not.toContain("costPrice");
+  });
+
+  it("لا يرسل رداً خارجياً عندما يكون وضع الرد الآلي مفعلاً لكن القناة غير مفعلة", async () => {
+    const setupData = await setup("هل الحجاب الزيتي متوفر؟");
+    await updateCustomerBotSettings({ storeId: setupData.storeId, actorUserId: setupData.owner.id, enabled: true, mode: "auto_reply", messengerEnabled: false, instagramEnabled: false, whatsappEnabled: false, dialect: "عربية عراقية بسيطة", tone: "warm", operatorInstructions: "أجب بدقة ولا تخمّن.", fastModel: "gpt-5-mini", escalationModel: "gpt-5", minimumConfidence: 75, maxDailyReplies: 10, maxDailyEscalations: 4 });
+    const mock = mockReply("نعم، اللون الزيتي متوفر.");
+    const result = await generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: setupData.messageId, llm: mock.llm });
+    expect(result).toMatchObject({ route: "fast", status: "draft" });
+    expect(mock.calls).toEqual([{ model: "gpt-5-mini" }]);
   });
 
   it("يصعّد المقارنة المركبة مباشرة إلى GPT-5 ويحفظ سبب التصعيد", async () => {

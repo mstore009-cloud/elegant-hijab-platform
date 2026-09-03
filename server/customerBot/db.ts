@@ -5,6 +5,7 @@ import {
   customerBotUsageCounters,
   customerBotKnowledgeArticles,
   customerBotRunKnowledgeSources,
+  channelAccounts,
   inboxConversations,
   inboxMessages,
   orders,
@@ -16,6 +17,7 @@ import { getDb } from "../db";
 import { invokeLLM, type InvokeParams, type InvokeResult } from "../_core/llm";
 import { notifyEmployee, notifyPermissionHolders } from "../notifications/db";
 import { listCustomerImageFacts, type CustomerImageFacts } from "./imageAnalysis";
+import { sendMetaConversationMessage } from "../channels/metaOutbound";
 
 export const botModes = ["draft_only", "auto_reply"] as const;
 export type BotMode = (typeof botModes)[number];
@@ -160,9 +162,11 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
   };
 }
 
-function assistantPrompt(input: { facts: BotFacts; incoming: string; stronger: boolean }) {
+function assistantPrompt(input: { facts: BotFacts; incoming: string; stronger: boolean; dialect: string; tone: "warm" | "professional" | "concise"; operatorInstructions: string | null }) {
   return [
     "أنت مساعد مبيعات عربي لمتجر حجابات. اكتب جواباً طبيعياً موجزاً للعميلة.",
+    `اللهجة المطلوبة: ${input.dialect}. نبرة الرد: ${input.tone}.`,
+    input.operatorInstructions ? `تعليمات المشغل المعتمدة: ${input.operatorInstructions}` : "لا توجد تعليمات إضافية من المشغل.",
     "استخدم الحقائق المرفقة فقط. لا تخترع سعراً أو لوناً أو توفرًا أو خصماً. حقائق المنتجات والتوصيل الحية مقدمة على أي بطاقة معرفة. إذا وُجد تحليل صورة، صِغه كاقتراح مرئي لا كتطابق مؤكد، ولا تذكر رابط الصورة أو مفتاح تخزينها أو تفاصيل النظام. لا تذكر أسماء النماذج أو التحويل الداخلي أو محتوى الملاحظات الداخلية.",
     "لا توافق على تعديل سعر أو مخزون أو طلب أو خصم أو إلغاء أو إرجاع؛ يجب أن تطلب متابعة الموظف في هذه الحالات.",
     input.stronger ? "هذه حالة مركبة؛ ساعد في المقارنة بوضوح، لكن اعتمد حصراً على المنتجات المرفقة." : "هذه محاولة المسار السريع؛ إذا لم تكف الحقائق فاطلب توضيحاً ولا تخمّن.",
@@ -172,7 +176,7 @@ function assistantPrompt(input: { facts: BotFacts; incoming: string; stronger: b
   ].join("\n\n");
 }
 
-async function createRun(db: any, input: { storeId: number; conversationId: number; sourceMessageId: number; route: "fast" | "escalated" | "human_handoff"; status: "draft" | "handoff" | "failed"; model?: string | null; confidence?: number | null; escalationReason?: string | null; facts: BotFacts; replyDraft?: string | null; errorSummary?: string | null; usage?: InvokeResult["usage"] }) {
+async function createRun(db: any, input: { storeId: number; conversationId: number; sourceMessageId: number; route: "fast" | "escalated" | "human_handoff"; status: "draft" | "handoff" | "failed" | "replied"; model?: string | null; confidence?: number | null; escalationReason?: string | null; facts: BotFacts; replyDraft?: string | null; errorSummary?: string | null; usage?: InvokeResult["usage"] }) {
   const result = await db.insert(customerBotRuns).values({
     storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessageId,
     route: input.route, status: input.status, model: input.model ?? null, confidence: input.confidence ?? null,
@@ -188,12 +192,18 @@ export async function getCustomerBotSettings(storeId: number) {
   return getSettings(await requireDb(), storeId);
 }
 
-export async function updateCustomerBotSettings(input: { storeId: number; actorUserId: number; enabled: boolean; mode: BotMode; fastModel: string; escalationModel: string; minimumConfidence: number; maxDailyReplies: number; maxDailyEscalations: number }) {
+export async function updateCustomerBotSettings(input: { storeId: number; actorUserId: number; enabled: boolean; mode: BotMode; messengerEnabled: boolean; instagramEnabled: boolean; whatsappEnabled: boolean; dialect: string; tone: "warm" | "professional" | "concise"; operatorInstructions: string | null; fastModel: string; escalationModel: string; minimumConfidence: number; maxDailyReplies: number; maxDailyEscalations: number }) {
   const db = await requireDb();
   await getSettings(db, input.storeId);
   await db.update(customerBotSettings).set({
     enabled: input.enabled,
     mode: input.mode,
+    messengerEnabled: input.messengerEnabled,
+    instagramEnabled: input.instagramEnabled,
+    whatsappEnabled: input.whatsappEnabled,
+    dialect: input.dialect,
+    tone: input.tone,
+    operatorInstructions: input.operatorInstructions,
     fastModel: input.fastModel,
     escalationModel: input.escalationModel,
     minimumConfidence: input.minimumConfidence,
@@ -218,6 +228,24 @@ export async function dismissCustomerBotRun(input: { storeId: number; conversati
   await db.update(customerBotRuns).set({ status: "dismissed" }).where(eq(customerBotRuns.id, run.id));
 }
 
+function channelIsEnabled(settings: any, channel: string) {
+  return channel === "messenger" ? settings.messengerEnabled : channel === "instagram" ? settings.instagramEnabled : channel === "whatsapp" ? settings.whatsappEnabled : false;
+}
+
+async function maybeSendAutomaticReply(input: { db: any; settings: any; storeId: number; conversation: any; runId: number; body: string; confidence: number; actorUserId?: number | null; route: "fast" | "escalated" }) {
+  if (input.settings.mode !== "auto_reply" || !input.settings.enabled || !channelIsEnabled(input.settings, input.conversation.channel)) return { status: "draft" as const, sent: false as const };
+  try {
+    await sendMetaConversationMessage({ storeId: input.storeId, conversationId: input.conversation.id, body: input.body, idempotencyKey: `bot:${input.runId}`, mode: "bot_guarded", actorUserId: input.actorUserId ?? null, botRunId: input.runId });
+    await input.db.update(customerBotRuns).set({ status: "replied" }).where(and(eq(customerBotRuns.id, input.runId), eq(customerBotRuns.storeId, input.storeId)));
+    return { status: "replied" as const, sent: true as const };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "تعذر إرسال رد البوت عبر القناة الرسمية.";
+    await input.db.update(customerBotRuns).set({ status: "failed", errorSummary: reason.slice(0, 500) }).where(and(eq(customerBotRuns.id, input.runId), eq(customerBotRuns.storeId, input.storeId)));
+    await notifyHumanHandoffSafely({ storeId: input.storeId, conversation: input.conversation, reason: `فشل إرسال رد البوت عبر ${input.conversation.channel}: ${reason}` });
+    return { status: "failed" as const, sent: false as const, error: reason };
+  }
+}
+
 async function notifyHumanHandoffSafely(input: { storeId: number; conversation: any; reason: string }) {
   const notification = {
     storeId: input.storeId,
@@ -240,10 +268,10 @@ async function notifyHumanHandoffSafely(input: { storeId: number; conversation: 
   }
 }
 
-export async function generateCustomerBotDraft(input: { storeId: number; actorUserId: number; conversationId: number; sourceMessageId?: number; llm?: LlmInvoker }) {
+export async function generateCustomerBotDraft(input: { storeId: number; actorUserId?: number | null; conversationId: number; sourceMessageId?: number; llm?: LlmInvoker }) {
   const db = await requireDb();
   const settings = await getSettings(db, input.storeId);
-  if (!settings.enabled) throw new Error("بوت العملاء غير مفعّل. فعّله أولاً في إعداداته ليبدأ بإنشاء مسودات للمراجعة.");
+  if (!settings.enabled) throw new Error("بوت العملاء غير مفعّل. فعّله أولاً من مركز البوت.");
   const conversation = await getScopedConversation(db, input.storeId, input.conversationId);
   const [sourceMessage] = input.sourceMessageId
     ? await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.sourceMessageId), eq(inboxMessages.conversationId, conversation.id), eq(inboxMessages.direction, "inbound"))).limit(1)
@@ -269,11 +297,12 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
   }
   try {
     if (!preEscalationReason) {
-      const fastResult = await llm({ model: settings.fastModel, messages: [{ role: "system", content: assistantPrompt({ facts, incoming: sourceMessage.body, stronger: false }) }], outputSchema: { name: "customer_assistant_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
+              const fastResult = await llm({ model: settings.fastModel, messages: [{ role: "system", content: assistantPrompt({ facts, incoming: sourceMessage.body, stronger: false, dialect: settings.dialect, tone: settings.tone, operatorInstructions: settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
       const parsed = parseStructuredReply(responseText(fastResult));
       if (!parsed.needsEscalation && parsed.confidence >= settings.minimumConfidence && parsed.reply) {
         const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "fast", status: "draft", model: settings.fastModel, confidence: parsed.confidence, facts, replyDraft: parsed.reply, usage: fastResult.usage });
-        return { runId, route: "fast" as const, status: "draft" as const, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: null };
+        const delivery = await maybeSendAutomaticReply({ db, settings, storeId: input.storeId, conversation, runId, body: parsed.reply, confidence: parsed.confidence, actorUserId: input.actorUserId, route: "fast" });
+        return { runId, route: "fast" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? null };
       }
       return generateEscalatedDraft({ db, settings, facts, sourceMessage, conversationId: conversation.id, storeId: input.storeId, llm, reason: parsed.escalationReason || "ثقة المسار السريع أقل من الحد" });
     }
@@ -293,7 +322,7 @@ async function generateEscalatedDraft(input: { db: any; settings: any; facts: Bo
     await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason: "تجاوز حد التصعيد اليومي" });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: null, escalationReason: "تجاوز حد التصعيد اليومي" };
   }
-  const result = await input.llm({ model: input.settings.escalationModel, messages: [{ role: "system", content: assistantPrompt({ facts: input.facts, incoming: input.sourceMessage.body, stronger: true }) }], outputSchema: { name: "customer_assistant_escalated_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
+  const result = await input.llm({ model: input.settings.escalationModel, messages: [{ role: "system", content: assistantPrompt({ facts: input.facts, incoming: input.sourceMessage.body, stronger: true, dialect: input.settings.dialect, tone: input.settings.tone, operatorInstructions: input.settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_escalated_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
   const parsed = parseStructuredReply(responseText(result));
   if (parsed.needsEscalation || parsed.confidence < input.settings.minimumConfidence || !parsed.reply) {
     const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "human_handoff", status: "handoff", model: input.settings.escalationModel, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason, facts: input.facts, usage: result.usage });
@@ -302,5 +331,7 @@ async function generateEscalatedDraft(input: { db: any; settings: any; facts: Bo
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason };
   }
   const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "escalated", status: "draft", model: input.settings.escalationModel, confidence: parsed.confidence, escalationReason: input.reason, facts: input.facts, replyDraft: parsed.reply, usage: result.usage });
-  return { runId, route: "escalated" as const, status: "draft" as const, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: input.reason };
+  const conversation = await getScopedConversation(input.db, input.storeId, input.conversationId);
+  const delivery = await maybeSendAutomaticReply({ db: input.db, settings: input.settings, storeId: input.storeId, conversation, runId, body: parsed.reply, confidence: parsed.confidence, route: "escalated" });
+  return { runId, route: "escalated" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? input.reason };
 }

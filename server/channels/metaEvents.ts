@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { channelAccounts, channelWebhookEvents, metaAssets, metaWebhookRetrySettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
+import { generateCustomerBotDraft } from "../customerBot/db";
 import { applyExternalDeliveryStatus, ingestExternalInboundMessage, type ExternalChannel, type ExternalMediaReference, type NormalizedInboundMessage } from "./db";
 import { storeInboundImageFromProvider } from "./media";
 
@@ -83,6 +84,9 @@ async function processReservedEvent(row: { id: number; storeId: number; payloadH
         const mediaId = ingested.mediaIds[index]; const media = event.attachments[index]; if (!mediaId || media.mediaType !== "image") continue;
         const stored = await storeInboundImageFromProvider({ storeId: ingested.storeId, mediaId, sourceUrl: media.sourceUrl });
         if (stored.status === "stored") await analyzeCustomerMessageImage({ storeId: ingested.storeId, mediaId });
+      }
+      if (event.source === "live_webhook" && event.direction !== "outbound" && ingested.accepted && !ingested.duplicate && ingested.storeId && ingested.conversationId && ingested.messageId) {
+        void generateCustomerBotDraft({ storeId: ingested.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد الرسالة الواردة:", error));
       }
     } else if (event.kind === "delivery_status") {
       await applyExternalDeliveryStatus({ storeId: row.storeId, externalMessageId: event.externalMessageId, status: event.status, occurredAt: event.occurredAt, errorSummary: event.errorSummary });
