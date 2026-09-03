@@ -399,7 +399,7 @@
 - [x] Meta-Owner-Direct-V1-A7: تشغيل TypeScript وVitest والبناء والمراجعة البصرية وحفظ checkpoint مرشح لاختبار Owner Direct الحي.
 - [ ] Meta-Owner-Direct-V1-A8: تنفيذ اختبار القبول الحي بحساب مدير المحفظة والتأكد من ظهور الصفحة دون شاشة المحفظة المالكة المعطلة، ثم اختبار Messenger وWebhook.
 - [x] Meta-Owner-Direct-V1-A9: إبقاء الاتصال Owner Direct بحالة connected عند نجاح الصفحة والقدرات مع عرض أخطاء WhatsApp أو Catalog الاختيارية كتحذيرات لا كفشل كامل.
-- [ ] Meta-Messenger-Live-V1-A1: تشخيص وإصلاح عدم وصول رسالة Messenger الحية إلى Inbox بعد نجاح Owner Direct، مع التحقق من اشتراك الصفحة وWebhook والتوجيه ومنع التكرار.
+- [x] Meta-Messenger-Live-V1-A1: تشخيص وإصلاح عدم وصول رسالة Messenger الحية إلى Inbox بعد نجاح Owner Direct، مع التحقق من اشتراك الصفحة وWebhook والتوجيه ومنع التكرار.
 - [x] Meta-Multistore-Template-V1-A1: تحويل إعداد Meta المركزي إلى قالب مُصدّر بإصدار وحالة جاهزية وروابط عامة آمنة تُدار من داخل المنصة.
 - [x] Meta-Multistore-Template-V1-A2: جعل External Business المسار الافتراضي لأي متجر جديد مع إبقاء Owner Direct لمتجر المشغل فقط.
 - [x] Meta-Multistore-Template-V1-A3: استكمال توجيه Webhook متعدد المتاجر واشتراكات الأصول وحالات الصحة دون أي معرف متجر أو أصل ثابت في الشفرة.
@@ -423,8 +423,8 @@
 - [x] Meta-Public-Legal-Pages-V1-A3: اختبار الوصول العام للصفحات الثلاث على النطاق المنشور قبل اعتماد الروابط في Meta.
 - [x] Meta-Realtime-Latency-V1-A1: تحليل تأخير وصول رسالة Messenger بمقدار 7–10 ثوانٍ بعد وصولها مرة واحدة، مع فصل زمن Meta عن زمن Webhook والطابور والواجهة.
 - [x] Meta-Realtime-Latency-V1-A2: تحسين مسار المعالجة اللحظية فقط إذا أثبتت السجلات أن التأخير داخلي، مع الحفاظ على idempotency وعزل المتاجر.
-- [ ] Meta-Realtime-Latency-V1-A3: إعادة اختبار رسالة حية وتوثيق زمن الوصول وعدم التكرار.
+- [x] Meta-Realtime-Latency-V1-A3: إعادة اختبار رسالة حية وتوثيق زمن الوصول وعدم التكرار.
 - [x] Meta-Realtime-Push-V1-A1: إنشاء قناة إشعار حي مصادق عليها لرسائل Inbox مع تصفية حسب المستخدم والمتجر.
 - [x] Meta-Realtime-Push-V1-A2: بث إشعار وصول الرسالة بعد حفظ Webhook بنجاح من دون كشف النص أو بيانات عميل في القناة العامة.
 - [x] Meta-Realtime-Push-V1-A3: ربط Inbox بالإشعار الحي لإبطال استعلاماته فوراً وإبقاء تحديث دوري احتياطي متباعد.
-- [ ] Meta-Realtime-Push-V1-A4: اختبار مصادقة القناة وعزل المتاجر وظهور رسالة Messenger حية بعد النشر.
+- [x] Meta-Realtime-Push-V1-A4: اختبار مصادقة القناة وعزل المتاجر وظهور رسالة Messenger حية بعد النشر.
