@@ -6,14 +6,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { skipToken } from "@tanstack/react-query";
 import { trpc } from "@/lib/trpc";
+import { useInboxLiveUpdates } from "@/hooks/useInboxLiveUpdates";
 import { toast } from "sonner";
 import { Archive, BellRing, Bot, ChevronDown, CircleAlert, Clock3, ContactRound, Flag, History, Inbox as InboxIcon, Link2, LoaderCircle, MessageCircleMore, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Search, Send, ShieldCheck, Sparkles, Tag, UserCheck, UsersRound, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type InboxStatus = "open" | "waiting_customer" | "snoozed" | "closed";
 type InboxChannel = "manual" | "whatsapp" | "instagram" | "messenger";
 type MessageDirection = "inbound" | "outbound" | "internal_note";
-const REALTIME_INBOX_REFRESH_MS = 3_000;
+const REALTIME_INBOX_FALLBACK_REFRESH_MS = 30_000;
 
 const statusMeta: Record<InboxStatus, { label: string; className: string }> = {
   open: { label: "مفتوحة", className: "bg-emerald-50 text-emerald-800 ring-emerald-200" },
@@ -47,13 +48,17 @@ export default function Inbox() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const listInput = useMemo(() => ({ search: search.trim() || undefined, status: status === "all" ? undefined : status, channel: channel === "all" ? undefined : channel, assignment: assignment === "all" ? undefined : assignment }), [search, status, channel, assignment]);
   const detailInput = useMemo(() => selectedId ? { conversationId: selectedId } : skipToken, [selectedId]);
-  const conversations = trpc.inbox.list.useQuery(listInput, { enabled: canRead, refetchInterval: REALTIME_INBOX_REFRESH_MS, refetchOnWindowFocus: true });
-  const detail = trpc.inbox.detail.useQuery(detailInput, { enabled: canRead && detailInput !== skipToken, refetchInterval: REALTIME_INBOX_REFRESH_MS, refetchOnWindowFocus: true });
+  const conversations = trpc.inbox.list.useQuery(listInput, { enabled: canRead, refetchInterval: REALTIME_INBOX_FALLBACK_REFRESH_MS, refetchOnWindowFocus: true });
+  const detail = trpc.inbox.detail.useQuery(detailInput, { enabled: canRead && detailInput !== skipToken, refetchInterval: REALTIME_INBOX_FALLBACK_REFRESH_MS, refetchOnWindowFocus: true });
   const botRunInput = useMemo(() => selectedId ? { conversationId: selectedId } : skipToken, [selectedId]);
   const botRuns = trpc.customerBot.runs.useQuery(botRunInput, { enabled: canRead && botRunInput !== skipToken });
   const assignees = trpc.inbox.assignees.useQuery(undefined, { enabled: canRead });
   const customers = trpc.inbox.customers.useQuery(undefined, { enabled: canRead });
   const utils = trpc.useUtils();
+  const refreshFromLiveMessage = useCallback(() => {
+    void Promise.all([utils.inbox.list.invalidate(), utils.inbox.detail.invalidate(), utils.customerBot.runs.invalidate()]);
+  }, [utils]);
+  useInboxLiveUpdates({ enabled: canRead, onInboxMessage: refreshFromLiveMessage });
 
   useEffect(() => { if (!selectedId && conversations.data?.[0]) setSelectedId(conversations.data[0].id); }, [conversations.data, selectedId]);
   const refresh = async () => { await Promise.all([utils.inbox.list.invalidate(), utils.inbox.detail.invalidate(), utils.inbox.customers.invalidate(), utils.customerBot.runs.invalidate()]); };
