@@ -447,3 +447,11 @@
 - [ ] Meta-Instagram-Login-Path-V1-A2: تحديد مسار Meta الصحيح لطلب الوصول أو الاختبار وفق نوع Login، ثم إعادة اختبار Webhook.
 - [x] Meta-Instagram-Subscription-Verify-V1-A1: فحص اشتراك تطبيق Instagram والصفحة المرتبطة عبر Graph GET وتحديث صحة القناة من النتيجة الفعلية لا من نجاح طلب الاشتراك فقط.
 - [x] Meta-Instagram-Subscription-Verify-V1-A2: إضافة اختبار يثبت كشف callback أو messages الناقصين قبل إعادة اختبار الرسالة الحية.
+- [x] Meta-Instagram-Fields-Fix-V1-A1: تحليل استجابة Graph الحية لاشتراك instagram لتحديد هل الحقول ناقصة فعلياً أم أن قارئ الاستجابة يفسرها خطأ.
+- [x] Meta-Instagram-Fields-Fix-V1-A2: تصحيح تثبيت أو تفسير حقول messages وmessaging_postbacks وcomments وmentions مع اختبار.
+- [ ] Meta-Instagram-Fields-Fix-V1-A3: إعادة إصلاح Instagram والتحقق الحي من الحقول ثم اختبار رسالة Direct.
+- [x] Meta-Instagram-Dashboard-Webhook-V1-A1: توثيق أن Testing in progress لا يمنع Messenger العامل ولا يثبت اشتراك Instagram، وفصلها عن الصحة التشغيلية.
+- [ ] Meta-Instagram-Dashboard-Webhook-V1-A2: إرشاد استكمال إعداد Instagram Webhook واختبار الرسائل من لوحة Meta وفق المسار الرسمي.
+- [x] Meta-Instagram-Dashboard-Webhook-V1-A3: إزالة افتراض نجاح POST Graph كاشتراك Instagram وتعديل مركز Meta ليعرض إرشاداً صريحاً بدلاً من جاهزية زائفة.
+- [x] Meta-Instagram-Facebook-Login-V1-A1: توثيق أن instagram_manage_messages هو المسار الفعلي المستخدم مع Facebook Login وأن instagram_business_manage_messages غير مستخدم.
+- [ ] Meta-Instagram-Facebook-Login-V1-A2: تحديد موضع إعداد Instagram Webhook ضمن Use Case Facebook Login ثم اختباره دون تغيير مسار Instagram Login.

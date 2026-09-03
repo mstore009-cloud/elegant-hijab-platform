@@ -8,7 +8,7 @@ import { configureChannelAccount, listChannelAccounts, updateChannelSubscription
 import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
 import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
-import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, ensureMetaPlatformWebhookSubscriptions, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectInstagramWebhookSubscription, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
+import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, ensureMetaPlatformWebhookSubscriptions, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectInstagramPageWebhookSubscription, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { enableWhatsAppHistorySyncJob, ensureMetaHistorySyncJobs, listMetaHistorySyncJobs, processDueMetaHistorySyncJobs, processMetaHistorySyncJob, setMetaHistorySyncStatus } from "../integrations/meta/historySync";
 import { listWhatsAppOnboardings, markWhatsAppSyncRequested, upsertWhatsAppOnboarding } from "../integrations/meta/whatsappCoexistence";
@@ -53,10 +53,6 @@ async function ensureSelectedInstagramSubscriptions(storeId: number, connectionI
   const instagramAccounts = overview.assets.filter(asset => asset.connectionId === connectionId && asset.assetType === "instagram" && asset.isSelected);
   if (!instagramAccounts.length) return [] as string[];
   const failures: string[] = [];
-  const platform = await ensureMetaPlatformWebhookSubscriptions();
-  const instagramWebhook = platform.find(item => item.object === "instagram");
-  if (!instagramWebhook?.ready) failures.push(`Webhook Instagram: ${instagramWebhook?.error || "اشتراك التطبيق غير جاهز"}`);
-  let appSubscriptionVerified = false;
   for (const instagram of instagramAccounts) {
     const page = overview.assets.find(asset => asset.connectionId === connectionId && asset.assetType === "page" && asset.externalId === instagram.parentExternalId);
     if (!page) {
@@ -66,11 +62,7 @@ async function ensureSelectedInstagramSubscriptions(storeId: number, connectionI
     try {
       const pageToken = await getMetaAssetAccessToken({ storeId, connectionId, assetId: page.id });
       await subscribeMessengerPage(page.externalId, pageToken);
-      const health = await inspectInstagramWebhookSubscription(page.externalId, pageToken);
-      if (!health.appReady && !appSubscriptionVerified) {
-        failures.push(`Webhook تطبيق Instagram غير مكتمل${health.missingAppFields.length ? `: ${health.missingAppFields.join(", ")}` : " أو رابط callback لا يطابق النطاق المنشور"}`);
-      }
-      appSubscriptionVerified = appSubscriptionVerified || health.appReady;
+      const health = await inspectInstagramPageWebhookSubscription(page.externalId, pageToken);
       if (!health.assetReady) {
         failures.push(`${instagram.displayName || instagram.externalId}: ربط الصفحة المرتبطة غير مكتمل${health.missingPageFields.length ? `: ${health.missingPageFields.join(", ")}` : ""}`);
       }
@@ -225,8 +217,8 @@ export const metaConnectionsRouter = router({
     const selectedInstagram = selectedAssets.find(asset => asset.assetType === "instagram");
     if (selectedPage) await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "messenger", providerAccountId: selectedPage.externalId, providerDisplayName: selectedPage.displayName, connectionStatus: subscriptionWarnings.length ? "testing" : "connected" });
     if (selectedInstagram) {
-      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "instagram", providerAccountId: selectedInstagram.externalId, providerDisplayName: selectedInstagram.displayName, connectionStatus: instagramWarnings.length ? "testing" : "connected" });
-      await updateChannelSubscriptionHealth({ storeId: store.id, channel: "instagram", appSubscriptionStatus: instagramWarnings.length ? "error" : "ready", assetSubscriptionStatus: instagramWarnings.length ? "error" : "ready", error: instagramWarnings.join(" | ") || null });
+      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "instagram", providerAccountId: selectedInstagram.externalId, providerDisplayName: selectedInstagram.displayName, connectionStatus: "testing" });
+      await updateChannelSubscriptionHealth({ storeId: store.id, channel: "instagram", appSubscriptionStatus: "unknown", assetSubscriptionStatus: instagramWarnings.length ? "error" : "ready", error: instagramWarnings.join(" | ") || null });
     }
     await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
     const warnings = [...discovered.failures, ...subscriptionWarnings];
@@ -271,12 +263,12 @@ export const metaConnectionsRouter = router({
     await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "instagram", providerAccountId: instagram.externalId, providerDisplayName: instagram.displayName, connectionStatus: "testing" });
     const failures = await ensureSelectedInstagramSubscriptions(store.id, connection.id);
     const error = failures.join(" | ") || null;
-    await updateChannelSubscriptionHealth({ storeId: store.id, channel: "instagram", appSubscriptionStatus: failures.length ? "error" : "ready", assetSubscriptionStatus: failures.length ? "error" : "ready", error });
-    await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "instagram", providerAccountId: instagram.externalId, providerDisplayName: instagram.displayName, connectionStatus: failures.length ? "testing" : "connected" });
+    await updateChannelSubscriptionHealth({ storeId: store.id, channel: "instagram", appSubscriptionStatus: "unknown", assetSubscriptionStatus: failures.length ? "error" : "ready", error });
+    await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: "instagram", providerAccountId: instagram.externalId, providerDisplayName: instagram.displayName, connectionStatus: "testing" });
     if (!failures.length) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
-    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "channel_account", entityId: `instagram:${instagram.externalId}`, action: "meta.instagram_reception_repaired", summary: error || "تم التحقق من اشتراك تطبيق Meta وصفحة Instagram المرتبطة بنجاح." });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "channel_account", entityId: `instagram:${instagram.externalId}`, action: "meta.instagram_reception_repaired", summary: error || "تم التحقق من ربط صفحة Instagram المرتبطة. تبقى حقول Webhook مضبوطة من لوحة Meta ثم يؤكدها وصول أول رسالة." });
     if (failures.length) throw new TRPCError({ code: "BAD_GATEWAY", message: error || "تعذر إصلاح استقبال Instagram." });
-    return { appReady: true, assetReady: true };
+    return { dashboardSetupRequired: true, assetReady: !failures.length };
   }),
   setAssetSelection: protectedProcedure.input(z.object({ connectionId: z.number().int().positive(), assetId: z.number().int().positive(), selected: z.boolean() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx);

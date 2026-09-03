@@ -125,7 +125,9 @@ async function graphGet(pathOrUrl: string, accessToken: string, graphApiVersion:
 }
 
 export const messengerPageSubscribedFields = ["messages", "messaging_postbacks", "message_deliveries", "message_reads"] as const;
-export const instagramSubscribedFields = ["messages", "messaging_postbacks", "comments", "mentions"] as const;
+// Messenger API support for Instagram only needs the messaging fields below.
+// Comments and mentions belong to the separate Instagram API webhook flow.
+export const instagramSubscribedFields = ["messages", "messaging_postbacks"] as const;
 export const whatsappSubscribedFields = ["messages", "history", "smb_app_state_sync", "smb_message_echoes", "account_update", "message_template_status_update", "phone_number_name_update", "phone_number_quality_update"] as const;
 
 async function ensureMetaAppWebhookSubscription(object: "page" | "instagram" | "whatsapp_business_account", fields: readonly string[], fetcher: typeof fetch = fetch) {
@@ -145,7 +147,9 @@ export async function ensureMetaPageWebhookSubscription(fetcher: typeof fetch = 
 }
 
 export async function ensureMetaPlatformWebhookSubscriptions(fetcher: typeof fetch = fetch) {
-  const definitions = [["page", messengerPageSubscribedFields], ["instagram", instagramSubscribedFields], ["whatsapp_business_account", whatsappSubscribedFields]] as const;
+  // Meta requires Instagram and WhatsApp app-level webhook fields to be configured
+  // in App Dashboard; posting them through /{app-id}/subscriptions is unsupported.
+  const definitions = [["page", messengerPageSubscribedFields]] as const;
   const results: Array<{ object: string; ready: boolean; error: string | null }> = [];
   for (const [object, fields] of definitions) {
     try { await ensureMetaAppWebhookSubscription(object, fields, fetcher); results.push({ object, ready: true, error: null }); }
@@ -227,21 +231,13 @@ export async function inspectMessengerPageWebhookSubscription(pageId: string, pa
 }
 
 /**
- * Verifies the two subscriptions Meta requires for Instagram Messaging:
- * the app-level `instagram` callback and the linked Facebook Page app binding.
- * A successful POST to /subscriptions alone is not treated as evidence of a live subscription.
+ * Verifies the API-configurable part of Messenger API support for Instagram.
+ * Meta configures Instagram's app-level fields in App Dashboard and does not expose
+ * them through /{app-id}/subscriptions. The Page binding is verified via Graph.
  */
-export async function inspectInstagramWebhookSubscription(pageId: string, pageAccessToken: string, fetcher: typeof fetch = fetch) {
+export async function inspectInstagramPageWebhookSubscription(pageId: string, pageAccessToken: string, fetcher: typeof fetch = fetch) {
   const runtime = await getMetaRuntimeSettings();
-  if (!runtime.appId || !runtime.appSecret || !runtime.publicBaseUrl) throw new Error("إعداد تطبيق Meta المركزي غير مكتمل.");
-  const expectedCallbackUrl = buildMetaPlatformUrls(runtime.publicBaseUrl).webhookCallbackUrl;
-
-  const appUrl = new URL(graphBase(`${runtime.appId}/subscriptions`, runtime.graphApiVersion));
-  const appResponse = await fetcher(appUrl, { headers: { Authorization: `Bearer ${runtime.appId}|${runtime.appSecret}` } });
-  const appPayload = await readMetaJson(appResponse, "فحص اشتراك تطبيق Instagram");
-  const appSubscription = Array.isArray(appPayload?.data) ? appPayload.data.find((item: any) => item?.object === "instagram" && String(item?.callback_url || "") === expectedCallbackUrl) : null;
-  const appSubscribedFields = Array.isArray(appSubscription?.fields) ? appSubscription.fields.map(String) : [];
-  const missingAppFields = instagramSubscribedFields.filter(field => !appSubscribedFields.includes(field));
+  if (!runtime.appId) throw new Error("إعداد تطبيق Meta المركزي غير مكتمل.");
 
   const pageUrl = new URL(graphBase(`${encodeURIComponent(pageId)}/subscribed_apps`, runtime.graphApiVersion));
   pageUrl.searchParams.set("fields", "id,name,subscribed_fields");
@@ -252,10 +248,7 @@ export async function inspectInstagramWebhookSubscription(pageId: string, pageAc
   const missingPageFields = ["messages"].filter(field => !pageSubscribedFields.includes(field));
 
   return {
-    appReady: Boolean(appSubscription) && missingAppFields.length === 0,
     assetReady: Boolean(pageSubscription) && missingPageFields.length === 0,
-    expectedCallbackUrl,
-    missingAppFields,
     missingPageFields,
   };
 }

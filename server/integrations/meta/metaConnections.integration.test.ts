@@ -211,16 +211,16 @@ describe("Meta Connection Center", () => {
     expect(calls[0].url.toString()).not.toContain("page-token-private");
   });
 
-  it("ينشئ اشتراكات Webhook المركزية لـPage وInstagram وWhatsApp من قالب المنصة", async () => {
+  it("ينشئ اشتراك Webhook المركزي لـPage فقط لأن Instagram وWhatsApp يضبطان من مسارات Meta الرسمية الخاصة", async () => {
     const calls: Array<{ url: URL; init?: RequestInit }> = [];
     const results = await ensureMetaPlatformWebhookSubscriptions(async (input, init) => {
       calls.push({ url: new URL(String(input)), init });
       return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
     });
-    expect(results.map(item => item.object)).toEqual(["page", "instagram", "whatsapp_business_account"]);
+    expect(results.map(item => item.object)).toEqual(["page"]);
     expect(results.every(item => item.ready)).toBe(true);
-    expect(calls).toHaveLength(3);
-    expect(calls.map(call => new URLSearchParams(String(call.init?.body)).get("object"))).toEqual(["page", "instagram", "whatsapp_business_account"]);
+    expect(calls).toHaveLength(1);
+    expect(calls.map(call => new URLSearchParams(String(call.init?.body)).get("object"))).toEqual(["page"]);
   });
 
   it("يشترك في WABA باستخدام رمز المتجر دون وضعه في الرابط", async () => {

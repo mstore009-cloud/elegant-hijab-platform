@@ -5,7 +5,7 @@ vi.mock("./platformSettings", () => ({
   getMetaRuntimeSettings: vi.fn(),
 }));
 
-import { inspectInstagramWebhookSubscription } from "./oauth";
+import { inspectInstagramPageWebhookSubscription } from "./oauth";
 import { getMetaRuntimeSettings } from "./platformSettings";
 
 const callbackUrl = "https://eleganthijab-efpivkpx.manus.space/api/webhooks/meta";
@@ -14,7 +14,7 @@ function json(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-describe("inspectInstagramWebhookSubscription", () => {
+describe("inspectInstagramPageWebhookSubscription", () => {
   beforeEach(() => {
     vi.mocked(getMetaRuntimeSettings).mockResolvedValue({
       appId: "app-1",
@@ -29,34 +29,25 @@ describe("inspectInstagramWebhookSubscription", () => {
     });
   });
 
-  it("accepts only a matching Instagram callback with every required field and a linked page messages subscription", async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/app-1/subscriptions")) {
-        return json({ data: [{ object: "instagram", callback_url: callbackUrl, fields: ["messages", "messaging_postbacks", "comments", "mentions"] }] });
-      }
+  it("accepts a linked page messages subscription without trying to inspect Instagram dashboard fields through Graph", async () => {
+    const fetcher = vi.fn(async () => {
       return json({ data: [{ id: "app-1", subscribed_fields: ["messages", "message_deliveries"] }] });
     }) as unknown as typeof fetch;
 
-    await expect(inspectInstagramWebhookSubscription("page-1", "page-token", fetcher)).resolves.toMatchObject({
-      appReady: true,
+    await expect(inspectInstagramPageWebhookSubscription("page-1", "page-token", fetcher)).resolves.toMatchObject({
       assetReady: true,
-      missingAppFields: [],
       missingPageFields: [],
     });
   });
 
-  it("reports a false-ready state when the Instagram app subscription is missing required fields", async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/app-1/subscriptions")) return json({ data: [{ object: "instagram", callback_url: callbackUrl, fields: ["messages"] }] });
-      return json({ data: [{ id: "app-1", subscribed_fields: ["messages"] }] });
+  it("reports the Page binding as incomplete when messages is missing", async () => {
+    const fetcher = vi.fn(async () => {
+      return json({ data: [{ id: "app-1", subscribed_fields: ["message_deliveries"] }] });
     }) as unknown as typeof fetch;
 
-    await expect(inspectInstagramWebhookSubscription("page-1", "page-token", fetcher)).resolves.toMatchObject({
-      appReady: false,
-      assetReady: true,
-      missingAppFields: ["messaging_postbacks", "comments", "mentions"],
+    await expect(inspectInstagramPageWebhookSubscription("page-1", "page-token", fetcher)).resolves.toMatchObject({
+      assetReady: false,
+      missingPageFields: ["messages"],
     });
   });
 });
