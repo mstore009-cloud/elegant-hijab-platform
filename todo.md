@@ -428,3 +428,9 @@
 - [x] Meta-Realtime-Push-V1-A2: بث إشعار وصول الرسالة بعد حفظ Webhook بنجاح من دون كشف النص أو بيانات عميل في القناة العامة.
 - [x] Meta-Realtime-Push-V1-A3: ربط Inbox بالإشعار الحي لإبطال استعلاماته فوراً وإبقاء تحديث دوري احتياطي متباعد.
 - [x] Meta-Realtime-Push-V1-A4: اختبار مصادقة القناة وعزل المتاجر وظهور رسالة Messenger حية بعد النشر.
+- [ ] Meta-Instagram-Live-V1-A1: التحقق من ربط أصل Instagram واشتراك الصفحة وWebhook بعد نشر تطبيق Meta.
+- [ ] Meta-Instagram-Live-V1-A2: إرسال رسالة Instagram حية وقياس زمن ظهورها ومنع التكرار داخل Inbox.
+- [ ] Meta-Instagram-Live-V1-A3: معالجة أي عائق داخلي مثبت وتوثيق تكافؤ Instagram مع Messenger.
+- [x] Meta-Instagram-Health-UI-V1-A1: إظهار بطاقة حالة Instagram وزر إصلاح استقبال Instagram داخل تبويب Webhook والصحة عند اختيار حساب Instagram.
+- [x] Meta-Instagram-Health-UI-V1-A2: ربط الزر بإجراء repairInstagramReception وعرض نجاح أو خطأ الاشتراك بشكل واضح دون كشف رموز.
+- [ ] Meta-Instagram-Health-UI-V1-A3: اختبار العقد والواجهة والحالة الفعلية ثم متابعة اختبار الرسالة الحية.
