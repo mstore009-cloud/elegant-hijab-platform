@@ -11,4 +11,13 @@ describe("عقد واجهة الصلاحيات", () => {
     expect(source).toContain("يعرض هذا القسم صلاحياتك الشخصية وحالة وصولك فقط");
     expect(source).not.toContain('profile.data?.user.role === "admin" && <section');
   });
+
+  it("يربط الكتالوج والتعيين والحفظ بعقود tRPC الحقيقية", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/AccessControl.tsx"), "utf8");
+    expect(source).toContain("trpc.access.catalog.useQuery");
+    expect(source).toContain("trpc.access.listStaff.useQuery");
+    expect(source).toContain("trpc.access.saveStaffAccess.useMutation");
+    expect(source).toContain("togglePermission(permission.code)");
+    expect(source).toContain("حفظ الصلاحيات");
+  });
 });

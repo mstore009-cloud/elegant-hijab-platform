@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
-import { addProductColor, assignProductMediaColor, deleteProductColor, renameProductColor, saveProductColorInventory, saveProductInventory } from "./db";
+import { addProductColor, assignProductMediaColor, deleteProductColor, getProductMedia, getProductWithVariants, renameProductColor, saveProductColorInventory, saveProductInventory } from "./db";
 
 describe("تدفق اللون والمخزون", () => {
   it("يعتمد لونًا ويربط صورته ويحفظ مخزون القياسات فيجعل المنتج جاهزًا للمراجعة من دون نشره", async () => {
@@ -58,6 +58,46 @@ describe("تدفق اللون والمخزون", () => {
         await db.delete(productMedia).where(eq(productMedia.productId, productId));
         await db.delete(productVariants).where(eq(productVariants.productId, productId));
         await db.delete(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 15_000);
+
+  it("يحفظ ويرجع ترتيب الوسائط لكل متغير مع فصل اللون والقياس والمخزون", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار ترتيب الوسائط.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    const store = await getPublicStore();
+    if (!owner || !store) throw new Error("لا يوجد سياق متجر للاختبار.");
+    const productCode = `TST-MEDIA-ORDER-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ storeId: store.id, productCode, name: "منتج متغيرات مرتبة", category: "اختبار", sizeLabels: JSON.stringify(["Medium", "Large"]), status: "draft", sellingPrice: "12000.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      const variantInsert = await db.insert(productVariants).values([
+        { productId, colorName: "عنابي", sizeLabel: "Medium", inventoryQuantity: 3, availability: "available", sortOrder: 0 },
+        { productId, colorName: "عنابي", sizeLabel: "Large", inventoryQuantity: 7, availability: "available", sortOrder: 1 },
+        { productId, colorName: "زيتي", sizeLabel: "Medium", inventoryQuantity: 2, availability: "available", sortOrder: 2 },
+      ]);
+      const firstVariantId = Number(variantInsert[0].insertId);
+      const secondVariantId = firstVariantId + 1;
+      const thirdVariantId = firstVariantId + 2;
+      await db.insert(productMedia).values([
+        { productId, variantId: firstVariantId, source: "manual", mediaType: "image", storageKey: "products/order-2.webp", originalFileName: "order-2.webp", colorVerified: true, sortOrder: 2 },
+        { productId, variantId: firstVariantId, source: "manual", mediaType: "image", storageKey: "products/order-1.webp", originalFileName: "order-1.webp", colorVerified: true, sortOrder: 1 },
+        { productId, variantId: secondVariantId, source: "manual", mediaType: "image", storageKey: "products/large.webp", originalFileName: "large.webp", colorVerified: true, sortOrder: 0 },
+        { productId, variantId: thirdVariantId, source: "manual", mediaType: "image", storageKey: "products/olive.webp", originalFileName: "olive.webp", colorVerified: true, sortOrder: 0 },
+      ]);
+      const variants = await getProductWithVariants(productId);
+      expect(variants?.variants.map(item => `${item.colorName}:${item.sizeLabel}:${item.inventoryQuantity}`)).toEqual(["عنابي:Medium:3", "عنابي:Large:7", "زيتي:Medium:2"]);
+      const media = await getProductMedia(productId);
+      expect(media.filter(item => item.variantId === firstVariantId).map(item => `${item.originalFileName}:${item.sortOrder}`)).toEqual(["order-1.webp:1", "order-2.webp:2"]);
+      expect(media.filter(item => item.variantId === secondVariantId).map(item => item.originalFileName)).toEqual(["large.webp"]);
+      expect(media.filter(item => item.variantId === thirdVariantId).map(item => item.originalFileName)).toEqual(["olive.webp"]);
+    } finally {
+      if (productId) {
+        await db.delete(productMedia).where(eq(productMedia.productId, productId));
+        await db.delete(productVariants).where(eq(productVariants.productId, productId));
         await db.delete(products).where(eq(products.id, productId));
       }
     }
