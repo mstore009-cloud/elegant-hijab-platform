@@ -7,6 +7,7 @@ export type ProductWithFinancials = {
   sizeLabels: string | null;
   status: string;
   sellingPrice: string;
+  previousPrice: string | null;
   costPrice: string | null;
   targetMarginPercent: string | null;
 };

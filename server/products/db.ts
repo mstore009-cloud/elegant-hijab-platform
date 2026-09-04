@@ -254,6 +254,7 @@ export async function updateProductDetails(input: {
   name?: string;
   description?: string | null;
   sellingPrice?: string;
+  previousPrice?: string | null;
   sizeLabels?: string[];
   status?: "draft" | "needs_review" | "ready" | "archived";
   actorUserId: number;
@@ -284,6 +285,13 @@ export async function updateProductDetails(input: {
     changes.sellingPrice = input.sellingPrice;
     if (Number(input.sellingPrice) > 0) nextMissing.delete("sellingPrice");
     else nextMissing.add("sellingPrice");
+  }
+  if (input.previousPrice !== undefined) {
+    if (input.previousPrice !== null && Number(input.previousPrice) <= Number(input.sellingPrice ?? product.sellingPrice)) {
+      throw new Error("السعر السابق يجب أن يكون أعلى من السعر الحالي لعرض خصم حقيقي.");
+    }
+    patch.previousPrice = input.previousPrice;
+    changes.previousPrice = input.previousPrice;
   }
   if (input.sizeLabels !== undefined) {
     patch.sizeLabels = JSON.stringify(input.sizeLabels);
@@ -535,6 +543,7 @@ export async function createProduct(input: {
   description?: string;
   status: "draft" | "needs_review" | "ready" | "active" | "archived";
   sellingPrice: string;
+  previousPrice?: string | null;
   costPrice?: string;
   targetMarginPercent?: string;
   createdByUserId: number;
@@ -550,6 +559,7 @@ export async function createProduct(input: {
     description: input.description ?? null,
     status: input.status,
     sellingPrice: input.sellingPrice,
+    previousPrice: input.previousPrice ?? null,
     costPrice: input.costPrice ?? null,
     targetMarginPercent: input.targetMarginPercent ?? null,
     createdByUserId: input.createdByUserId,
@@ -575,6 +585,7 @@ export async function createCatalogDraftProduct(input: {
   category: string;
   description: string;
   sellingPrice: string;
+  previousPrice?: string | null;
   sourceReference: string;
   createdByUserId: number;
 }) {
@@ -591,6 +602,7 @@ export async function createCatalogDraftProduct(input: {
     description: input.description,
     status: "draft",
     sellingPrice: input.sellingPrice,
+    previousPrice: input.previousPrice ?? null,
     createdByUserId: input.createdByUserId,
     variants: [],
   });

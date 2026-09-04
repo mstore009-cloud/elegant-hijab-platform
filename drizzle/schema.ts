@@ -123,6 +123,7 @@ export const products = mysqlTable(
     sizeLabels: text("sizeLabels"),
     status: mysqlEnum("status", ["draft", "needs_review", "ready", "active", "archived"]).default("draft").notNull(),
     sellingPrice: decimal("sellingPrice", { precision: 12, scale: 2 }).notNull(),
+    previousPrice: decimal("previousPrice", { precision: 12, scale: 2 }),
     costPrice: decimal("costPrice", { precision: 12, scale: 2 }),
     targetMarginPercent: decimal("targetMarginPercent", { precision: 5, scale: 2 }),
     createdByUserId: int("createdByUserId").references(() => users.id),

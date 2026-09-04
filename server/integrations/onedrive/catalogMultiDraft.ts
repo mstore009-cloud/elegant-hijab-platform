@@ -7,7 +7,13 @@ export type CatalogGroupPreviewEntry = {
   state: "ready" | "already_exists" | "invalid";
   selectable: boolean;
   sourceReference: string;
-  metadata: Pick<CatalogProductMetadata, "name" | "sellingPrice" | "description" | "sizes"> | null;
+  metadata: {
+    name: CatalogProductMetadata["name"];
+    sellingPrice: CatalogProductMetadata["sellingPrice"];
+    previousPrice: string | null;
+    description: CatalogProductMetadata["description"];
+    sizes: CatalogProductMetadata["sizes"];
+  } | null;
   imageCount: number;
   documentCount: number;
   problems: string[];
@@ -25,6 +31,7 @@ export async function previewCatalogGroupProducts(input: {
   existingProductCodes: Set<string>;
   readFolderContents: (folderId: string) => Promise<CatalogDriveItem[]>;
   readMetadataText: (fileId: string) => Promise<string>;
+  readMetadataDocx?: (fileId: string) => Promise<CatalogProductMetadata>;
 }): Promise<CatalogGroupPreviewEntry[]> {
   const folders = input.productFolders.filter(item => item.kind === "folder");
   const results: CatalogGroupPreviewEntry[] = [];
@@ -36,7 +43,7 @@ export async function previewCatalogGroupProducts(input: {
       const sourceReference = `Catalog/${input.groupName}/${productFolder.name}`;
       try {
         const contents = await input.readFolderContents(productFolder.id);
-        const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
+        const metadataFile = contents.find(item => item.kind === "file" && ["product.txt", "product.docx"].includes(item.name.toLowerCase()));
         const images = contents.filter(isImageFile);
         const documentCount = contents.filter(item => item.kind === "file" && item.id !== metadataFile?.id && !isImageFile(item)).length;
         if (!metadataFile) {
@@ -49,10 +56,13 @@ export async function previewCatalogGroupProducts(input: {
             metadata: null,
             imageCount: images.length,
             documentCount,
-            problems: ["ملف product.txt غير موجود."],
+            problems: ["ملف product.txt أو product.docx غير موجود."],
           };
         }
-        const metadata = parseCatalogProductMetadata(await input.readMetadataText(metadataFile.id));
+        const metadata = metadataFile.name.toLowerCase() === "product.docx"
+          ? await input.readMetadataDocx?.(metadataFile.id)
+          : parseCatalogProductMetadata(await input.readMetadataText(metadataFile.id));
+        if (!metadata) throw new Error("تعذر قراءة product.docx لأن مسار المحول غير متاح.");
         if (input.existingProductCodes.has(productFolder.name)) {
           return {
             productFolderId: productFolder.id,
@@ -60,7 +70,7 @@ export async function previewCatalogGroupProducts(input: {
             state: "already_exists" as const,
             selectable: false,
             sourceReference,
-            metadata: { name: metadata.name, sellingPrice: metadata.sellingPrice, description: metadata.description, sizes: metadata.sizes },
+            metadata: { name: metadata.name, sellingPrice: metadata.sellingPrice, previousPrice: metadata.previousPrice ?? null, description: metadata.description, sizes: metadata.sizes },
             imageCount: images.length,
             documentCount,
             problems: ["يوجد منتج بالرمز نفسه داخل المنصة؛ لن ينشئ النظام تكرارًا."],
@@ -72,7 +82,7 @@ export async function previewCatalogGroupProducts(input: {
           state: "ready" as const,
           selectable: true,
           sourceReference,
-          metadata: { name: metadata.name, sellingPrice: metadata.sellingPrice, description: metadata.description, sizes: metadata.sizes },
+          metadata: { name: metadata.name, sellingPrice: metadata.sellingPrice, previousPrice: metadata.previousPrice ?? null, description: metadata.description, sizes: metadata.sizes },
           imageCount: images.length,
           documentCount,
           problems: [],

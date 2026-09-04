@@ -108,12 +108,13 @@ export async function listCatalogChildren(input: {
     }));
 }
 
-/** Downloads only a known selected product metadata text file. */
-export async function readCatalogTextFile(input: {
+/** Downloads only a known selected product metadata file, with a small bounded payload. */
+export async function readCatalogFileBytes(input: {
   encryptedAccessToken: string;
   driveId: string;
   fileId: string;
-}): Promise<string> {
+  maxBytes?: number;
+}): Promise<Buffer> {
   const accessToken = decryptOneDriveToken(input.encryptedAccessToken);
   const contentResponse = await graphFetch(
     `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.fileId)}/content`,
@@ -122,7 +123,18 @@ export async function readCatalogTextFile(input: {
   if (!contentResponse.ok) {
     throw new Error(`تعذر قراءة محتوى ملف بيانات المنتج من Microsoft Graph (HTTP ${contentResponse.status}).`);
   }
-  return contentResponse.text();
+  const bytes = Buffer.from(await contentResponse.arrayBuffer());
+  const maxBytes = input.maxBytes ?? 5 * 1024 * 1024;
+  if (bytes.length > maxBytes) throw new Error("ملف بيانات المنتج أكبر من الحد المسموح (5 ميغابايت).");
+  return bytes;
+}
+
+export async function readCatalogTextFile(input: {
+  encryptedAccessToken: string;
+  driveId: string;
+  fileId: string;
+}): Promise<string> {
+  return (await readCatalogFileBytes(input)).toString("utf8");
 }
 
 /** Downloads a known approved source image only when generating a separate operational copy. It never writes to OneDrive. */

@@ -24,6 +24,7 @@ describe("إنشاء مسودة Catalog", () => {
         category: "اختبار",
         description: "تتحقق هذه المسودة من الحواجز فقط.",
         sellingPrice: "8000",
+        previousPrice: "10000",
         sourceReference: `Catalog/اختبار/${productCode}`,
         createdByUserId: owner[0].id,
       });
@@ -31,7 +32,7 @@ describe("إنشاء مسودة Catalog", () => {
       expect(first.created).toBe(true);
 
       const createdProduct = await db.select().from(products).where(eq(products.id, productId)).limit(1);
-      expect(createdProduct[0]).toMatchObject({ storeId: store[0].id, productCode, status: "draft", category: "اختبار" });
+      expect(createdProduct[0]).toMatchObject({ storeId: store[0].id, productCode, status: "draft", category: "اختبار", sellingPrice: "8000.00", previousPrice: "10000.00" });
       expect(await db.select().from(productVariants).where(eq(productVariants.productId, productId))).toEqual([]);
       expect(await db.select().from(productMedia).where(eq(productMedia.productId, productId))).toEqual([]);
       const importJob = await db.select().from(productImportJobs).where(eq(productImportJobs.linkedProductId, productId)).limit(1);

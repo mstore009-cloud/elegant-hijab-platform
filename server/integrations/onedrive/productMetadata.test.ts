@@ -16,6 +16,21 @@ PRODUCT_STATUS: draft`)).toEqual({
     });
   });
 
+  it("يقبل PREVIOUS_PRICE_IQD فقط كسعر سابق أعلى من السعر الحالي", () => {
+    expect(parseCatalogProductMetadata(`PRODUCT_NAME_AR: حجاب
+SELLING_PRICE_IQD: 12000
+PREVIOUS_PRICE_IQD: 15000
+DESCRIPTION_AR: وصف
+SIZES: Medium
+PRODUCT_STATUS: draft`)).toMatchObject({ sellingPrice: "12000", previousPrice: "15000" });
+    expect(() => parseCatalogProductMetadata(`PRODUCT_NAME_AR: حجاب
+SELLING_PRICE_IQD: 12000
+PREVIOUS_PRICE_IQD: 12000
+DESCRIPTION_AR: وصف
+SIZES:
+PRODUCT_STATUS: draft`)).toThrow("خصم حقيقي");
+  });
+
   it("يقبل القياسات المفصولة بفواصل", () => {
     expect(parseCatalogProductMetadata(`PRODUCT_NAME_AR: حجاب
 SELLING_PRICE_IQD: 12000

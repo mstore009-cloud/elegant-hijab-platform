@@ -1,0 +1,1 @@
+ALTER TABLE `products` ADD `previousPrice` decimal(12,2);

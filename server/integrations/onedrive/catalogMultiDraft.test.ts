@@ -33,10 +33,26 @@ describe("معاينة Catalog متعددة المنتجات", () => {
     expect(entries[2]?.problems[0]).toContain("product.txt");
   });
 
+  it("يقبل product.docx ويحتفظ بالسعر السابق في metadata المعروضة", async () => {
+    const entries = await previewCatalogGroupProducts({
+      groupName: "حجابات",
+      productFolders: [{ id: "folder-1", name: "HJB-DOCX-001", kind: "folder", webUrl: null, size: null }],
+      existingProductCodes: new Set(),
+      readFolderContents: async () => [
+        { id: "docx-1", name: "product.docx", kind: "file", webUrl: null, size: 2000 },
+        { id: "img-1", name: "front.jpg", kind: "file", webUrl: null, size: 1000 },
+      ],
+      readMetadataText: async () => { throw new Error("لا يجب قراءة product.txt عند توفر docx"); },
+      readMetadataDocx: async () => ({ name: "حجاب Word", sellingPrice: "12000", previousPrice: "15000", description: "وصف", sizes: ["Medium", "Large"], status: "draft" }),
+    });
+    expect(entries[0]).toMatchObject({ state: "ready", selectable: true, imageCount: 1 });
+    expect(entries[0]?.metadata).toMatchObject({ name: "حجاب Word", sellingPrice: "12000", previousPrice: "15000", sizes: ["Medium", "Large"] });
+  });
+
   it("ينشئ فقط الاختيارات الصالحة ولا يستدعي الإنشاء للمجلد الموجود أو غير الصالح", async () => {
     const createDraft = vi.fn(async () => ({ created: true }));
     const entries = [
-      { productFolderId: "ready", productCode: "HJB-200", state: "ready" as const, selectable: true, sourceReference: "Catalog/الحجابات/HJB-200", metadata: { name: "حجاب", sellingPrice: "8000", description: "وصف", sizes: [] }, imageCount: 1, documentCount: 0, problems: [] },
+      { productFolderId: "ready", productCode: "HJB-200", state: "ready" as const, selectable: true, sourceReference: "Catalog/الحجابات/HJB-200", metadata: { name: "حجاب", sellingPrice: "8000", previousPrice: null, description: "وصف", sizes: [] }, imageCount: 1, documentCount: 0, problems: [] },
       { productFolderId: "exists", productCode: "HJB-201", state: "already_exists" as const, selectable: false, sourceReference: "Catalog/الحجابات/HJB-201", metadata: null, imageCount: 1, documentCount: 0, problems: ["موجود مسبقًا"] },
       { productFolderId: "invalid", productCode: "HJB-202", state: "invalid" as const, selectable: false, sourceReference: "Catalog/الحجابات/HJB-202", metadata: null, imageCount: 0, documentCount: 0, problems: ["product.txt غير موجود"] },
     ];

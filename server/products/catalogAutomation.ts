@@ -1,8 +1,8 @@
 import { and, desc, eq } from "drizzle-orm";
 import { catalogFolderImports, productImportJobs, productMedia, productOperations, products } from "../../drizzle/schema";
-import { listCatalogChildren, readCatalogTextFile, type CatalogDriveItem } from "../integrations/onedrive/catalog";
+import { listCatalogChildren, readCatalogFileBytes, readCatalogTextFile, type CatalogDriveItem } from "../integrations/onedrive/catalog";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
-import { parseCatalogProductMetadataLenient } from "../integrations/onedrive/productMetadata";
+import { parseCatalogProductMetadataLenient, parseCatalogProductMetadataLenientDocx, type LenientCatalogProductMetadata } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { generateOperationalMediaForProduct, generateOperationalVideosForProduct } from "./operationalMediaService";
 import { generateAutomaticColorSuggestion } from "./db";
@@ -39,6 +39,14 @@ async function mapWithConcurrency<T>(items: T[], limit: number, worker: (item: T
 
 function sourceReference(groupName: string, productCode: string) {
   return `Catalog/${groupName}/${productCode}`;
+}
+
+async function readCatalogProductMetadata(input: { contents: CatalogDriveItem[]; encryptedAccessToken: string; driveId: string }): Promise<LenientCatalogProductMetadata> {
+  const textFile = input.contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
+  if (textFile) return parseCatalogProductMetadataLenient(await readCatalogTextFile({ encryptedAccessToken: input.encryptedAccessToken, driveId: input.driveId, fileId: textFile.id }));
+  const wordFile = input.contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.docx");
+  if (wordFile) return parseCatalogProductMetadataLenientDocx(await readCatalogFileBytes({ encryptedAccessToken: input.encryptedAccessToken, driveId: input.driveId, fileId: wordFile.id, maxBytes: 5 * 1024 * 1024 }));
+  return parseCatalogProductMetadataLenient(null);
 }
 
 function hasUnreviewedAutomaticSuggestion(operations: Array<{ id: number; action: string; changes: string }>) {
@@ -111,25 +119,25 @@ async function createDraftFromFolder(input: {
   folder: CatalogDriveItem;
   images: CatalogDriveItem[];
   videos: CatalogDriveItem[];
-  metadataText: string | null;
+  metadata: LenientCatalogProductMetadata;
 }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const metadata = parseCatalogProductMetadataLenient(input.metadataText);
-  const missingFields = [...metadata.problems, ...(input.images.length === 0 ? ["images"] : [])];
+  const missingFields = [...input.metadata.problems, ...(input.images.length === 0 ? ["images"] : [])];
   const source = sourceReference(input.groupName, input.folder.name);
   const result = await db.transaction(async tx => {
     const created = await tx.insert(products).values({
       storeId: input.storeId,
       productCode: input.folder.name,
-      name: metadata.name ?? `منتج يحتاج بيانات — ${input.folder.name}`,
+      name: input.metadata.name ?? `منتج يحتاج بيانات — ${input.folder.name}`,
       category: input.groupName,
-      description: metadata.description,
-      sizeLabels: JSON.stringify(metadata.sizes),
+      description: input.metadata.description,
+      sizeLabels: JSON.stringify(input.metadata.sizes),
       status: "draft",
       // The placeholder is never a public price: the draft is withheld and the
       // missing field is shown until a staff member enters a valid amount.
-      sellingPrice: metadata.sellingPrice ?? "0.00",
+      sellingPrice: input.metadata.sellingPrice ?? "0.00",
+      previousPrice: input.metadata.previousPrice ?? null,
       createdByUserId: input.ownerUserId,
     });
     const productId = Number(created[0].insertId);
@@ -226,8 +234,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       const contents = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId: folder.id });
       const images = contents.filter(isImage);
       const videos = contents.filter(isVideo);
-      const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
-      const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, fileId: metadataFile.id }) : null;
+      const metadata = await readCatalogProductMetadata({ contents, encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId! });
       const existingProduct = productByCode.get(folder.name);
       const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
       if (!existingProduct && priorFolder?.lastError === "deleted_by_user") {
@@ -249,7 +256,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
         summary.existing += 1;
         return;
       }
-      const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadataText });
+      const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadata });
       productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
       await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
       summary.draftsCreated += 1;
@@ -308,9 +315,8 @@ export async function restoreDeletedCatalogProduct(input: { ownerUserId: number;
   const contents = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: folder.id });
   const images = contents.filter(isImage);
   const videos = contents.filter(isVideo);
-  const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
-  const metadataText = metadataFile ? await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: metadataFile.id }) : null;
-  const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadataText });
+  const metadata = await readCatalogProductMetadata({ contents, encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId });
+  const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadata });
   await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source: sourceReference(group.name, folder.name), state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, lastError: null });
   let operationalCopiesCreated = 0;
   if (images.length > 0) {

@@ -64,7 +64,7 @@ export const productsRouter = router({
       url: entry.storageKey ? (await storageGet(entry.storageKey)).url : entry.mediaType === "video" ? `/api/products/${item.product.id}/media/${entry.id}/video` : null,
     })));
     return {
-      product: { productCode: item.product.productCode, name: item.product.name, category: item.product.category, description: item.product.description, sellingPrice: item.product.sellingPrice, sizeLabels: item.product.sizeLabels },
+      product: { productCode: item.product.productCode, name: item.product.name, category: item.product.category, description: item.product.description, sellingPrice: item.product.sellingPrice, previousPrice: item.product.previousPrice && Number(item.product.previousPrice) > Number(item.product.sellingPrice) ? item.product.previousPrice : null, sizeLabels: item.product.sizeLabels },
       colors: Array.from(new Set(item.variants.map(variant => variant.colorName))),
       media: media.filter(entry => Boolean(entry.url)),
     };
@@ -187,6 +187,7 @@ export const productsRouter = router({
     description: z.string().trim().max(4000).optional(),
     status: productStatus.default("draft"),
     sellingPrice: moneyString,
+    previousPrice: moneyString.optional(),
     costPrice: moneyString.optional(),
     targetMarginPercent: moneyString.optional(),
     variants: z.array(z.object({
@@ -204,6 +205,9 @@ export const productsRouter = router({
     if (!await viewerFinancialAccess(ctx.user) && hasFinancialValues) {
       throw new TRPCError({ code: "FORBIDDEN", message: "لا يمكنك إدخال تكلفة أو هامش الربح." });
     }
+    if (input.previousPrice !== undefined && Number(input.previousPrice) <= Number(input.sellingPrice)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "السعر السابق يجب أن يكون أعلى من السعر الحالي لعرض خصم حقيقي." });
+    }
     const productId = await createProduct({ ...input, storeId, createdByUserId: ctx.user.id });
     await recordInitialProductFinancialValues({ ...input, storeId, productId, actorUserId: ctx.user.id });
     return { productId };
@@ -220,11 +224,15 @@ export const productsRouter = router({
     name: z.string().trim().min(2).max(220).optional(),
     description: z.string().trim().max(4000).nullable().optional(),
     sellingPrice: moneyString.optional(),
+    previousPrice: moneyString.nullable().optional(),
     sizeLabels: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
     status: z.enum(["draft", "needs_review", "ready", "archived"]).optional(),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
-    await requireProductInOperationalStore(ctx, input.productId);
+    const { product: currentProduct } = await requireProductInOperationalStore(ctx, input.productId);
+    if (input.previousPrice !== undefined && input.previousPrice !== null && Number(input.previousPrice) <= Number(input.sellingPrice ?? currentProduct.product.sellingPrice)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "السعر السابق يجب أن يكون أعلى من السعر الحالي لعرض خصم حقيقي." });
+    }
     const { productId, ...patch } = input;
     return updateProductDetails({ productId, ...patch, actorUserId: ctx.user.id, source: "products_ui" });
   }),

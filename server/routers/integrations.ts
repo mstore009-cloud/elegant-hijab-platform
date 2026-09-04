@@ -9,10 +9,10 @@ import {
   selectCatalogRoot,
 } from "../integrations/onedrive/db";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
-import { listCatalogChildren, listCatalogRootFolders, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
+import { listCatalogChildren, listCatalogRootFolders, readCatalogFileBytes, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
 import { createSelectedCatalogDrafts, previewCatalogGroupProducts } from "../integrations/onedrive/catalogMultiDraft";
 import { createOneDriveAuthorizationUrl, createPkcePair } from "../integrations/onedrive/oauth";
-import { parseCatalogProductMetadata, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
+import { parseCatalogProductMetadata, parseCatalogProductMetadataDocx, parseCatalogProductMetadataLenientDocx, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { attachApprovedCatalogImageReferences, createApprovedCatalogColorVariants, createCatalogDraftProduct, listProducts } from "../products/db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM, listLLMModels } from "../_core/llm";
@@ -46,17 +46,19 @@ async function readSelectedCatalogProduct(userId: number, input: { groupId: stri
     driveId: connection.selectedDriveId!,
     folderId: productFolder.id,
   });
-  const metadataFile = contents.find(item => item.kind === "file" && item.name.toLowerCase() === "product.txt");
-  const metadataText = metadataFile
-    ? await readCatalogTextFile({
-      encryptedAccessToken: connection.encryptedAccessToken,
-      driveId: connection.selectedDriveId!,
-      fileId: metadataFile.id,
-    })
-    : null;
+  const metadataFile = contents.find(item => item.kind === "file" && ["product.txt", "product.docx"].includes(item.name.toLowerCase()));
+  let metadataText: string | null = null;
+  let metadataDocxBytes: Buffer | null = null;
+  if (metadataFile?.name.toLowerCase() === "product.txt") {
+    metadataText = await readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, fileId: metadataFile.id });
+  } else if (metadataFile?.name.toLowerCase() === "product.docx") {
+    metadataDocxBytes = await readCatalogFileBytes({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, fileId: metadataFile.id, maxBytes: 5 * 1024 * 1024 });
+    const preview = await parseCatalogProductMetadataLenientDocx(metadataDocxBytes);
+    metadataText = JSON.stringify({ name: preview.name, sellingPrice: preview.sellingPrice, previousPrice: preview.previousPrice ?? null, description: preview.description, sizes: preview.sizes, problems: preview.problems });
+  }
   const images = contents.filter(item => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name));
   const documents = contents.filter(item => item.kind === "file" && !images.some(image => image.id === item.id));
-  return { group, productFolder, metadataFile, metadataText, images, documents };
+  return { group, productFolder, metadataFile, metadataText, metadataDocxBytes, images, documents };
 }
 
 function requireOperationalStoreId(storeId: number | null | undefined) {
@@ -83,6 +85,7 @@ async function previewSelectedCatalogGroup(userId: number, storeId: number, grou
     existingProductCodes: new Set(knownProducts.map(product => product.productCode)),
     readFolderContents: folderId => listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId }),
     readMetadataText: fileId => readCatalogTextFile({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, fileId }),
+    readMetadataDocx: async fileId => parseCatalogProductMetadataDocx(await readCatalogFileBytes({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, fileId, maxBytes: 5 * 1024 * 1024 })),
   });
   return { group: { id: group.id, name: group.name }, entries };
 }
@@ -216,15 +219,15 @@ export const integrationsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
-    const { group, productFolder, metadataFile, metadataText, images } = await readSelectedCatalogProduct(ctx.user.id, input);
-    if (!metadataFile || !metadataText) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إنشاء المسودة من دون product.txt." });
+    const { group, productFolder, metadataFile, metadataText, metadataDocxBytes, images } = await readSelectedCatalogProduct(ctx.user.id, input);
+    if (!metadataFile || (!metadataText && !metadataDocxBytes)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إنشاء المسودة من دون product.txt أو product.docx." });
     }
     let metadata;
     try {
-      metadata = parseCatalogProductMetadata(metadataText);
+      metadata = metadataDocxBytes ? await parseCatalogProductMetadataDocx(metadataDocxBytes) : parseCatalogProductMetadata(metadataText!);
     } catch (error) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "ملف product.txt غير صالح." });
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "ملف بيانات المنتج غير صالح." });
     }
     const result = await createCatalogDraftProduct({
       storeId,
@@ -233,6 +236,7 @@ export const integrationsRouter = router({
       category: group.name,
       description: metadata.description,
       sellingPrice: metadata.sellingPrice,
+      previousPrice: metadata.previousPrice ?? null,
       sourceReference: `Catalog/${group.name}/${productFolder.name}`,
       createdByUserId: ctx.user.id,
     });
@@ -262,6 +266,7 @@ export const integrationsRouter = router({
           category: preview.group.name,
           description: entry.metadata.description,
           sellingPrice: entry.metadata.sellingPrice,
+          previousPrice: entry.metadata.previousPrice ?? null,
           sourceReference: entry.sourceReference,
           createdByUserId: ctx.user.id,
       }),

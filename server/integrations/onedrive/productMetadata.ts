@@ -4,6 +4,7 @@ export type CatalogProductMetadata = {
   description: string;
   sizes: string[];
   status: "draft";
+  previousPrice?: string;
 };
 
 export type LenientCatalogProductMetadata = {
@@ -12,9 +13,24 @@ export type LenientCatalogProductMetadata = {
   description: string | null;
   sizes: string[];
   problems: string[];
+  previousPrice?: string;
 };
 
+import mammoth from "mammoth";
+
 const knownKeys = new Set(["PRODUCT_NAME_AR", "SELLING_PRICE_IQD", "DESCRIPTION_AR", "SIZES", "PREVIOUS_PRICE_IQD", "PRODUCT_STATUS"]);
+
+export async function parseCatalogProductMetadataDocx(bytes: Buffer): Promise<CatalogProductMetadata> {
+  if (!bytes.length) throw new Error("ملف Word فارغ ولا يحتوي على بيانات المنتج.");
+  const result = await mammoth.extractRawText({ buffer: bytes });
+  return parseCatalogProductMetadata(result.value);
+}
+
+export async function parseCatalogProductMetadataLenientDocx(bytes: Buffer): Promise<LenientCatalogProductMetadata> {
+  if (!bytes.length) return { name: null, sellingPrice: null, description: null, sizes: [], problems: ["product.docx"] };
+  const result = await mammoth.extractRawText({ buffer: bytes });
+  return parseCatalogProductMetadataLenient(result.value);
+}
 
 export function parseCatalogProductMetadata(content: string): CatalogProductMetadata {
   const values = new Map<string, string>();
@@ -41,12 +57,16 @@ export function parseCatalogProductMetadata(content: string): CatalogProductMeta
   if (!/^\d+(\.\d{1,2})?$/.test(sellingPrice)) throw new Error("SELLING_PRICE_IQD يجب أن يكون رقمًا فقط.");
   const status = values.get("PRODUCT_STATUS")?.trim() ?? "";
   if (status !== "draft") throw new Error("PRODUCT_STATUS يجب أن يساوي draft في مسودة Catalog.");
+  const rawPreviousPrice = values.get("PREVIOUS_PRICE_IQD")?.trim() ?? "";
+  if (rawPreviousPrice && (!/^\d+(\.\d{1,2})?$/.test(rawPreviousPrice) || Number(rawPreviousPrice) <= Number(sellingPrice))) {
+    throw new Error("PREVIOUS_PRICE_IQD يجب أن يكون أعلى من SELLING_PRICE_IQD لعرض خصم حقيقي.");
+  }
 
   const sizes = (values.get("SIZES") ?? "")
     .split(",")
     .map(size => size.trim())
     .filter(Boolean);
-  return { name, sellingPrice, description, sizes, status: "draft" };
+  return { name, sellingPrice, description, sizes, status: "draft", ...(rawPreviousPrice ? { previousPrice: rawPreviousPrice } : {}) };
 }
 
 /**
@@ -75,9 +95,12 @@ export function parseCatalogProductMetadataLenient(content: string | null): Leni
   const rawPrice = values.get("SELLING_PRICE_IQD")?.trim() || "";
   const sellingPrice = /^\d+(\.\d{1,2})?$/.test(rawPrice) ? rawPrice : null;
   if (!sellingPrice) problems.push("sellingPrice");
+  const rawPreviousPrice = values.get("PREVIOUS_PRICE_IQD")?.trim() || "";
+  const previousPrice = sellingPrice && rawPreviousPrice && /^\d+(\.\d{1,2})?$/.test(rawPreviousPrice) && Number(rawPreviousPrice) > Number(sellingPrice) ? rawPreviousPrice : null;
+  if (rawPreviousPrice && !previousPrice) problems.push("previousPrice");
   if (!values.has("SIZES")) problems.push("sizes");
   const sizes = (values.get("SIZES") ?? "").split(",").map(size => size.trim()).filter(Boolean);
-  return { name: validText("PRODUCT_NAME_AR"), sellingPrice, description: validText("DESCRIPTION_AR"), sizes, problems };
+  return { name: validText("PRODUCT_NAME_AR"), sellingPrice, description: validText("DESCRIPTION_AR"), sizes, problems, ...(previousPrice ? { previousPrice } : {}) };
 }
 
 export function normalizeApprovedColorNames(colorNames: string[]): string[] {
