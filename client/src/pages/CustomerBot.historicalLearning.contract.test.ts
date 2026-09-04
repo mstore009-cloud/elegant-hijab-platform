@@ -8,5 +8,7 @@ describe("CustomerBot historical learning review flow", () => {
     expect(source).toContain("استخراج من التاريخ");
     expect(source).toContain("ولا يعتمدها Bot-H3 أو يستخدمها تلقائياً");
     expect(source).toContain("article.source === \"historical_candidate\"");
+    expect(source).toContain("historicalChannels");
+    expect(source).toContain("channels: historicalChannels");
   });
 });
