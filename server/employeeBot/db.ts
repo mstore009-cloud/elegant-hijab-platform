@@ -6,6 +6,7 @@ import {
   employeeBotSettings,
   employeeBotUsageCounters,
   orders,
+  users,
   productVariants,
   products,
 } from "../../drizzle/schema";
@@ -180,6 +181,15 @@ async function persistCommand(input: { db: any; storeId: number; requestedByUser
   return getEmployeeBotCommand(input.storeId, inserted);
 }
 
+async function assertEmployeeOperationPermission(db: any, storeId: number, reviewerUserId: number, intent: EmployeeBotIntent) {
+  const permissionCode = await employeeBotRequiredOperationalPermission(intent);
+  if (!permissionCode) return;
+  const [reviewer] = await db.select().from(users).where(eq(users.id, reviewerUserId)).limit(1);
+  if (!reviewer) throw new Error("المراجع غير موجود.");
+  const { assertPermission } = await import("../access/authorization");
+  await assertPermission(reviewer, permissionCode, storeId);
+}
+
 async function interpretWithModel(input: { llm: LlmInvoker; model: string; rawCommand: string; facts: CommandFacts; stronger: boolean }) {
   const result = await input.llm({
     model: input.model,
@@ -267,6 +277,7 @@ export async function reviewEmployeeBotCommand(input: { storeId: number; command
   if (!["needs_review", "needs_clarification"].includes(command.status)) throw new Error("لم تعد هذه المسودة قابلة للمراجعة.");
   const proposed = JSON.parse(command.proposedChanges) as Record<string, string | number | null>;
   const finalChanges = { ...proposed, ...(input.finalChanges ?? {}) };
+  if (input.decision === "approved") await assertEmployeeOperationPermission(db, input.storeId, input.reviewerUserId, command.intent);
   if (input.decision !== "approved") {
     await db.transaction(async (tx: any) => {
       await tx.insert(employeeBotCommandReviews).values({ storeId: input.storeId, commandId: command.id, reviewerUserId: input.reviewerUserId, decision: input.decision, finalChanges: JSON.stringify(finalChanges), note: input.note?.trim() || null });

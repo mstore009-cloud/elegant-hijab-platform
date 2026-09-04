@@ -45,7 +45,9 @@ describe("EmployeeBot-E1: مسودات الأوامر ومراجعتها", () =>
     if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار EmployeeBot-E1.");
     const reviewerResult = await db.insert(users).values({ openId: `employee-reviewer-${randomUUID()}`, name: "مراجع اختبار", role: "admin" });
     const reviewerId = Number(reviewerResult[0].insertId);
-    createdUserIds.push(reviewerId);
+    const restrictedReviewerResult = await db.insert(users).values({ openId: `employee-restricted-${randomUUID().slice(0, 8)}`, name: "مراجع بلا صلاحية", role: "user" });
+    const restrictedReviewerId = Number(restrictedReviewerResult[0].insertId);
+    createdUserIds.push(reviewerId, restrictedReviewerId);
     const firstStore = await db.insert(stores).values({ name: "متجر مساعد موظفين أول", slug: `employee-bot-one-${randomUUID().slice(0, 10)}`, primaryOwnerUserId: owner.id });
     const secondStore = await db.insert(stores).values({ name: "متجر مساعد موظفين ثان", slug: `employee-bot-two-${randomUUID().slice(0, 10)}`, primaryOwnerUserId: owner.id });
     const firstStoreId = Number(firstStore[0].insertId);
@@ -66,6 +68,7 @@ describe("EmployeeBot-E1: مسودات الأوامر ومراجعتها", () =>
     const [beforeReview] = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
     expect(beforeReview?.inventoryQuantity).toBe(4);
     await expect(reviewEmployeeBotCommand({ storeId: firstStoreId, commandId: command.id, reviewerUserId: owner.id, decision: "approved" })).rejects.toThrow("لا يمكن لمنشئ المسودة");
+    await expect(reviewEmployeeBotCommand({ storeId: firstStoreId, commandId: command.id, reviewerUserId: restrictedReviewerId, decision: "approved" })).rejects.toThrow("لا تملك صلاحية تنفيذ هذه العملية");
     await expect(getEmployeeBotCommand(secondStoreId, command.id)).rejects.toThrow("غير موجودة في المتجر التشغيلي");
 
     const executed = await reviewEmployeeBotCommand({ storeId: firstStoreId, commandId: command.id, reviewerUserId: reviewerId, decision: "approved" });
