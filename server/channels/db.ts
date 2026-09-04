@@ -243,7 +243,7 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
       await tx.update(inboxConversations).set(source === "historical_sync" ? { lastMessageAt } : { status: "open", snoozedUntil: null, closedAt: null, lastMessageAt }).where(eq(inboxConversations.id, conversationId));
       await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "message_recorded", toValue: source === "historical_sync" ? `historical:${direction}` : direction });
       if (source === "live_webhook" && direction === "inbound") await tx.update(channelAccounts).set({ lastInboundAt: input.occurredAt, lastError: null }).where(eq(channelAccounts.id, account.id));
-      if (customerId && direction === "inbound") await appendCustomerActivity(tx, { storeId: account.storeId, customerId, type: "inbox_message", title: `رسالة واردة عبر ${input.channel}`, body: messageBody });
+      if (customerId && direction === "inbound" && source === "live_webhook") await appendCustomerActivity(tx, { storeId: account.storeId, customerId, type: "inbox_message", title: `رسالة واردة عبر ${input.channel}`, body: messageBody });
       if (source === "live_webhook") await tx.update(channelWebhookEvents).set({ processingStatus: "processed", processedAt: new Date() }).where(input.reservedWebhookEventId ? eq(channelWebhookEvents.id, input.reservedWebhookEventId) : and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
       return { accepted: true as const, duplicate: false as const, conversationId, messageId, mediaIds, storeId: account.storeId, customerId };
     });
