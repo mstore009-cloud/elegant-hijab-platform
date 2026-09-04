@@ -30,6 +30,7 @@ describe("products.publicList integration", () => {
 
     expect(Array.isArray(products)).toBe(true);
     expect(products.every(product => "defaultColorName" in product)).toBe(true);
+    expect(products.every(product => !("costPrice" in product) && !("targetMarginPercent" in product))).toBe(true);
   }, 15_000);
 
   it("لا يعرض منتج متجر ثانٍ ولو كان نشطاً", async () => {
@@ -48,6 +49,8 @@ describe("products.publicList integration", () => {
       category: "اختبار",
       status: "active",
       sellingPrice: "1000.00",
+      costPrice: "400.00",
+      targetMarginPercent: "60.00",
       createdByUserId: owner.id,
     });
     productId = Number(insertedProduct[0].insertId);
