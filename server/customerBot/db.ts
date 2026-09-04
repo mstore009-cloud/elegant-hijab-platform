@@ -277,6 +277,7 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
     ? await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.sourceMessageId), eq(inboxMessages.conversationId, conversation.id), eq(inboxMessages.direction, "inbound"))).limit(1)
     : await db.select().from(inboxMessages).where(and(eq(inboxMessages.conversationId, conversation.id), eq(inboxMessages.direction, "inbound"))).orderBy(desc(inboxMessages.occurredAt), desc(inboxMessages.id)).limit(1);
   if (!sourceMessage) throw new Error("لا توجد رسالة عميل واردة صالحة لإنشاء مسودة رد.");
+  if (sourceMessage.source === "historical_sync") throw new Error("لا يشغّل Bot-H3 الرسائل التاريخية؛ استخدمي مسار المرشحات والمراجعة أولاً.");
   const facts = await collectFacts(db, input.storeId, conversation.id, sourceMessage.body, sourceMessage.id);
   const immediateHandoff = humanHandoffTerms.test(sourceMessage.body);
   const imageReason = imageHandoffReason(facts.imageAnalyses);

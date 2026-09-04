@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, customerBotSettings, customerBotUsageCounters, inboxConversationEvents, inboxConversations, inboxMessages, stores, users } from "../../drizzle/schema";
@@ -87,6 +87,8 @@ describe("Bot-H2: المعرفة والمراجعة", () => {
       { conversationId: setupData.conversationId, direction: "inbound", body: "هل يمكن إرسال الطلب إلى 07712345678؟", source: "historical_sync", occurredAt: new Date("2026-08-01T10:00:00Z"), actorUserId: setupData.owner.id },
       { conversationId: setupData.conversationId, direction: "outbound", body: "نعم، نرسل الطلب بعد تأكيد العنوان والبريد test@example.com", source: "historical_sync", occurredAt: new Date("2026-08-01T10:01:00Z"), actorUserId: setupData.owner.id },
     ]);
+    const [historicalInbound] = await setupData.db.select().from(inboxMessages).where(and(eq(inboxMessages.conversationId, setupData.conversationId), eq(inboxMessages.source, "historical_sync"), eq(inboxMessages.direction, "inbound"))).limit(1);
+    await expect(generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: historicalInbound.id, llm: async () => { throw new Error("لم يكن يجب استدعاء النموذج"); } })).rejects.toThrow("لا يشغّل Bot-H3 الرسائل التاريخية");
     await expect(extractHistoricalKnowledgeCandidates({ storeId: setupData.storeId, actorUserId: setupData.owner.id, limit: 10 })).resolves.toMatchObject({ scannedMessages: 2, candidatePairs: 1, createdCandidates: 1, skippedExisting: 0 });
     const [article] = await setupData.db.select().from(customerBotKnowledgeArticles).where(eq(customerBotKnowledgeArticles.storeId, setupData.storeId));
     expect(article).toMatchObject({ status: "draft", source: "historical_candidate" });
