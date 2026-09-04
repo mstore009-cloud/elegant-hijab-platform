@@ -1,10 +1,16 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { sendMetaConversationMessageMock } = vi.hoisted(() => ({ sendMetaConversationMessageMock: vi.fn() }));
+vi.mock("../channels/metaOutbound", () => ({ sendMetaConversationMessage: sendMetaConversationMessageMock }));
 import {
   customerBotRuns,
   customerBotSettings,
+  channelAccounts,
   customerBotUsageCounters,
+  employeePermissionGrants,
+  employeeProfiles,
   inboxConversationEvents,
   inboxConversations,
   inboxMessages,
@@ -12,12 +18,13 @@ import {
   products,
   stores,
   users,
+  workNotifications,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { createManualConversation, recordInboxMessage } from "../inbox/db";
 import { generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, updateCustomerBotSettings } from "./db";
 
-type Cleanup = { storeId: number; conversationIds: number[]; productIds: number[] };
+type Cleanup = { storeId: number; conversationIds: number[]; productIds: number[]; employeeIds?: number[]; userIds?: number[] };
 const cleanups: Cleanup[] = [];
 
 afterEach(async () => {
@@ -34,6 +41,11 @@ afterEach(async () => {
       await db.delete(productVariants).where(eq(productVariants.productId, productId));
       await db.delete(products).where(eq(products.id, productId));
     }
+    await db.delete(workNotifications).where(eq(workNotifications.storeId, cleanup.storeId));
+    await db.delete(channelAccounts).where(eq(channelAccounts.storeId, cleanup.storeId));
+    for (const employeeId of cleanup.employeeIds ?? []) await db.delete(employeePermissionGrants).where(eq(employeePermissionGrants.employeeId, employeeId));
+    for (const employeeId of cleanup.employeeIds ?? []) await db.delete(employeeProfiles).where(eq(employeeProfiles.id, employeeId));
+    for (const userId of cleanup.userIds ?? []) await db.delete(users).where(eq(users.id, userId));
     await db.delete(customerBotUsageCounters).where(eq(customerBotUsageCounters.storeId, cleanup.storeId));
     await db.delete(customerBotSettings).where(eq(customerBotSettings.storeId, cleanup.storeId));
     await db.delete(stores).where(eq(stores.id, cleanup.storeId));
@@ -82,6 +94,22 @@ describe("بوت العملاء الهجين", () => {
     expect(run.factsSnapshot).not.toContain("costPrice");
   });
 
+  it("يرسل الرد الواثق عبر بوابة Meta في وضع bot_guarded عندما تكون القناة مفعلة", async () => {
+    const setupData = await setup("هل الحجاب الزيتي متوفر؟");
+    const providerAccountId = `page-${randomUUID()}`;
+    await setupData.db.update(inboxConversations).set({ channel: "messenger", externalConversationId: `messenger:customer-${randomUUID()}` }).where(eq(inboxConversations.id, setupData.conversationId));
+    await setupData.db.insert(channelAccounts).values({ storeId: setupData.storeId, channel: "messenger", providerAccountId, providerDisplayName: "صفحة اختبار", connectionStatus: "connected", createdByUserId: setupData.owner.id });
+    await updateCustomerBotSettings({ storeId: setupData.storeId, actorUserId: setupData.owner.id, enabled: true, mode: "auto_reply", messengerEnabled: true, instagramEnabled: false, whatsappEnabled: false, dialect: "عربية عراقية بسيطة", tone: "warm", operatorInstructions: "أجب من الحقائق فقط.", fastModel: "gpt-5-mini", escalationModel: "gpt-5", minimumConfidence: 75, maxDailyReplies: 10, maxDailyEscalations: 4 });
+    sendMetaConversationMessageMock.mockResolvedValue({ outboxId: 41, status: "sent", externalMessageId: "bot-external-1", duplicate: false, inboxMessageId: 77 });
+    const mock = mockReply("نعم، اللون الزيتي متوفر.", 92);
+    const result = await generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: setupData.messageId, llm: mock.llm });
+    expect(result).toMatchObject({ route: "fast", status: "replied", confidence: 92 });
+    expect(sendMetaConversationMessageMock).toHaveBeenCalledWith(expect.objectContaining({ storeId: setupData.storeId, conversationId: setupData.conversationId, body: "نعم، اللون الزيتي متوفر.", mode: "bot_guarded" }));
+    const [run] = await listCustomerBotRuns(setupData.storeId, setupData.conversationId);
+    expect(run).toMatchObject({ status: "replied", model: "gpt-5-mini" });
+    sendMetaConversationMessageMock.mockReset();
+  });
+
   it("لا يرسل رداً خارجياً عندما يكون وضع الرد الآلي مفعلاً لكن القناة غير مفعلة", async () => {
     const setupData = await setup("هل الحجاب الزيتي متوفر؟");
     await updateCustomerBotSettings({ storeId: setupData.storeId, actorUserId: setupData.owner.id, enabled: true, mode: "auto_reply", messengerEnabled: false, instagramEnabled: false, whatsappEnabled: false, dialect: "عربية عراقية بسيطة", tone: "warm", operatorInstructions: "أجب بدقة ولا تخمّن.", fastModel: "gpt-5-mini", escalationModel: "gpt-5", minimumConfidence: 75, maxDailyReplies: 10, maxDailyEscalations: 4 });
@@ -113,6 +141,25 @@ describe("بوت العملاء الهجين", () => {
     expect(run.escalationReason).toContain("حساس");
     const [conversation] = await setupData.db.select().from(inboxConversations).where(eq(inboxConversations.id, setupData.conversationId));
     expect(conversation.priority).toBe(true);
+  });
+
+  it("ينشئ إشعار handoff عاجلاً لموظف مخول عند وجود طلب حساس", async () => {
+    const setupData = await setup("أريد خصمًا خاصًا على الطلب.");
+    const staffUserResult = await setupData.db.insert(users).values({ openId: `bot-staff-${randomUUID()}`, name: "موظف متابعة البوت", role: "user" });
+    const staffUserId = Number(staffUserResult[0].insertId);
+    const employeeResult = await setupData.db.insert(employeeProfiles).values({ userId: staffUserId, storeId: setupData.storeId, displayName: "موظف متابعة البوت", isActive: true });
+    const employeeId = Number(employeeResult[0].insertId);
+    await setupData.db.insert(employeePermissionGrants).values({ employeeId, permissionCode: "inbox.takeover", grantedByUserId: setupData.owner.id });
+    cleanups[cleanups.length - 1].employeeIds = [employeeId];
+    cleanups[cleanups.length - 1].userIds = [staffUserId];
+    await setupData.db.update(inboxConversations).set({ assignedEmployeeId: employeeId }).where(eq(inboxConversations.id, setupData.conversationId));
+    const mock = mockReply("لا ينبغي استدعائي");
+    const result = await generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: setupData.messageId, llm: mock.llm });
+    expect(result).toMatchObject({ route: "human_handoff", status: "handoff" });
+    const notifications = await setupData.db.select().from(workNotifications).where(and(eq(workNotifications.storeId, setupData.storeId), eq(workNotifications.recipientUserId, staffUserId), eq(workNotifications.type, "bot_handoff")));
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({ priority: "urgent", entityType: "inbox_conversation", entityId: setupData.conversationId });
+    expect(notifications[0].route).toContain(`/inbox?conversation=${setupData.conversationId}`);
   });
 
   it("يحافظ على عزل المتجر في إعدادات البوت وسجل مسوداته", async () => {
