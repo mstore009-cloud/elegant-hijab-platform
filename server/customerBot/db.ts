@@ -17,7 +17,7 @@ import { getDb } from "../db";
 import { invokeLLM, type InvokeParams, type InvokeResult } from "../_core/llm";
 import { notifyEmployee, notifyPermissionHolders } from "../notifications/db";
 import { listCustomerImageFacts, type CustomerImageFacts } from "./imageAnalysis";
-import { sendMetaConversationMessage } from "../channels/metaOutbound";
+import { sendMetaCommentReply, sendMetaConversationMessage } from "../channels/metaOutbound";
 
 export const botModes = ["draft_only", "auto_reply"] as const;
 export type BotMode = (typeof botModes)[number];
@@ -232,10 +232,32 @@ function channelIsEnabled(settings: any, channel: string) {
   return channel === "messenger" ? settings.messengerEnabled : channel === "instagram" ? settings.instagramEnabled : channel === "whatsapp" ? settings.whatsappEnabled : false;
 }
 
-async function maybeSendAutomaticReply(input: { db: any; settings: any; storeId: number; conversation: any; runId: number; body: string; confidence: number; actorUserId?: number | null; route: "fast" | "escalated" }) {
+function commentTargetFromMessage(message: any) {
+  if (!message?.metadataJson) return null;
+  try {
+    const metadata = JSON.parse(message.metadataJson) as { messageType?: unknown; commentExternalId?: unknown };
+    const messageType = typeof metadata.messageType === "string" ? metadata.messageType : "";
+    const commentExternalId = typeof metadata.commentExternalId === "string" ? metadata.commentExternalId.trim().slice(0, 255) : "";
+    if ((messageType === "comment" || messageType === "mention") && commentExternalId) return { commentExternalId };
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function maybeSendAutomaticReply(input: { db: any; settings: any; storeId: number; conversation: any; sourceMessage: any; runId: number; body: string; confidence: number; actorUserId?: number | null; route: "fast" | "escalated" }) {
   if (input.settings.mode !== "auto_reply" || !input.settings.enabled || !channelIsEnabled(input.settings, input.conversation.channel)) return { status: "draft" as const, sent: false as const };
   try {
-    await sendMetaConversationMessage({ storeId: input.storeId, conversationId: input.conversation.id, body: input.body, idempotencyKey: `bot:${input.runId}`, mode: "bot_guarded", actorUserId: input.actorUserId ?? null, botRunId: input.runId });
+    const commentTarget = commentTargetFromMessage(input.sourceMessage);
+    if (commentTarget) {
+      if (input.conversation.channel !== "messenger" && input.conversation.channel !== "instagram") throw new Error("ردود التعليقات متاحة حالياً لـMessenger وInstagram فقط.");
+      const account = await input.db.select({ providerAccountId: channelAccounts.providerAccountId }).from(channelAccounts).where(and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.conversation.channel))).limit(1);
+      const providerAccountId = account[0]?.providerAccountId;
+      if (!providerAccountId) throw new Error("لا يوجد أصل Meta محدد لرد التعليق.");
+      await sendMetaCommentReply({ storeId: input.storeId, channel: input.conversation.channel, providerAccountId, commentExternalId: commentTarget.commentExternalId, body: input.body, idempotencyKey: `bot-comment:${input.runId}`, actorUserId: input.actorUserId ?? null, botRunId: input.runId });
+    } else {
+      await sendMetaConversationMessage({ storeId: input.storeId, conversationId: input.conversation.id, body: input.body, idempotencyKey: `bot:${input.runId}`, mode: "bot_guarded", actorUserId: input.actorUserId ?? null, botRunId: input.runId });
+    }
     await input.db.update(customerBotRuns).set({ status: "replied" }).where(and(eq(customerBotRuns.id, input.runId), eq(customerBotRuns.storeId, input.storeId)));
     return { status: "replied" as const, sent: true as const };
   } catch (error) {
@@ -327,7 +349,7 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
       const parsed = parseStructuredReply(responseText(fastResult));
       if (!parsed.needsEscalation && parsed.confidence >= settings.minimumConfidence && parsed.reply) {
         const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "fast", status: "draft", model: settings.fastModel, confidence: parsed.confidence, facts, replyDraft: parsed.reply, usage: fastResult.usage });
-        const delivery = await maybeSendAutomaticReply({ db, settings, storeId: input.storeId, conversation, runId, body: parsed.reply, confidence: parsed.confidence, actorUserId: input.actorUserId, route: "fast" });
+        const delivery = await maybeSendAutomaticReply({ db, settings, storeId: input.storeId, conversation, sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, actorUserId: input.actorUserId, route: "fast" });
         return { runId, route: "fast" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? null };
       }
       return generateEscalatedDraft({ db, settings, facts, sourceMessage, conversationId: conversation.id, storeId: input.storeId, llm, reason: parsed.escalationReason || "ثقة المسار السريع أقل من الحد" });
@@ -358,6 +380,6 @@ async function generateEscalatedDraft(input: { db: any; settings: any; facts: Bo
   }
   const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "escalated", status: "draft", model: input.settings.escalationModel, confidence: parsed.confidence, escalationReason: input.reason, facts: input.facts, replyDraft: parsed.reply, usage: result.usage });
   const conversation = await getScopedConversation(input.db, input.storeId, input.conversationId);
-  const delivery = await maybeSendAutomaticReply({ db: input.db, settings: input.settings, storeId: input.storeId, conversation, runId, body: parsed.reply, confidence: parsed.confidence, route: "escalated" });
+  const delivery = await maybeSendAutomaticReply({ db: input.db, settings: input.settings, storeId: input.storeId, conversation, sourceMessage: input.sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, route: "escalated" });
   return { runId, route: "escalated" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? input.reason };
 }

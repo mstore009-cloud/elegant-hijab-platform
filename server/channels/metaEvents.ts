@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
-import { channelAccounts, channelWebhookEvents, metaAssets, metaWebhookRetrySettings } from "../../drizzle/schema";
+import { channelAccounts, channelWebhookEvents, customerBotSettings, inboxConversations, inboxMessages, metaAssets, metaWebhookRetrySettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 import { generateCustomerBotDraft } from "../customerBot/db";
@@ -7,7 +7,7 @@ import { applyExternalDeliveryStatus, ingestExternalInboundMessage, type Externa
 import { storeInboundImageFromProvider } from "./media";
 
 type DeliveryEvent = { kind: "delivery_status"; channel: ExternalChannel; providerAccountId: string; externalEventId: string; externalMessageId: string; status: "sent" | "delivered" | "read" | "failed"; occurredAt: Date; errorSummary?: string | null };
-type BusinessEvent = { kind: "comment" | "mention" | "lead" | "publish_status" | "unsupported" | "account_event"; providerAccountId: string; externalEventId: string; occurredAt: Date; summary: string; data: Record<string, string | number | boolean | null> };
+type BusinessEvent = { kind: "comment" | "mention" | "lead" | "publish_status" | "unsupported" | "account_event"; channel: ExternalChannel; providerAccountId: string; externalEventId: string; occurredAt: Date; summary: string; data: Record<string, string | number | boolean | null> };
 export type NormalizedMetaEvent = ({ kind: "message" } & NormalizedInboundMessage) | DeliveryEvent | BusinessEvent;
 
 function compact(value: unknown, max = 255) { return typeof value === "string" ? value.trim().slice(0, max) : ""; }
@@ -64,7 +64,7 @@ export function normalizeMetaEvents(payload: any): NormalizedMetaEvent[] {
         const field = compact(change?.field, 64); const value = change?.value || {}; const externalId = compact(value?.comment_id || value?.leadgen_id || value?.media_id || value?.post_id || value?.id);
         if (!accountId || !externalId) continue;
         const kind: BusinessEvent["kind"] = field.includes("lead") ? "lead" : field.includes("mention") ? "mention" : field.includes("comment") || field === "feed" ? "comment" : field.includes("publish") ? "publish_status" : "unsupported";
-        events.push({ kind, providerAccountId: accountId, externalEventId: `${kind}:${externalId}`, occurredAt: dateFromSeconds(value?.created_time || value?.timestamp), summary: compact(value?.message || value?.text || field, 500) || kind, data: { objectId: externalId, parentId: compact(value?.post_id || value?.media_id) || null, senderId: compact(value?.from?.id || value?.user_id) || null, verb: compact(value?.verb, 64) || null, formId: compact(value?.form_id) || null } });
+        events.push({ kind, channel, providerAccountId: accountId, externalEventId: `${kind}:${externalId}`, occurredAt: dateFromSeconds(value?.created_time || value?.timestamp), summary: compact(value?.message || value?.text || field, 500) || kind, data: { objectId: externalId, parentId: compact(value?.post_id || value?.media_id) || null, senderId: compact(value?.from?.id || value?.user_id) || null, verb: compact(value?.verb, 64) || null, formId: compact(value?.form_id) || null } });
       }
     }
   }
@@ -75,6 +75,34 @@ async function requireDb() { const db = await getDb(); if (!db) throw new Error(
 function isDuplicate(error: unknown) { const values = [error, error && typeof error === "object" && "cause" in error ? (error as any).cause : null]; return values.some(value => String((value as any)?.code || "") === "ER_DUP_ENTRY" || String((value as any)?.message || value).includes("Duplicate")); }
 function safeEventJson(event: NormalizedMetaEvent) { return JSON.stringify(event, (key, value) => key === "sourceUrl" ? undefined : value).slice(0, 60_000); }
 function reviveEvent(json: string): NormalizedMetaEvent { const event = JSON.parse(json); event.occurredAt = new Date(event.occurredAt); return event; }
+
+async function ingestMetaBusinessEvent(db: any, storeId: number, event: BusinessEvent & { kind: "comment" | "mention" }) {
+  const objectId = compact(event.data.objectId, 255);
+  if (!objectId) return { conversationId: null, messageId: null, duplicate: false };
+  const externalConversationId = `${event.channel}:comment:${objectId}`;
+  let [conversation] = await db.select().from(inboxConversations).where(and(eq(inboxConversations.storeId, storeId), eq(inboxConversations.channel, event.channel), eq(inboxConversations.externalConversationId, externalConversationId))).limit(1);
+  if (!conversation) {
+    try {
+      const inserted = await db.insert(inboxConversations).values({ storeId: storeId, channel: event.channel, externalConversationId, contactNameSnapshot: "Meta comment", contactPhoneSnapshot: null, subject: `تعليق ${event.channel === "instagram" ? "Instagram" : "Messenger"}`, status: "open", priority: false, lastMessageAt: event.occurredAt });
+      [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.id, Number(inserted[0].insertId))).limit(1);
+    } catch (error) {
+      if (!isDuplicate(error)) throw error;
+      [conversation] = await db.select().from(inboxConversations).where(and(eq(inboxConversations.storeId, storeId), eq(inboxConversations.channel, event.channel), eq(inboxConversations.externalConversationId, externalConversationId))).limit(1);
+    }
+  }
+  if (!conversation) return { conversationId: null, messageId: null, duplicate: false };
+  const metadata = JSON.stringify({ messageType: event.kind, commentExternalId: objectId, parentExternalId: compact(event.data.parentId, 255) || null });
+  try {
+    const inserted = await db.insert(inboxMessages).values({ conversationId: conversation.id, direction: "inbound", body: event.summary.slice(0, 20_000), metadataJson: metadata.slice(0, 8_000), externalMessageId: event.externalEventId, source: "live_webhook", occurredAt: event.occurredAt });
+    await db.update(inboxConversations).set({ lastMessageAt: event.occurredAt, status: "open", updatedAt: new Date() }).where(and(eq(inboxConversations.id, conversation.id), eq(inboxConversations.storeId, storeId)));
+    return { conversationId: conversation.id, messageId: Number(inserted[0].insertId), duplicate: false };
+  } catch (error) {
+    if (!isDuplicate(error)) throw error;
+    const [existing] = await db.select({ id: inboxMessages.id }).from(inboxMessages).where(and(eq(inboxMessages.conversationId, conversation.id), eq(inboxMessages.externalMessageId, event.externalEventId))).limit(1);
+    return { conversationId: conversation.id, messageId: existing?.id ?? null, duplicate: true };
+  }
+}
+
 
 async function resolveBinding(event: NormalizedMetaEvent) {
   const db = await requireDb();
@@ -98,6 +126,12 @@ async function processReservedEvent(row: { id: number; storeId: number; payloadH
       }
       if (event.source === "live_webhook" && event.direction !== "outbound" && ingested.accepted && !ingested.duplicate && ingested.storeId && ingested.conversationId && ingested.messageId) {
         void generateCustomerBotDraft({ storeId: ingested.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد الرسالة الواردة:", error));
+      }
+    } else if (event.kind === "comment" || event.kind === "mention") {
+      const ingested = await ingestMetaBusinessEvent(db, row.storeId, event as BusinessEvent & { kind: "comment" | "mention" });
+      if (!ingested.duplicate && ingested.conversationId && ingested.messageId) {
+        const [botSettings] = await db.select({ enabled: customerBotSettings.enabled }).from(customerBotSettings).where(eq(customerBotSettings.storeId, row.storeId)).limit(1);
+        if (botSettings?.enabled) void generateCustomerBotDraft({ storeId: row.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد تعليق Meta:", error));
       }
     } else if (event.kind === "delivery_status") {
       await applyExternalDeliveryStatus({ storeId: row.storeId, externalMessageId: event.externalMessageId, status: event.status, occurredAt: event.occurredAt, errorSummary: event.errorSummary });

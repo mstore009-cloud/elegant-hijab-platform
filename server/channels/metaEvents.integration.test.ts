@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { channelAccounts, channelWebhookEvents, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessages, stores, users } from "../../drizzle/schema";
+import { channelAccounts, channelWebhookEvents, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessages, metaAssets, metaConnections, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { configureChannelAccount } from "./db";
 import { enqueueAndProcessMetaEvent, getMetaEventHealth, normalizeMetaEvents, requeueMetaDeadLetters, retryDueMetaEvents } from "./metaEvents";
@@ -21,6 +21,8 @@ afterEach(async () => {
     }
     await db.delete(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, cleanup.storeId));
     await db.delete(channelAccounts).where(eq(channelAccounts.storeId, cleanup.storeId));
+    await db.delete(metaAssets).where(eq(metaAssets.storeId, cleanup.storeId));
+    await db.delete(metaConnections).where(eq(metaConnections.storeId, cleanup.storeId));
     await db.delete(stores).where(eq(stores.id, cleanup.storeId));
   }
 });
@@ -58,6 +60,24 @@ describe("Unified Meta Webhook Gateway", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].body).toBe("السلام عليكم");
     expect(JSON.parse(messages[0].metadataJson ?? "{}")).toMatchObject({ messageType: "text", replyToExternalMessageId: "mid-root-gateway", replyToBodyPreview: "الرسالة السابقة", mentions: [{ id: "staff-gateway", name: "الموظفة" }] });
+  });
+
+  it("ينشئ سياق Inbox لتعليق Meta ويشغل المسار مرة واحدة دون تكرار الرسالة", async () => {
+    const { db, owner, storeId, cleanup } = await setup();
+    const connection = await db.insert(metaConnections).values({ storeId, purpose: "unified", authMode: "external_business", status: "connected", grantedScopes: "pages_manage_engagement,pages_read_engagement", connectedByUserId: owner.id });
+    const connectionId = Number(connection[0].insertId);
+    await db.insert(metaAssets).values({ storeId, connectionId, assetType: "page", externalId: "page-comment-gateway", displayName: "صفحة التعليقات", isSelected: true });
+    const [event] = normalizeMetaEvents({ object: "page", entry: [{ id: "page-comment-gateway", changes: [{ field: "feed", value: { comment_id: "comment-gateway-1", post_id: "post-gateway-1", message: "هل يوجد لون زيتي؟", from: { id: "customer-comment-1" } } }] }] });
+    expect(event).toMatchObject({ kind: "comment", channel: "messenger", data: { objectId: "comment-gateway-1" } });
+    expect(await enqueueAndProcessMetaEvent(event, "hash-comment-gateway")).toMatchObject({ accepted: true, duplicate: false, processed: true });
+    expect(await enqueueAndProcessMetaEvent(event, "hash-comment-gateway")).toMatchObject({ accepted: true, duplicate: true });
+    const [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.externalConversationId, "messenger:comment:comment-gateway-1"));
+    expect(conversation).toBeTruthy();
+    cleanup.conversationIds.push(conversation.id);
+    const messages = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversation.id));
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ source: "live_webhook", externalMessageId: "comment:comment-gateway-1" });
+    expect(JSON.parse(messages[0].metadataJson ?? "{}")).toMatchObject({ messageType: "comment", commentExternalId: "comment-gateway-1", parentExternalId: "post-gateway-1" });
   });
 
   it("يحدث حالة تسليم رسالة صادرة داخل المتجر ولا ينشئ رسالة جديدة", async () => {
