@@ -11,6 +11,14 @@ describe("CustomerBot historical learning review flow", () => {
     expect(source).toContain("AIChatBox");
   });
 
+  it("offers an explicit bot.teach opt-in and keeps learned style as a draft", () => {
+    const source = readFileSync(new URL("./CustomerBot.tsx", import.meta.url), "utf8");
+    expect(source).toContain("customerBot.teachFromReview.useMutation");
+    expect(source).toContain("تحويل هذه الصياغة إلى مرشح تعليم");
+    expect(source).toContain("يلزم اعتماده من صلاحية المعرفة");
+    expect(source).toContain("لا يقبل تعليم السعر أو المخزون");
+  });
+
   it("offers a real extraction action and explicitly keeps candidates as drafts", () => {
     const source = readFileSync(new URL("./CustomerBot.tsx", import.meta.url), "utf8");
     expect(source).toContain("customerBot.extractHistoricalCandidates.useMutation");

@@ -5,7 +5,7 @@ import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunK
 import { getDb } from "../db";
 import { createManualConversation, recordInboxMessage } from "../inbox/db";
 import { generateCustomerBotDraft, updateCustomerBotSettings } from "./db";
-import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, getCustomerBotQualitySummary, listCustomerBotKnowledgeSources, listCustomerBotKnowledgeGaps, reviewCustomerBotRun, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "./knowledge";
+import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, getCustomerBotQualitySummary, listCustomerBotKnowledgeSources, listCustomerBotKnowledgeGaps, reviewCustomerBotRun, setCustomerBotKnowledgeStatus, teachCustomerBotFromReviewedRun, updateCustomerBotKnowledge } from "./knowledge";
 
 type Cleanup = { storeId: number; conversationId: number };
 const cleanups: Cleanup[] = [];
@@ -97,6 +97,20 @@ describe("Bot-H2: المعرفة والمراجعة", () => {
     await expect(extractHistoricalKnowledgeCandidates({ storeId: setupData.storeId, actorUserId: setupData.owner.id, limit: 10 })).resolves.toMatchObject({ candidatePairs: 1, createdCandidates: 0, skippedExisting: 1 });
     const [stillDraft] = await setupData.db.select().from(customerBotKnowledgeArticles).where(eq(customerBotKnowledgeArticles.id, article.id));
     expect(stillDraft.status).toBe("draft");
+  });
+
+  it("ينشئ bot.teach مسودة أسلوب من مراجعة معتمدة ويرفض تعليم السعر والمخزون من النص", async () => {
+    const setupData = await setup("كيف أرد على سؤال غير واضح؟");
+    const generated = await generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: setupData.messageId, llm: mockReply("سأتحقق من التفاصيل وأعود لك بلطف.") });
+    await reviewCustomerBotRun({ storeId: setupData.storeId, actorUserId: setupData.owner.id, runId: generated.runId, outcome: "approved_edited", finalReply: "سأتحقق من التفاصيل وأعود لكِ بلطف وباختصار.", feedback: "صياغة إنسانية معتمدة." });
+    const taught = await teachCustomerBotFromReviewedRun({ storeId: setupData.storeId, actorUserId: setupData.owner.id, runId: generated.runId, kind: "style_guidance", title: "أسلوب متابعة السؤال غير الواضح" });
+    expect(taught).toMatchObject({ sourceRunId: generated.runId, requiresApproval: true, created: true, article: { status: "draft", source: "review_feedback", kind: "style_guidance" } });
+    expect(taught.article.body).toContain("بلطف وباختصار");
+    const repeated = await teachCustomerBotFromReviewedRun({ storeId: setupData.storeId, actorUserId: setupData.owner.id, runId: generated.runId, kind: "style_guidance", title: "عنوان مختلف لا يكرر المحتوى" });
+    expect(repeated).toMatchObject({ created: false, article: { id: taught.article.id } });
+    await expect(teachCustomerBotFromReviewedRun({ storeId: setupData.storeId, actorUserId: setupData.owner.id, runId: generated.runId, body: "السعر 25000 دينار والمخزون متوفر." })).rejects.toThrow("لا يمكن تعليم السعر أو المخزون");
+    const articles = await setupData.db.select().from(customerBotKnowledgeArticles).where(eq(customerBotKnowledgeArticles.storeId, setupData.storeId));
+    expect(articles).toHaveLength(1);
   });
 
   it("يمنع تعديل أو اعتماد بطاقة معرفة من متجر آخر", async () => {

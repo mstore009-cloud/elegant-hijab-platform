@@ -127,6 +127,40 @@ export async function reviewCustomerBotRun(input: { storeId: number; actorUserId
   return review;
 }
 
+function rejectSensitiveTeachContent(value: string) {
+  if (/(?:سعر|السعر|مخزون|متوفر|متاحة|نفد|كمية|دينار|د\\.?\\s*ع|iqd|\\b\\d{3,}\\b)/i.test(value)) {
+    throw new Error("لا يمكن تعليم السعر أو المخزون من نص المحادثة؛ اربطي هذه المعلومات ببيانات المنتج المعتمدة.");
+  }
+}
+
+export async function teachCustomerBotFromReviewedRun(input: { storeId: number; actorUserId: number; runId: number; title?: string; kind?: Extract<KnowledgeKind, "faq" | "policy" | "style_guidance">; body?: string }) {
+  const db = await requireDb();
+  const run = await scopedRun(db, input.storeId, input.runId);
+  const [review] = await db.select().from(customerBotRunReviews).where(and(eq(customerBotRunReviews.runId, input.runId), eq(customerBotRunReviews.storeId, input.storeId))).limit(1);
+  if (!review || (review.outcome !== "approved_as_is" && review.outcome !== "approved_edited")) {
+    throw new Error("لا يمكن تعليم البوت إلا من مراجعة بشرية معتمدة.");
+  }
+  const sourceText = input.body?.trim() || review.finalReply?.trim() || run.replyDraft?.trim() || "";
+  const body = redactHistoricalText(sourceText);
+  if (body.length < 12) throw new Error("لا توجد صياغة كافية لتحويلها إلى مرشح معرفة.");
+  rejectSensitiveTeachContent(body);
+  const title = input.title?.trim() || `تعليم من مراجعة Bot-H3 #${run.id}`;
+  const articleBody = `صياغة معتمدة من مراجعة بشرية:\n${body}\n\nنطاق التعليم: الأسلوب وطريقة التعامل فقط؛ لا تُعد هذه البطاقة مصدراً للسعر أو المخزون.`;
+  const [existing] = await db.select().from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, input.storeId), eq(customerBotKnowledgeArticles.source, "review_feedback"), eq(customerBotKnowledgeArticles.body, articleBody))).limit(1);
+  if (existing) return { article: existing, sourceRunId: run.id, reviewId: review.id, requiresApproval: true, created: false };
+  const result = await db.insert(customerBotKnowledgeArticles).values({
+    storeId: input.storeId,
+    title: title.slice(0, 240),
+    kind: input.kind ?? "style_guidance",
+    body: articleBody,
+    status: "draft",
+    source: "review_feedback",
+    createdByUserId: input.actorUserId,
+  });
+  const article = await scopedArticle(db, input.storeId, Number(result[0].insertId));
+  return { article, sourceRunId: run.id, reviewId: review.id, requiresApproval: true, created: true };
+}
+
 export async function listCustomerBotKnowledgeSources(storeId: number, runId: number) {
   const db = await requireDb();
   await scopedRun(db, storeId, runId);

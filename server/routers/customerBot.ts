@@ -5,7 +5,7 @@ import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { listLLMModels } from "../_core/llm";
 import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, simulateCustomerBotInstruction, updateCustomerBotSettings } from "../customerBot/db";
-import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "../customerBot/knowledge";
+import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, teachCustomerBotFromReviewedRun, updateCustomerBotKnowledge } from "../customerBot/knowledge";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
@@ -75,6 +75,12 @@ export const customerBotRouter = router({
   }),
   qualitySummary: protectedProcedure.query(async ({ ctx }) => getCustomerBotQualitySummary((await requireStore(ctx, "bot.manage")).id)),
   reviewQueue: protectedProcedure.query(async ({ ctx }) => listCustomerBotReviewQueue((await requireStore(ctx, "bot.manage")).id)),
+  teachFromReview: protectedProcedure.input(z.object({ runId: z.number().int().positive(), title: z.string().trim().min(3).max(240).optional(), kind: z.enum(["faq", "policy", "style_guidance"]).optional(), body: z.string().trim().min(12).max(1800).optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await teachCustomerBotFromReviewedRun({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_knowledge", entityId: result.article.id, action: "bot.teach_from_review", summary: `أُنشئ مرشح تعليم من مراجعة Bot-H3 رقم ${result.sourceRunId}، وهو ينتظر اعتماداً مستقلاً.` });
+    return result;
+  }),
   reviewRun: protectedProcedure.input(z.object({ runId: z.number().int().positive(), outcome: z.enum(reviewOutcomes), finalReply: z.string().trim().max(1800).nullable().optional(), feedback: z.string().trim().max(3000).nullable().optional() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.manage");
     const review = await reviewCustomerBotRun({ ...input, storeId: store.id, actorUserId: ctx.user.id });
