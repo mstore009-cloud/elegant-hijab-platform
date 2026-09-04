@@ -470,6 +470,32 @@ export const metaAssets = mysqlTable(
   ],
 );
 
+/** Durable store-scoped Meta Catalog batch exports. Payloads are summarized; tokens and raw secrets are never stored. */
+export const metaCatalogExportJobs = mysqlTable(
+  "meta_catalog_export_jobs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    connectionId: int("connectionId").notNull().references(() => metaConnections.id),
+    catalogAssetId: int("catalogAssetId").notNull().references(() => metaAssets.id),
+    status: mysqlEnum("status", ["pending", "submitted", "processing", "completed", "partial", "failed"]).default("pending").notNull(),
+    idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
+    requestCount: int("requestCount").default(0).notNull(),
+    handle: varchar("handle", { length: 255 }),
+    validationJson: text("validationJson"),
+    lastError: varchar("lastError", { length: 500 }),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    startedAt: timestamp("startedAt"),
+    completedAt: timestamp("completedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_catalog_export_snapshot_unq").on(table.storeId, table.catalogAssetId, table.idempotencyKey),
+    index("meta_catalog_export_store_status_idx").on(table.storeId, table.status, table.createdAt),
+  ],
+);
+
 /** A verified external messaging identity, scoped to one operational store and backed by selected Meta assets. */
 export const channelAccounts = mysqlTable(
   "channel_accounts",
