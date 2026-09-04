@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { channelAccounts, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnections, metaOutboundMessages, stores, users } from "../../drizzle/schema";
+import { channelAccounts, customerBotRuns, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnections, metaOutboundMessages, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { configureChannelAccount } from "./db";
 import { sendMetaConversationMessage } from "./metaOutbound";
@@ -16,6 +16,7 @@ afterEach(async () => {
     const ids = conversations.map(item => item.id);
     if (ids.length) {
       await db.delete(metaOutboundMessages).where(inArray(metaOutboundMessages.conversationId, ids));
+      await db.delete(customerBotRuns).where(inArray(customerBotRuns.conversationId, ids));
       await db.delete(inboxConversationEvents).where(inArray(inboxConversationEvents.conversationId, ids));
       await db.delete(inboxMessages).where(inArray(inboxMessages.conversationId, ids));
       await db.delete(inboxConversations).where(inArray(inboxConversations.id, ids));
@@ -62,6 +63,24 @@ describe("Meta manual outbound delivery", () => {
       expect(messages).toHaveLength(2); expect(messages.find(message => message.direction === "outbound")).toMatchObject({ direction: "outbound", deliveryStatus: "sent", externalMessageId: `external-${channel}` });
     }
     expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it("يسجل الرد الآلي بوضع bot_guarded في صندوق الإرسال ويمنع تكراره", async () => {
+    const { db, owner, storeId } = await setup();
+    const created = await db.insert(inboxConversations).values({ storeId, channel: "messenger", externalConversationId: "messenger:recipient-bot", contactNameSnapshot: "عميلة البوت", status: "open", createdByUserId: owner.id });
+    const conversationId = Number(created[0].insertId);
+    const inbound = await db.insert(inboxMessages).values({ conversationId, direction: "inbound", body: "رسالة حديثة من العميلة", externalMessageId: "inbound-bot" });
+    const run = await db.insert(customerBotRuns).values({ storeId, conversationId, sourceMessageId: Number(inbound[0].insertId), route: "fast", status: "draft", model: "gpt-5-mini", confidence: 90, factsSnapshot: "{}", replyDraft: "أهلاً" });
+    const botRunId = Number(run[0].insertId);
+    const transport = vi.fn(async () => ({ externalMessageId: "external-bot" }));
+    const idempotencyKey = `bot:run-${randomUUID()}`;
+    const sent = await sendMetaConversationMessage({ storeId, conversationId, body: "أهلاً، أساعدك بالمعلومات المتاحة.", idempotencyKey, mode: "bot_guarded", actorUserId: owner.id, botRunId }, transport as any);
+    expect(sent).toMatchObject({ status: "sent", duplicate: false });
+    const [outbox] = await db.select().from(metaOutboundMessages).where(eq(metaOutboundMessages.conversationId, conversationId));
+    expect(outbox).toMatchObject({ mode: "bot_guarded", botRunId, status: "sent", externalMessageId: "external-bot" });
+    const duplicate = await sendMetaConversationMessage({ storeId, conversationId, body: "أهلاً، أساعدك بالمعلومات المتاحة.", idempotencyKey, mode: "bot_guarded", actorUserId: owner.id, botRunId }, transport as any);
+    expect(duplicate.duplicate).toBe(true);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 
   it("يسجل فشل المزود ولا ينشئ رسالة صادرة ناجحة", async () => {
