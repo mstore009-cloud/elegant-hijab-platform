@@ -1,5 +1,5 @@
-import { and, desc, eq, sql } from "drizzle-orm";
-import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, inboxConversations } from "../../drizzle/schema";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, inboxConversations, inboxMessages } from "../../drizzle/schema";
 import { getDb } from "../db";
 
 export const knowledgeKinds = ["faq", "policy", "style_guidance", "product_guidance"] as const;
@@ -51,6 +51,67 @@ export async function setCustomerBotKnowledgeStatus(input: { storeId: number; ac
   const article = await scopedArticle(db, input.storeId, input.articleId);
   await db.update(customerBotKnowledgeArticles).set({ status: input.status, approvedAt: input.status === "approved" ? new Date() : null, approvedByUserId: input.status === "approved" ? input.actorUserId : null }).where(eq(customerBotKnowledgeArticles.id, article.id));
   return scopedArticle(db, input.storeId, article.id);
+}
+
+function redactHistoricalText(value: string) {
+  return value
+    .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, "[بريد محجوب]")
+    .replace(/(?:https?:\/\/|www\.)\S+/gi, "[رابط محجوب]")
+    .replace(/(?:\+?964|00964|0)?7\d{8,10}/g, "[رقم محجوب]")
+    .replace(/(?:طلب|order)\s*[#:#-]?\s*[A-Z0-9-]{5,}/gi, "[رقم طلب محجوب]")
+    .trim()
+    .slice(0, 4000);
+}
+
+function candidateKind(question: string): KnowledgeKind {
+  return /توصيل|شحن|استبدال|إرجاع|دفع|طلب|سياسة|عنوان/i.test(question) ? "policy" : "faq";
+}
+
+export async function extractHistoricalKnowledgeCandidates(input: { storeId: number; actorUserId: number; channels?: Array<"whatsapp" | "instagram" | "messenger">; limit?: number }) {
+  const db = await requireDb();
+  const limit = Math.min(Math.max(input.limit ?? 30, 1), 100);
+  const channelFilter = input.channels?.length ? or(...input.channels.map(channel => eq(inboxConversations.channel, channel))) : undefined;
+  const messages = await db.select({
+    messageId: inboxMessages.id,
+    conversationId: inboxMessages.conversationId,
+    direction: inboxMessages.direction,
+    body: inboxMessages.body,
+    occurredAt: inboxMessages.occurredAt,
+    channel: inboxConversations.channel,
+    subject: inboxConversations.subject,
+  }).from(inboxMessages).innerJoin(inboxConversations, eq(inboxMessages.conversationId, inboxConversations.id)).where(and(eq(inboxConversations.storeId, input.storeId), eq(inboxMessages.source, "historical_sync"), or(eq(inboxMessages.direction, "inbound"), eq(inboxMessages.direction, "outbound")), channelFilter)).orderBy(asc(inboxMessages.conversationId), asc(inboxMessages.occurredAt), asc(inboxMessages.id)).limit(limit * 8);
+
+  const nextOutbound = new Map<number, typeof messages[number]>();
+  const pendingInbound = new Map<number, typeof messages[number]>();
+  for (const message of messages) {
+    if (message.direction === "inbound") {
+      pendingInbound.set(message.conversationId, message);
+      continue;
+    }
+    const inbound = pendingInbound.get(message.conversationId);
+    if (inbound && !nextOutbound.has(inbound.messageId)) nextOutbound.set(inbound.messageId, message);
+    pendingInbound.delete(message.conversationId);
+  }
+  const pairs = Array.from(nextOutbound.entries()).slice(0, limit);
+  if (!pairs.length) return { scannedMessages: messages.length, candidatePairs: 0, createdCandidates: 0, skippedExisting: 0 };
+
+  const existing = await db.select({ body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, input.storeId), eq(customerBotKnowledgeArticles.source, "historical_candidate")));
+  const existingBodies = new Set(existing.map(article => article.body));
+  let createdCandidates = 0;
+  let skippedExisting = 0;
+  for (const [inboundId, outbound] of pairs) {
+    const inbound = messages.find(message => message.messageId === inboundId);
+    if (!inbound) continue;
+    const question = redactHistoricalText(inbound.body);
+    const answer = redactHistoricalText(outbound.body);
+    if (question.length < 3 || answer.length < 3) continue;
+    const body = `سؤال تاريخي للعميل:\n${question}\n\nالرد المسجل من الفريق:\n${answer}\n\nملاحظة مراجعة: هذا مرشح مستخرج من محادثة تاريخية، ولا يستخدمه Bot-H3 حتى يعتمد يدوياً.`;
+    if (existingBodies.has(body)) { skippedExisting += 1; continue; }
+    await db.insert(customerBotKnowledgeArticles).values({ storeId: input.storeId, title: `مرشح رد تاريخي — ${inbound.channel === "messenger" ? "Messenger" : inbound.channel === "instagram" ? "Instagram" : "WhatsApp"}`, kind: candidateKind(question), body, source: "historical_candidate", createdByUserId: input.actorUserId });
+    existingBodies.add(body);
+    createdCandidates += 1;
+  }
+  return { scannedMessages: messages.length, candidatePairs: pairs.length, createdCandidates, skippedExisting };
 }
 
 export async function listCustomerBotReviewQueue(storeId: number) {

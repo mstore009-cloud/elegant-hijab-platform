@@ -5,7 +5,7 @@ import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { listLLMModels } from "../_core/llm";
 import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, updateCustomerBotSettings } from "../customerBot/db";
-import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "../customerBot/knowledge";
+import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "../customerBot/knowledge";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
@@ -76,6 +76,12 @@ export const customerBotRouter = router({
     return review;
   }),
   knowledge: protectedProcedure.input(z.object({ status: z.enum(knowledgeStatuses).optional() }).optional()).query(async ({ ctx, input }) => listCustomerBotKnowledge((await requireStore(ctx, "bot.manage")).id, input?.status)),
+  extractHistoricalCandidates: protectedProcedure.input(z.object({ channels: z.array(z.enum(["whatsapp", "instagram", "messenger"])).min(1).optional(), limit: z.number().int().min(1).max(100).optional() }).optional()).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await extractHistoricalKnowledgeCandidates({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_knowledge", entityId: store.id, action: "bot.historical_candidates_extracted", summary: `تم فحص ${result.scannedMessages} رسالة تاريخية وإنشاء ${result.createdCandidates} مرشح معرفة للمراجعة.` });
+    return result;
+  }),
   createKnowledge: protectedProcedure.input(knowledgeInput.extend({ source: z.enum(["manual", "review_feedback", "historical_candidate"]).optional() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.manage");
     const article = await createCustomerBotKnowledge({ ...input, storeId: store.id, actorUserId: ctx.user.id });

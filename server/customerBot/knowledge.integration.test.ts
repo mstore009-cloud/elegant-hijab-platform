@@ -5,7 +5,7 @@ import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunK
 import { getDb } from "../db";
 import { createManualConversation, recordInboxMessage } from "../inbox/db";
 import { generateCustomerBotDraft, updateCustomerBotSettings } from "./db";
-import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, getCustomerBotQualitySummary, listCustomerBotKnowledgeSources, listCustomerBotKnowledgeGaps, reviewCustomerBotRun, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "./knowledge";
+import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, getCustomerBotQualitySummary, listCustomerBotKnowledgeSources, listCustomerBotKnowledgeGaps, reviewCustomerBotRun, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "./knowledge";
 
 type Cleanup = { storeId: number; conversationId: number };
 const cleanups: Cleanup[] = [];
@@ -79,6 +79,22 @@ describe("Bot-H2: المعرفة والمراجعة", () => {
     expect(gaps).toEqual([expect.objectContaining({ id: gap.id, title: "سياسة الهدايا مع الطلب", status: "open" })]);
     const articles = await setupData.db.select().from(customerBotKnowledgeArticles).where(eq(customerBotKnowledgeArticles.storeId, setupData.storeId));
     expect(articles).toHaveLength(0);
+  });
+
+  it("يستخرج زوج سؤال ورد تاريخي كمسودة منقاة ويمنع التكرار والاعتماد التلقائي", async () => {
+    const setupData = await setup();
+    await setupData.db.insert(inboxMessages).values([
+      { conversationId: setupData.conversationId, direction: "inbound", body: "هل يمكن إرسال الطلب إلى 07712345678؟", source: "historical_sync", occurredAt: new Date("2026-08-01T10:00:00Z"), actorUserId: setupData.owner.id },
+      { conversationId: setupData.conversationId, direction: "outbound", body: "نعم، نرسل الطلب بعد تأكيد العنوان والبريد test@example.com", source: "historical_sync", occurredAt: new Date("2026-08-01T10:01:00Z"), actorUserId: setupData.owner.id },
+    ]);
+    await expect(extractHistoricalKnowledgeCandidates({ storeId: setupData.storeId, actorUserId: setupData.owner.id, limit: 10 })).resolves.toMatchObject({ scannedMessages: 2, candidatePairs: 1, createdCandidates: 1, skippedExisting: 0 });
+    const [article] = await setupData.db.select().from(customerBotKnowledgeArticles).where(eq(customerBotKnowledgeArticles.storeId, setupData.storeId));
+    expect(article).toMatchObject({ status: "draft", source: "historical_candidate" });
+    expect(article.body).toContain("[رقم محجوب]");
+    expect(article.body).toContain("[بريد محجوب]");
+    await expect(extractHistoricalKnowledgeCandidates({ storeId: setupData.storeId, actorUserId: setupData.owner.id, limit: 10 })).resolves.toMatchObject({ candidatePairs: 1, createdCandidates: 0, skippedExisting: 1 });
+    const [stillDraft] = await setupData.db.select().from(customerBotKnowledgeArticles).where(eq(customerBotKnowledgeArticles.id, article.id));
+    expect(stillDraft.status).toBe("draft");
   });
 
   it("يمنع تعديل أو اعتماد بطاقة معرفة من متجر آخر", async () => {
