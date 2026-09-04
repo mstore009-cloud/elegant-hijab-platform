@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
-import { channelAccounts, channelWebhookEvents, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnections, metaHistorySyncJobs, metaWhatsAppHistoryChunks, metaWhatsAppOnboardings, stores, users } from "../../../drizzle/schema";
+import { channelAccounts, channelWebhookEvents, customerActivities, customerProfiles, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnections, metaHistorySyncJobs, metaWhatsAppHistoryChunks, metaWhatsAppOnboardings, stores, users } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { configureChannelAccount } from "../../channels/db";
 import { normalizeMetaEvents } from "../../channels/metaEvents";
@@ -30,6 +30,8 @@ afterEach(async () => {
     await db.delete(channelAccounts).where(eq(channelAccounts.storeId, storeId));
     await db.delete(metaAssets).where(eq(metaAssets.storeId, storeId));
     await db.delete(metaConnections).where(eq(metaConnections.storeId, storeId));
+    await db.delete(customerActivities).where(eq(customerActivities.storeId, storeId));
+    await db.delete(customerProfiles).where(eq(customerProfiles.storeId, storeId));
     await db.delete(stores).where(eq(stores.id, storeId));
   }
 });

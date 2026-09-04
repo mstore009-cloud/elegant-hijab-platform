@@ -10,6 +10,8 @@ import {
   customerBotRuns,
   customerBotSettings,
   customerBotUsageCounters,
+  customerActivities,
+  customerProfiles,
   inboxConversationEvents,
   inboxConversations,
   inboxMessageMedia,
@@ -59,6 +61,8 @@ afterEach(async () => {
     }
     await db.delete(customerBotUsageCounters).where(eq(customerBotUsageCounters.storeId, cleanup.storeId));
     await db.delete(customerBotSettings).where(eq(customerBotSettings.storeId, cleanup.storeId));
+    await db.delete(customerActivities).where(eq(customerActivities.storeId, cleanup.storeId));
+    await db.delete(customerProfiles).where(eq(customerProfiles.storeId, cleanup.storeId));
     await db.delete(stores).where(eq(stores.id, cleanup.storeId));
   }
 });
