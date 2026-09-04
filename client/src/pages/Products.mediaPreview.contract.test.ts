@@ -52,5 +52,9 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("غير قابل للنشر بعد");
     expect(source).toContain("اعتماد المنتج");
     expect(source).not.toContain("حفظ المخزون");
+    expect(source).toContain("syncStatus.data?.isRunning");
+    expect(source).toContain("formatElapsed(catalogElapsedMs)");
+    expect(source).toContain("lastRunStage === \"failed\"");
+    expect(source).toContain("أعد المحاولة");
   });
 });
