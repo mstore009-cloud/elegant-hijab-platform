@@ -6,6 +6,8 @@ const catalogMocks = vi.hoisted(() => ({
   getConnection: vi.fn(),
   listChildren: vi.fn(),
   generateOperational: vi.fn(),
+  generateOperationalVideos: vi.fn(),
+  notifyPermissionHolders: vi.fn(),
 }));
 
 vi.mock("../integrations/onedrive/catalogAuth", () => ({
@@ -17,9 +19,13 @@ vi.mock("../integrations/onedrive/catalog", () => ({
 }));
 vi.mock("./operationalMediaService", () => ({
   generateOperationalMediaForProduct: catalogMocks.generateOperational,
+  generateOperationalVideosForProduct: catalogMocks.generateOperationalVideos,
+}));
+vi.mock("../notifications/db", () => ({
+  notifyPermissionHolders: catalogMocks.notifyPermissionHolders,
 }));
 
-import { catalogFolderImports, productImportJobs, productOperations, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, catalogGroupImports, productImportJobs, productOperations, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
 import { scanCatalogForOwner } from "./catalogAutomation";
@@ -30,7 +36,10 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     catalogMocks.getConnection.mockReset();
     catalogMocks.listChildren.mockReset();
     catalogMocks.generateOperational.mockReset();
+    catalogMocks.generateOperationalVideos.mockReset();
+    catalogMocks.notifyPermissionHolders.mockReset();
     catalogMocks.generateOperational.mockResolvedValue({ created: [] });
+    catalogMocks.generateOperationalVideos.mockResolvedValue({ created: [] });
   });
 
   it("ينشئ مسودة ناقصة قابلة للتحرير، يسجل النواقص، ولا يجعلها منتجًا عامًا", async () => {
@@ -101,6 +110,44 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
         await db.delete(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId));
         await db.delete(products).where(eq(products.id, productId));
       }
+    }
+  }, 15_000);
+
+  it("يحافظ على المنتج عند rename/move أو disappearance ويرسل إشعار مراجعة واحدًا لكل كيان", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار reconciliation.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم لاختبار reconciliation.");
+    const store = await getPublicStore();
+    if (!store) throw new Error("لا يوجد متجر لاختبار reconciliation.");
+    const productCode = `TST-RECON-${randomUUID().slice(0, 8)}`;
+    const productResult = await db.insert(products).values({ storeId: store.id, productCode, name: "منتج reconciliation", category: "مجموعة قديمة", status: "ready", sellingPrice: "9000", createdByUserId: owner.id });
+    const productId = Number(productResult[0].insertId);
+    const groupFolderId = `group-recon-${productCode}`;
+    const productFolderId = `folder-recon-${productCode}`;
+    await db.insert(catalogGroupImports).values({ storeId: store.id, ownerUserId: owner.id, groupFolderId, groupName: "مجموعة قديمة", sourceReference: "Catalog/مجموعة قديمة", state: "discovered" });
+    await db.insert(catalogFolderImports).values({ storeId: store.id, ownerUserId: owner.id, productFolderId, groupName: "مجموعة قديمة", productCode: "HJB-OLD-CODE", sourceReference: "Catalog/مجموعة قديمة/HJB-OLD-CODE", state: "already_exists", linkedProductId: productId, imageCount: 0 });
+    catalogMocks.getConnection.mockResolvedValue({ status: "catalog_selected", selectedDriveId: "drive-test", selectedFolderId: "catalog-root", encryptedAccessToken: "encrypted-test-token" });
+    catalogMocks.listChildren.mockImplementation(async ({ folderId }: { folderId: string }) => {
+      if (folderId === "catalog-root") return [{ id: groupFolderId, name: "مجموعة جديدة", kind: "folder" }];
+      if (folderId === groupFolderId) return [{ id: productFolderId, name: "HJB-NEW-CODE", kind: "folder" }];
+      if (folderId === productFolderId) return [];
+      return [];
+    });
+    try {
+      await scanCatalogForOwner({ ownerUserId: owner.id, storeId: store.id });
+      const [group] = await db.select().from(catalogGroupImports).where(and(eq(catalogGroupImports.storeId, store.id), eq(catalogGroupImports.groupFolderId, groupFolderId))).limit(1);
+      const [folder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, store.id), eq(catalogFolderImports.productFolderId, productFolderId))).limit(1);
+      const [product] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      expect(group).toMatchObject({ groupName: "مجموعة جديدة", state: "needs_review", lastError: "source_group_identity_changed" });
+      expect(folder).toMatchObject({ productCode: "HJB-NEW-CODE", groupName: "مجموعة جديدة", state: "needs_review", lastError: "source_folder_identity_changed", linkedProductId: productId });
+      expect(product).toMatchObject({ id: productId, productCode, status: "ready" });
+      expect(catalogMocks.notifyPermissionHolders).toHaveBeenCalledWith(expect.objectContaining({ entityType: "catalog_group", route: "/products?catalogReview=groups" }));
+      expect(catalogMocks.notifyPermissionHolders).toHaveBeenCalledWith(expect.objectContaining({ entityType: "catalog_folder", route: "/products?catalogReview=folders" }));
+    } finally {
+      await db.delete(catalogFolderImports).where(eq(catalogFolderImports.productFolderId, productFolderId));
+      await db.delete(catalogGroupImports).where(eq(catalogGroupImports.groupFolderId, groupFolderId));
+      await db.delete(products).where(eq(products.id, productId));
     }
   }, 15_000);
 });

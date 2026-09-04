@@ -379,6 +379,13 @@
       "when": 1788555149681,
       "tag": "0053_worthless_black_bolt",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "5",
+      "when": 1788556964351,
+      "tag": "0054_stiff_cardiac",
+      "breakpoints": true
     }
   ]
 }

@@ -1549,6 +1549,29 @@ export const productImportJobs = mysqlTable(
   table => [index("import_job_store_status_idx").on(table.storeId, table.status), index("import_job_status_idx").on(table.status), index("import_job_product_idx").on(table.linkedProductId)],
 );
 
+/** Durable read-only observation of a top-level Catalog group folder. */
+export const catalogGroupImports = mysqlTable(
+  "catalog_group_imports",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    ownerUserId: int("ownerUserId").notNull().references(() => users.id),
+    groupFolderId: varchar("groupFolderId", { length: 255 }).notNull(),
+    groupName: varchar("groupName", { length: 120 }).notNull(),
+    sourceReference: varchar("sourceReference", { length: 512 }).notNull(),
+    state: mysqlEnum("state", ["discovered", "needs_review", "missing"]).notNull(),
+    lastError: text("lastError"),
+    lastScannedAt: timestamp("lastScannedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("catalog_group_store_unique").on(table.storeId, table.groupFolderId),
+    index("catalog_group_owner_idx").on(table.ownerUserId),
+    index("catalog_group_state_idx").on(table.storeId, table.state),
+  ],
+);
+
 /** One background Catalog scan configuration per owner connection. */
 export const catalogSyncSettings = mysqlTable(
   "catalog_sync_settings",

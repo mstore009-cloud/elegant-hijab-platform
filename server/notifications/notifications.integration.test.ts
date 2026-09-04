@@ -55,6 +55,12 @@ describe("Notifications-A داخل المتجر", () => {
     await saveMyNotificationPreferences({ storeId: store.id, userId, inboxAssignments: false, botHandoffs: true, crmTasks: true, reviewRequests: true, orderUpdates: true });
     const suppressed = await createWorkNotification({ storeId: store.id, recipientUserId: userId, type: "inbox_assigned", title: "تعيين محادثة", entityType: "inbox_conversation", entityId: 1, route: "/inbox?conversation=1" });
     expect(suppressed).toMatchObject({ created: false, skipped: "disabled" });
+
+    const review = await createWorkNotification({ storeId: store.id, recipientUserId: userId, type: "content_review_requested", priority: "action", title: "مجلد Catalog يحتاج إلى مراجعة", entityType: "catalog_group", entityId: 99, route: "/products?catalogReview=groups", dedupeKey: `catalog-group-review-test-${userId}` });
+    if (!review.notificationId) throw new Error("لم يُنشأ تنبيه مراجعة Catalog.");
+    cleanups[0].notificationIds.push(review.notificationId);
+    const duplicateReview = await createWorkNotification({ storeId: store.id, recipientUserId: userId, type: "content_review_requested", priority: "action", title: "مجلد Catalog يحتاج إلى مراجعة", entityType: "catalog_group", entityId: 99, route: "/products?catalogReview=groups", dedupeKey: `catalog-group-review-test-${userId}` });
+    expect(duplicateReview).toMatchObject({ created: false, skipped: "duplicate", notificationId: review.notificationId });
   });
 
   it("ينشئ تنبيهاً خاصاً بالموظف عند إسناد محادثة من متجره فقط", async () => {

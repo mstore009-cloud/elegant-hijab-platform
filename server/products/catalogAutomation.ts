@@ -1,11 +1,12 @@
 import { and, desc, eq } from "drizzle-orm";
-import { catalogFolderImports, productImportJobs, productMedia, productOperations, products } from "../../drizzle/schema";
+import { catalogFolderImports, catalogGroupImports, productImportJobs, productMedia, productOperations, products } from "../../drizzle/schema";
 import { listCatalogChildren, readCatalogFileBytes, readCatalogTextFile, type CatalogDriveItem } from "../integrations/onedrive/catalog";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
 import { parseCatalogProductMetadataLenient, parseCatalogProductMetadataLenientDocx, type LenientCatalogProductMetadata } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { generateOperationalMediaForProduct, generateOperationalVideosForProduct } from "./operationalMediaService";
 import { generateAutomaticColorSuggestion } from "./db";
+import { notifyPermissionHolders } from "../notifications/db";
 
 const isImage = (item: CatalogDriveItem) => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name);
 const isVideo = (item: CatalogDriveItem) => item.kind === "file" && /\.(mp4|mov|m4v|webm)$/i.test(item.name);
@@ -39,6 +40,38 @@ async function mapWithConcurrency<T>(items: T[], limit: number, worker: (item: T
 
 function sourceReference(groupName: string, productCode: string) {
   return `Catalog/${groupName}/${productCode}`;
+}
+
+export function classifyCatalogGroupObservation(existing: { state: "discovered" | "needs_review" | "missing"; groupName: string } | undefined, currentGroupName: string) {
+  const renamed = Boolean(existing && existing.groupName !== currentGroupName);
+  return {
+    renamed,
+    state: existing?.state === "needs_review" || renamed || !existing ? "needs_review" as const : "discovered" as const,
+    lastError: renamed ? "source_group_identity_changed" : null,
+  };
+}
+
+export function classifyCatalogFolderObservation(existing: { productCode: string; groupName: string; lastError?: string | null } | undefined, currentGroupName: string, currentProductCode: string) {
+  const renamedOrMoved = Boolean(existing && (existing.productCode !== currentProductCode || existing.groupName !== currentGroupName));
+  return {
+    changed: renamedOrMoved,
+    lastError: renamedOrMoved ? "source_folder_identity_changed" : null,
+  };
+}
+
+export function buildCatalogFolderReviewNotification(input: { storeId: number; entityId: number; folderId: string; folderName: string; groupName: string }) {
+  return {
+    storeId: input.storeId,
+    permissionCode: "products.create" as const,
+    type: "content_review_requested" as const,
+    priority: "action" as const,
+    title: "مجلد منتج Catalog يحتاج إلى مراجعة",
+    body: `تغير مسار أو اسم مجلد المنتج «${input.folderName}» دون تعديل المنتج تلقائيًا.`,
+    entityType: "catalog_folder",
+    entityId: input.entityId,
+    route: "/products?catalogReview=folders",
+    dedupeKey: `catalog-folder-identity-change:${input.storeId}:${input.folderId}:${input.folderName}:${input.groupName}`,
+  };
 }
 
 async function readCatalogProductMetadata(input: { contents: CatalogDriveItem[]; encryptedAccessToken: string; driveId: string }): Promise<LenientCatalogProductMetadata> {
@@ -75,6 +108,25 @@ async function ensureAutomaticColorSuggestion(input: { db: NonNullable<Awaited<R
       changes: JSON.stringify({ message: error instanceof Error ? error.message : "تعذر تحليل ألوان الصور تلقائيًا." }),
     });
   }
+}
+
+async function upsertGroupObservation(input: { storeId: number; ownerUserId: number; groupFolderId: string; groupName: string; state: "discovered" | "needs_review" | "missing"; lastError?: string | null }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [existing] = await db.select().from(catalogGroupImports).where(and(eq(catalogGroupImports.storeId, input.storeId), eq(catalogGroupImports.groupFolderId, input.groupFolderId))).limit(1);
+  const values = {
+    groupName: input.groupName,
+    sourceReference: `Catalog/${input.groupName}`,
+    state: input.state,
+    lastError: input.lastError ?? null,
+    lastScannedAt: new Date(),
+  };
+  if (existing) {
+    await db.update(catalogGroupImports).set(values).where(eq(catalogGroupImports.id, existing.id));
+    return { ...existing, ...values };
+  }
+  const result = await db.insert(catalogGroupImports).values({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupFolderId: input.groupFolderId, ...values });
+  return { id: Number(result[0].insertId), ...values };
 }
 
 async function upsertFolderObservation(input: {
@@ -208,13 +260,42 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
   const summary: CatalogAutomationSummary = { discovered: 0, draftsCreated: 0, existing: 0, failed: 0, operationalCopiesCreated: 0 };
   const knownProducts = await db.select({ id: products.id, productCode: products.productCode }).from(products).where(eq(products.storeId, input.storeId));
   const productByCode = new Map(knownProducts.map(product => [product.productCode, product]));
+  const productById = new Map(knownProducts.map(product => [product.id, product]));
   const groups = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId })).filter(item => item.kind === "folder");
+  const seenGroupFolderIds = new Set(groups.map(group => group.id));
+  await mapWithConcurrency(groups, 2, async group => {
+    const [existing] = await db.select({ id: catalogGroupImports.id, state: catalogGroupImports.state, groupName: catalogGroupImports.groupName }).from(catalogGroupImports).where(and(eq(catalogGroupImports.storeId, input.storeId), eq(catalogGroupImports.groupFolderId, group.id))).limit(1);
+    const groupObservation = classifyCatalogGroupObservation(existing, group.name);
+    const observation = await upsertGroupObservation({
+      storeId: input.storeId,
+      ownerUserId: input.ownerUserId,
+      groupFolderId: group.id,
+      groupName: group.name,
+      state: groupObservation.state,
+      lastError: groupObservation.lastError,
+    });
+    if (!existing || groupObservation.renamed) {
+      await notifyPermissionHolders({
+        storeId: input.storeId,
+        permissionCode: "products.create",
+        type: "content_review_requested",
+        priority: "action",
+        title: "مجلد Catalog يحتاج إلى مراجعة",
+        body: groupObservation.renamed ? `تغير اسم مجموعة Catalog إلى «${group.name}» دون تعديل تلقائي.` : `اكتُشفت مجموعة Catalog جديدة «${group.name}» وتنتظر المراجعة.`,
+        entityType: "catalog_group",
+        entityId: observation.id,
+        route: "/products?catalogReview=groups",
+        dedupeKey: `catalog-group-review:${input.storeId}:${group.id}:${group.name}`,
+      });
+    }
+  });
   const groupedFolders: Array<{ group: CatalogDriveItem; folders: CatalogDriveItem[] }> = [];
   await mapWithConcurrency(groups, 2, async group => {
     const folders = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId: group.id })).filter(item => item.kind === "folder");
     groupedFolders.push({ group, folders });
   });
   const workItems = groupedFolders.flatMap(({ group, folders }) => folders.map(folder => ({ group, folder })));
+  const seenProductFolderIds = new Set<string>();
   let processedFolders = 0;
   const report = async (stage: CatalogScanProgress["stage"], currentProduct: string | null = null) => {
     if (!input.onProgress) return;
@@ -227,6 +308,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
 
   await report("discovering_folders");
   await mapWithConcurrency(workItems, 2, async ({ group, folder }) => {
+    seenProductFolderIds.add(folder.id);
     summary.discovered += 1;
     const source = sourceReference(group.name, folder.name);
     await report("reading_product", folder.name);
@@ -235,8 +317,9 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       const images = contents.filter(isImage);
       const videos = contents.filter(isVideo);
       const metadata = await readCatalogProductMetadata({ contents, encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId! });
-      const existingProduct = productByCode.get(folder.name);
       const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
+      const existingProduct = productByCode.get(folder.name) ?? (priorFolder?.linkedProductId ? productById.get(priorFolder.linkedProductId) : undefined);
+      const folderObservation = classifyCatalogFolderObservation(priorFolder, group.name, folder.name);
       if (!existingProduct && priorFolder?.lastError === "deleted_by_user") {
         await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
         summary.existing += 1;
@@ -244,7 +327,22 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       }
       if (existingProduct) {
         const preserveDraftState = priorFolder?.linkedProductId === existingProduct.id;
-        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: preserveDraftState ? "draft_created" : "already_exists", linkedProductId: existingProduct.id, imageCount: images.length, missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [] });
+        const folderObservationRecord = await upsertFolderObservation({
+          storeId: input.storeId,
+          ownerUserId: input.ownerUserId,
+          productFolderId: folder.id,
+          groupName: group.name,
+          productCode: folder.name,
+          source,
+          state: folderObservation.changed ? "needs_review" : preserveDraftState ? "draft_created" : "already_exists",
+          linkedProductId: existingProduct.id,
+          imageCount: images.length,
+          missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [],
+          lastError: folderObservation.lastError,
+        });
+        if (folderObservation.changed) {
+          await notifyPermissionHolders(buildCatalogFolderReviewNotification({ storeId: input.storeId, entityId: folderObservationRecord.id, folderId: folder.id, folderName: folder.name, groupName: group.name }));
+        }
         await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
         await report("copying_operational_media", folder.name);
         const imageCopies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: existingProduct.id });
@@ -279,6 +377,41 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       await report("processing_folders", folder.name);
     }
   });
+
+  const priorFolders = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.storeId, input.storeId));
+  for (const prior of priorFolders) {
+    if (seenProductFolderIds.has(prior.productFolderId) || prior.lastError === "deleted_by_user" || prior.lastError === "source_folder_missing") continue;
+    await db.update(catalogFolderImports).set({ state: "needs_review", lastError: "source_folder_missing", lastScannedAt: new Date() }).where(eq(catalogFolderImports.id, prior.id));
+    await notifyPermissionHolders({
+      storeId: input.storeId,
+      permissionCode: "products.create",
+      type: "content_review_requested",
+      priority: "action",
+      title: "مجلد منتج Catalog غير ظاهر",
+      body: `لم يظهر مجلد المنتج «${prior.productCode}» في آخر فحص؛ لم يُحذف المنتج أو ملف OneDrive تلقائيًا.`,
+      entityType: "catalog_folder",
+      entityId: prior.id,
+      route: "/products?catalogReview=folders",
+      dedupeKey: `catalog-folder-missing:${input.storeId}:${prior.productFolderId}`,
+    });
+  }
+  const priorGroups = await db.select().from(catalogGroupImports).where(eq(catalogGroupImports.storeId, input.storeId));
+  for (const prior of priorGroups) {
+    if (seenGroupFolderIds.has(prior.groupFolderId) || prior.state === "missing") continue;
+    await db.update(catalogGroupImports).set({ state: "missing", lastError: "source_group_missing", lastScannedAt: new Date() }).where(eq(catalogGroupImports.id, prior.id));
+    await notifyPermissionHolders({
+      storeId: input.storeId,
+      permissionCode: "products.create",
+      type: "content_review_requested",
+      priority: "action",
+      title: "مجموعة Catalog غير ظاهرة",
+      body: `لم تظهر مجموعة «${prior.groupName}» في آخر فحص؛ لم تُحذف المنتجات تلقائيًا.`,
+      entityType: "catalog_group",
+      entityId: prior.id,
+      route: "/products?catalogReview=groups",
+      dedupeKey: `catalog-group-missing:${input.storeId}:${prior.groupFolderId}`,
+    });
+  }
   return summary;
 }
 
