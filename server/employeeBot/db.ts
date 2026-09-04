@@ -260,7 +260,7 @@ export async function listEmployeeBotCommands(input: { storeId: number; requeste
     db.select().from(employeeBotCommandReviews).where(inArray(employeeBotCommandReviews.commandId, commands.map((command: any) => command.id))),
     db.select().from(employeeBotCommandSources).where(inArray(employeeBotCommandSources.commandId, commands.map((command: any) => command.id))),
   ]);
-  return commands.map((command: any) => ({ ...command, review: reviews.find((review: any) => review.commandId === command.id) ?? null, sources: sources.filter((source: any) => source.commandId === command.id) }));
+  return commands.map((command: any) => ({ ...command, requiredPermission: employeeBotRequiredOperationalPermission(command.intent), review: reviews.find((review: any) => review.commandId === command.id) ?? null, sources: sources.filter((source: any) => source.commandId === command.id) }));
 }
 
 export async function getEmployeeBotCommand(storeId: number, commandId: number) {
