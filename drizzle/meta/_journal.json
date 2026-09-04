@@ -393,6 +393,13 @@
       "when": 1788559811019,
       "tag": "0055_cuddly_wolfpack",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "5",
+      "when": 1788561454431,
+      "tag": "0056_sweet_iron_monger",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { channelAccounts, channelWebhookEvents, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessages, metaAssets, metaConnections, stores, users } from "../../drizzle/schema";
+import { channelAccounts, channelWebhookEvents, customerActivities, customerProfiles, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessages, metaAssets, metaConnections, metaLeadCaptures, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { configureChannelAccount } from "./db";
 import { enqueueAndProcessMetaEvent, getMetaEventHealth, normalizeMetaEvents, requeueMetaDeadLetters, retryDueMetaEvents } from "./metaEvents";
@@ -19,6 +19,9 @@ afterEach(async () => {
       await db.delete(inboxMessages).where(eq(inboxMessages.conversationId, conversationId));
       await db.delete(inboxConversations).where(eq(inboxConversations.id, conversationId));
     }
+    await db.delete(customerActivities).where(eq(customerActivities.storeId, cleanup.storeId));
+    await db.delete(metaLeadCaptures).where(eq(metaLeadCaptures.storeId, cleanup.storeId));
+    await db.delete(customerProfiles).where(eq(customerProfiles.storeId, cleanup.storeId));
     await db.delete(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, cleanup.storeId));
     await db.delete(channelAccounts).where(eq(channelAccounts.storeId, cleanup.storeId));
     await db.delete(metaAssets).where(eq(metaAssets.storeId, cleanup.storeId));
@@ -78,6 +81,23 @@ describe("Unified Meta Webhook Gateway", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ source: "live_webhook", externalMessageId: "comment:comment-gateway-1" });
     expect(JSON.parse(messages[0].metadataJson ?? "{}")).toMatchObject({ messageType: "comment", commentExternalId: "comment-gateway-1", parentExternalId: "post-gateway-1" });
+  });
+
+  it("ينشئ ملف CRM من Lead Ads مرة واحدة ويحفظ الحدث المكرر دون ملف مكرر", async () => {
+    const { db, owner, storeId } = await setup();
+    const connection = await db.insert(metaConnections).values({ storeId, purpose: "unified", authMode: "external_business", status: "connected", grantedScopes: "pages_show_list,pages_read_engagement,leads_retrieval", connectedByUserId: owner.id });
+    const connectionId = Number(connection[0].insertId);
+    await db.insert(metaAssets).values({ storeId, connectionId, assetType: "page", externalId: "page-lead-gateway", displayName: "صفحة العملاء المحتملين", isSelected: true });
+    const [event] = normalizeMetaEvents({ object: "page", entry: [{ id: "page-lead-gateway", changes: [{ field: "leadgen", value: { leadgen_id: "lead-gateway-1", form_id: "form-1", field_data: [{ name: "full_name", values: ["عميلة Lead"] }, { name: "phone_number", values: ["07861162113"] }, { name: "consent", values: ["true"] }] } }] }] });
+    expect(event).toMatchObject({ kind: "lead", data: { objectId: "lead-gateway-1", formId: "form-1", name: "عميلة Lead", phone: "07861162113" } });
+    expect(await enqueueAndProcessMetaEvent(event, "hash-lead-1")).toMatchObject({ accepted: true, duplicate: false, processed: true });
+    expect(await enqueueAndProcessMetaEvent(event, "hash-lead-1")).toMatchObject({ accepted: true, duplicate: true });
+    const captures = await db.select().from(metaLeadCaptures).where(eq(metaLeadCaptures.storeId, storeId));
+    expect(captures).toHaveLength(1);
+    expect(captures[0]).toMatchObject({ externalLeadId: "lead-gateway-1", status: "imported", consentStatus: "granted" });
+    const customers = await db.select().from(customerProfiles).where(eq(customerProfiles.storeId, storeId));
+    expect(customers).toHaveLength(1);
+    expect(customers[0]).toMatchObject({ displayName: "عميلة Lead", phoneNormalized: "07861162113" });
   });
 
   it("يحدث حالة تسليم رسالة صادرة داخل المتجر ولا ينشئ رسالة جديدة", async () => {

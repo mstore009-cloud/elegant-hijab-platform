@@ -550,6 +550,33 @@ export const channelWebhookEvents = mysqlTable(
   ],
 );
 
+/** Durable, store-scoped Lead Ads intake; raw provider payloads are minimized to approved CRM fields only. */
+export const metaLeadCaptures = mysqlTable(
+  "meta_lead_captures",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    metaAssetId: int("metaAssetId").references(() => metaAssets.id),
+    externalLeadId: varchar("externalLeadId", { length: 255 }).notNull(),
+    formId: varchar("formId", { length: 255 }),
+    adId: varchar("adId", { length: 255 }),
+    fieldDataJson: text("fieldDataJson"),
+    consentStatus: mysqlEnum("consentStatus", ["unknown", "granted", "denied"]).default("unknown").notNull(),
+    status: mysqlEnum("status", ["pending", "imported", "failed", "ignored"]).default("pending").notNull(),
+    customerId: int("customerId").references(() => customerProfiles.id),
+    lastError: varchar("lastError", { length: 500 }),
+    receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+    importedAt: timestamp("importedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_lead_store_external_unique").on(table.storeId, table.externalLeadId),
+    index("meta_lead_store_status_idx").on(table.storeId, table.status, table.receivedAt),
+    index("meta_lead_customer_idx").on(table.customerId),
+  ],
+);
+
 /** Singleton configuration for the project-level Heartbeat that retries Meta webhook events. */
 export const metaWebhookRetrySettings = mysqlTable(
   "meta_webhook_retry_settings",

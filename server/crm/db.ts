@@ -7,6 +7,7 @@ import {
   customerTasks,
   employeeProfiles,
   inboxConversations,
+  metaLeadCaptures,
   orders,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
@@ -112,6 +113,46 @@ export async function resolveCustomerForOrder(db: any, input: {
     lastOrderAt: input.orderAt,
   });
   return { customerId: Number(result[0].insertId), created: true };
+}
+
+export async function ingestMetaLeadCapture(db: any, input: {
+  storeId: number;
+  metaAssetId?: number | null;
+  externalLeadId: string;
+  formId?: string | null;
+  adId?: string | null;
+  name?: string | null;
+  phone?: string | null;
+  consentStatus?: "unknown" | "granted" | "denied";
+  receivedAt?: Date;
+}) {
+  const existing = await db.select().from(metaLeadCaptures).where(and(eq(metaLeadCaptures.storeId, input.storeId), eq(metaLeadCaptures.externalLeadId, input.externalLeadId))).limit(1);
+  if (existing[0]) return { captureId: existing[0].id, customerId: existing[0].customerId, duplicate: true, status: existing[0].status };
+  const phoneNormalized = input.phone ? normalizeCustomerPhone(input.phone) : "";
+  const validPhone = phoneNormalized.length >= 7 && phoneNormalized.length <= 40;
+  const consentStatus = input.consentStatus ?? "unknown";
+  if (consentStatus === "denied") {
+    const inserted = await db.insert(metaLeadCaptures).values({ storeId: input.storeId, metaAssetId: input.metaAssetId ?? null, externalLeadId: input.externalLeadId, formId: input.formId?.slice(0, 255) || null, adId: input.adId?.slice(0, 255) || null, fieldDataJson: null, consentStatus, status: "ignored", customerId: null, receivedAt: input.receivedAt ?? new Date() });
+    return { captureId: Number(inserted[0].insertId), customerId: null, duplicate: false, status: "ignored" as const };
+  }
+  if (!validPhone) {
+    const inserted = await db.insert(metaLeadCaptures).values({ storeId: input.storeId, metaAssetId: input.metaAssetId ?? null, externalLeadId: input.externalLeadId, formId: input.formId?.slice(0, 255) || null, adId: input.adId?.slice(0, 255) || null, fieldDataJson: JSON.stringify({ name: input.name?.slice(0, 160) || null }).slice(0, 4_000), consentStatus, status: "pending", customerId: null, receivedAt: input.receivedAt ?? new Date() });
+    return { captureId: Number(inserted[0].insertId), customerId: null, duplicate: false, status: "pending" as const };
+  }
+  const displayName = input.name?.trim().slice(0, 160) || "عميل من Lead Ads";
+  const [existingCustomer] = await db.select().from(customerProfiles).where(and(eq(customerProfiles.storeId, input.storeId), eq(customerProfiles.phoneNormalized, phoneNormalized))).limit(1);
+  let customerId: number;
+  if (existingCustomer) {
+    customerId = existingCustomer.id;
+    await db.update(customerProfiles).set({ displayName, phoneDisplay: input.phone!.trim().slice(0, 40), lastChannel: "manual", updatedAt: new Date() }).where(and(eq(customerProfiles.id, customerId), eq(customerProfiles.storeId, input.storeId)));
+    await appendCustomerActivity(db, { storeId: input.storeId, customerId, type: "profile_updated", title: "تحديث ملف العميل من Lead Ads", body: `النموذج: ${input.formId || "غير محدد"}` });
+  } else {
+    const created = await db.insert(customerProfiles).values({ storeId: input.storeId, displayName, phoneNormalized, phoneDisplay: input.phone!.trim().slice(0, 40), relationshipStage: "new", firstChannel: "manual", lastChannel: "manual" });
+    customerId = Number(created[0].insertId);
+    await appendCustomerActivity(db, { storeId: input.storeId, customerId, type: "profile_created", title: "أُنشئ ملف العميل من Lead Ads", body: `النموذج: ${input.formId || "غير محدد"}` });
+  }
+  const inserted = await db.insert(metaLeadCaptures).values({ storeId: input.storeId, metaAssetId: input.metaAssetId ?? null, externalLeadId: input.externalLeadId, formId: input.formId?.slice(0, 255) || null, adId: input.adId?.slice(0, 255) || null, fieldDataJson: JSON.stringify({ name: displayName }).slice(0, 4_000), consentStatus, status: "imported", customerId, receivedAt: input.receivedAt ?? new Date(), importedAt: new Date() });
+  return { captureId: Number(inserted[0].insertId), customerId, duplicate: false, status: "imported" as const };
 }
 
 export async function recordOrderCustomerActivity(db: any, input: { storeId: number; customerId: number | null; orderId: number; orderNumber: string; created: boolean }) {

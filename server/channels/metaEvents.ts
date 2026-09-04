@@ -2,6 +2,9 @@ import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { channelAccounts, channelWebhookEvents, customerBotSettings, inboxConversations, inboxMessages, metaAssets, metaWebhookRetrySettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
+import { ingestMetaLeadCapture } from "../crm/db";
+import { getMetaAssetAccessToken } from "../integrations/meta/db";
+import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { generateCustomerBotDraft } from "../customerBot/db";
 import { applyExternalDeliveryStatus, ingestExternalInboundMessage, type ExternalChannel, type ExternalMediaReference, type NormalizedInboundMessage, type NormalizedMessageMetadata } from "./db";
 import { storeInboundImageFromProvider } from "./media";
@@ -64,7 +67,9 @@ export function normalizeMetaEvents(payload: any): NormalizedMetaEvent[] {
         const field = compact(change?.field, 64); const value = change?.value || {}; const externalId = compact(value?.comment_id || value?.leadgen_id || value?.media_id || value?.post_id || value?.id);
         if (!accountId || !externalId) continue;
         const kind: BusinessEvent["kind"] = field.includes("lead") ? "lead" : field.includes("mention") ? "mention" : field.includes("comment") || field === "feed" ? "comment" : field.includes("publish") ? "publish_status" : "unsupported";
-        events.push({ kind, channel, providerAccountId: accountId, externalEventId: `${kind}:${externalId}`, occurredAt: dateFromSeconds(value?.created_time || value?.timestamp), summary: compact(value?.message || value?.text || field, 500) || kind, data: { objectId: externalId, parentId: compact(value?.post_id || value?.media_id) || null, senderId: compact(value?.from?.id || value?.user_id) || null, verb: compact(value?.verb, 64) || null, formId: compact(value?.form_id) || null } });
+        const fieldData = Array.isArray(value?.field_data) ? value.field_data : [];
+        const readField = (names: string[]) => { const item = fieldData.find((candidate: any) => names.includes(compact(candidate?.name, 80).toLowerCase())); const values = Array.isArray(item?.values) ? item.values : []; return compact(values[0], 255) || null; };
+        events.push({ kind, channel, providerAccountId: accountId, externalEventId: `${kind}:${externalId}`, occurredAt: dateFromSeconds(value?.created_time || value?.timestamp), summary: compact(value?.message || value?.text || field, 500) || kind, data: { objectId: externalId, parentId: compact(value?.post_id || value?.media_id) || null, senderId: compact(value?.from?.id || value?.user_id) || null, verb: compact(value?.verb, 64) || null, formId: compact(value?.form_id) || null, name: readField(["full_name", "name", "الاسم"]), phone: readField(["phone_number", "phone", "mobile", "الهاتف"]), consent: readField(["consent", "marketing_consent", "موافقة"]) } });
       }
     }
   }
@@ -114,7 +119,24 @@ async function resolveBinding(event: NormalizedMetaEvent) {
   return asset ? { storeId: asset.storeId, channelAccountId: null, metaAssetId: asset.id } : null;
 }
 
-async function processReservedEvent(row: { id: number; storeId: number; payloadHash: string; attemptCount: number }, event: NormalizedMetaEvent) {
+async function hydrateLeadFromGraph(row: { storeId: number; metaAssetId?: number | null }, event: BusinessEvent & { kind: "lead" }) {
+  if (event.data.phone || !row.metaAssetId) return event;
+  const db = await requireDb();
+  const [asset] = await db.select({ connectionId: metaAssets.connectionId, externalId: metaAssets.externalId }).from(metaAssets).where(and(eq(metaAssets.id, row.metaAssetId), eq(metaAssets.storeId, row.storeId), eq(metaAssets.isSelected, true))).limit(1);
+  if (!asset) return event;
+  const accessToken = await getMetaAssetAccessToken({ storeId: row.storeId, connectionId: asset.connectionId, assetId: row.metaAssetId });
+  const runtime = await getMetaRuntimeSettings();
+  const endpoint = new URL(`https://graph.facebook.com/${runtime.graphApiVersion}/${encodeURIComponent(String(event.data.objectId))}`);
+  endpoint.searchParams.set("fields", "field_data,form_id,ad_id,created_time");
+  const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.error) throw new Error(String(payload?.error?.message || "تعذر جلب تفاصيل Lead Ads من Meta."));
+  const fieldData = Array.isArray(payload?.field_data) ? payload.field_data : [];
+  const readField = (names: string[]) => { const item = fieldData.find((candidate: any) => names.includes(compact(candidate?.name, 80).toLowerCase())); const values = Array.isArray(item?.values) ? item.values : []; return compact(values[0], 255) || null; };
+  return { ...event, data: { ...event.data, formId: compact(payload?.form_id, 255) || event.data.formId, parentId: compact(payload?.ad_id, 255) || event.data.parentId, name: readField(["full_name", "name", "الاسم"]), phone: readField(["phone_number", "phone", "mobile", "الهاتف"]), consent: readField(["consent", "marketing_consent", "موافقة"]) } };
+}
+
+async function processReservedEvent(row: { id: number; storeId: number; metaAssetId?: number | null; payloadHash: string; attemptCount: number }, event: NormalizedMetaEvent) {
   const db = await requireDb();
   try {
     if (event.kind === "message") {
@@ -133,6 +155,10 @@ async function processReservedEvent(row: { id: number; storeId: number; payloadH
         const [botSettings] = await db.select({ enabled: customerBotSettings.enabled }).from(customerBotSettings).where(eq(customerBotSettings.storeId, row.storeId)).limit(1);
         if (botSettings?.enabled) void generateCustomerBotDraft({ storeId: row.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد تعليق Meta:", error));
       }
+    } else if (event.kind === "lead") {
+      const lead = await hydrateLeadFromGraph(row, event as BusinessEvent & { kind: "lead" });
+      const consent = compact(lead.data.consent, 40).toLowerCase();
+      await ingestMetaLeadCapture(db, { storeId: row.storeId, metaAssetId: row.metaAssetId ?? null, externalLeadId: compact(lead.data.objectId, 255), formId: compact(lead.data.formId, 255) || null, adId: compact(lead.data.parentId, 255) || null, name: compact(lead.data.name, 160) || null, phone: compact(lead.data.phone, 40) || null, consentStatus: consent === "yes" || consent === "true" ? "granted" : consent === "no" || consent === "false" ? "denied" : "unknown", receivedAt: lead.occurredAt });
     } else if (event.kind === "delivery_status") {
       await applyExternalDeliveryStatus({ storeId: row.storeId, externalMessageId: event.externalMessageId, status: event.status, occurredAt: event.occurredAt, errorSummary: event.errorSummary });
     }
@@ -150,7 +176,7 @@ export async function enqueueAndProcessMetaEvent(event: NormalizedMetaEvent, pay
   let eventId: number;
   try { const inserted = await db.insert(channelWebhookEvents).values({ ...binding, externalEventId: event.externalEventId, payloadHash, eventType: event.kind, processingStatus: "received", normalizedPayloadJson: safeEventJson(event) }); eventId = Number(inserted[0].insertId); }
   catch (error) { if (isDuplicate(error)) return { accepted: true as const, duplicate: true as const }; throw error; }
-  const result = await processReservedEvent({ id: eventId, storeId: binding.storeId, payloadHash, attemptCount: 0 }, event);
+  const result = await processReservedEvent({ id: eventId, storeId: binding.storeId, metaAssetId: binding.metaAssetId, payloadHash, attemptCount: 0 }, event);
   return { accepted: true as const, duplicate: false as const, eventId, ...result };
 }
 
@@ -161,7 +187,7 @@ export async function retryDueMetaEvents(limit = 20) {
   let missingPayloadDeadLetters = 0;
   for (const row of rows) {
     if (!row.normalizedPayloadJson) { await db.update(channelWebhookEvents).set({ processingStatus: "dead_letter", deadLetterAt: new Date(), errorSummary: "لا توجد حمولة مطبعة لإعادة المعالجة." }).where(eq(channelWebhookEvents.id, row.id)); missingPayloadDeadLetters += 1; continue; }
-    results.push(await processReservedEvent({ id: row.id, storeId: row.storeId, payloadHash: row.payloadHash, attemptCount: row.attemptCount }, reviveEvent(row.normalizedPayloadJson)));
+    results.push(await processReservedEvent({ id: row.id, storeId: row.storeId, metaAssetId: row.metaAssetId, payloadHash: row.payloadHash, attemptCount: row.attemptCount }, reviveEvent(row.normalizedPayloadJson)));
   }
   return { attempted: rows.length, processed: results.filter(item => item.processed).length, deadLetters: missingPayloadDeadLetters + results.filter(item => !item.processed && item.deadLetter).length };
 }
