@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { channelAccounts, metaConnections, metaHistorySyncJobs } from "../../../drizzle/schema";
 import { getDb } from "../../db";
-import { ingestExternalInboundMessage, listChannelAccounts, type ExternalChannel, type ExternalMediaReference } from "../../channels/db";
+import { ingestExternalInboundMessage, listChannelAccounts, type ExternalChannel, type ExternalMediaReference, type NormalizedMessageMetadata } from "../../channels/db";
 import { storeInboundImageFromProvider } from "../../channels/media";
 import { getMetaAssetAccessToken, getMetaConnection, listMetaConnectionOverview } from "./db";
 import { getMetaRuntimeSettings } from "./platformSettings";
@@ -14,6 +14,18 @@ function compact(value: unknown, max = 255) { return typeof value === "string" ?
 function parseDate(value: unknown) { const date = new Date(typeof value === "string" || typeof value === "number" ? value : Date.now()); return Number.isNaN(date.getTime()) ? new Date() : date; }
 function parseCursor(value: string | null): SyncCursor { try { const parsed = JSON.parse(value || "{}"); return parsed && typeof parsed === "object" ? parsed : {}; } catch { return {}; } }
 function safeCursor(value: SyncCursor) { return JSON.stringify(value).slice(0, 8000); }
+function historyMessageMetadata(message: any): NormalizedMessageMetadata {
+  const reply = message?.reply_to || message?.context || {};
+  const messageType = compact(message?.type, 40) || (message?.message ? "text" : message?.attachments?.data?.length ? "attachment" : "unsupported");
+  return {
+    messageType,
+    replyToExternalMessageId: compact(reply?.id || reply?.mid || reply?.message_id, 255) || null,
+    replyToBodyPreview: compact(reply?.message || reply?.text, 300) || null,
+    storyId: compact(reply?.story?.id || reply?.story_id || message?.story_id, 255) || null,
+    mentions: Array.isArray(message?.mentions) ? message.mentions.slice(0, 20).map((mention: any) => ({ id: compact(mention?.id || mention?.user_id, 255), name: compact(mention?.name || mention?.username, 160) || null })).filter((mention: { id: string }) => mention.id) : [],
+    unsupportedReason: messageType === "unsupported" || messageType === "attachment" ? `نوع رسالة تاريخية يحتاج عرضاً خاصاً: ${messageType}` : null,
+  };
+}
 
 async function graphGet(path: string, token: string, params: Record<string, string>) {
   const runtime = await getMetaRuntimeSettings();
@@ -89,7 +101,7 @@ async function importHistoryMessage(input: { storeId: number; channel: HistoryCh
   const messageId = compact(input.message?.id); if (!messageId) return { imported: false, duplicate: false };
   const senderId = compact(input.message?.from?.id); const direction = senderId === input.businessAccountId ? "outbound" as const : "inbound" as const;
   const attachments = mapAttachments(input.message);
-  const result = await ingestExternalInboundMessage({ channel: input.channel, providerAccountId: input.providerAccountId, externalEventId: `history:${messageId}`, externalConversationId: `${input.channel}:${input.customerId}`, externalMessageId: messageId, senderName: input.customerName, senderPhone: null, body: compact(input.message?.message, 20_000) || null, occurredAt: parseDate(input.message?.created_time), attachments, direction, source: "historical_sync", payloadHash: `history:${messageId}` });
+  const result = await ingestExternalInboundMessage({ channel: input.channel, providerAccountId: input.providerAccountId, externalEventId: `history:${messageId}`, externalConversationId: `${input.channel}:${input.customerId}`, externalMessageId: messageId, senderName: input.customerName, senderPhone: null, body: compact(input.message?.message, 20_000) || null, occurredAt: parseDate(input.message?.created_time), attachments, metadata: historyMessageMetadata(input.message), direction, source: "historical_sync", payloadHash: `history:${messageId}` });
   if (result.accepted && !result.duplicate && result.storeId) for (let index = 0; index < attachments.length; index += 1) {
     if (attachments[index]?.mediaType !== "image" || !result.mediaIds[index]) continue;
     await storeInboundImageFromProvider({ storeId: result.storeId, mediaId: result.mediaIds[index], sourceUrl: attachments[index]?.sourceUrl }).catch(() => undefined);

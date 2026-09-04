@@ -1,10 +1,10 @@
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { customerActivities, customerProfiles, employeeProfiles, inboxConversationEvents, inboxConversations, inboxMessages, stores, users } from "../../drizzle/schema";
+import { channelWebhookEvents, customerActivities, customerProfiles, employeeProfiles, inboxConversationEvents, inboxConversations, inboxMessages, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
-import { assignInboxConversation, changeInboxConversationStatus, createManualConversation, getInboxConversationDetail, linkInboxConversationCustomer, listInboxConversations, recordInboxMessage, setInboxConversationPriority, snoozeInboxConversation } from "./db";
+import { assignInboxConversation, changeInboxConversationStatus, createManualConversation, getInboxConversationDetail, linkInboxConversationCustomer, listInboxConversations, listInboxMetaActivity, recordInboxMessage, setInboxConversationPriority, snoozeInboxConversation } from "./db";
 
 type Cleanup = { conversationIds: number[]; customerIds: number[]; employeeIds: number[]; userIds: number[]; storeIds: number[] };
 const cleanups: Cleanup[] = [];
@@ -25,7 +25,7 @@ afterEach(async () => {
     }
     for (const employeeId of cleanup.employeeIds) await db.delete(employeeProfiles).where(eq(employeeProfiles.id, employeeId));
     for (const userId of cleanup.userIds) await db.delete(users).where(eq(users.id, userId));
-    for (const storeId of cleanup.storeIds) await db.delete(stores).where(eq(stores.id, storeId));
+    for (const storeId of cleanup.storeIds) { await db.delete(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, storeId)); await db.delete(stores).where(eq(stores.id, storeId)); }
   }
 });
 
@@ -57,6 +57,22 @@ describe("Inbox-A متعدد المتاجر", () => {
     const inboxActivities = activities.filter(activity => activity.type === "inbox_message");
     expect(inboxActivities).toHaveLength(5);
     expect(inboxActivities.map(activity => activity.title)).toEqual(expect.arrayContaining(["فُتحت محادثة يدوية في Inbox", "رسالة واردة مسجلة في Inbox", "ملاحظة داخلية من Inbox", "رسالة صادرة مسجلة في Inbox", "تغيّرت حالة المحادثة إلى: بانتظار العميل"]));
+  });
+
+  it("يعرض نشاط التعليقات والـmentions مع عزل المتجر ومنع تسريب الحقول السرية", async () => {
+    const db = await getDb();
+    const [owner] = db ? await db.select({ id: users.id }).from(users).limit(1) : [];
+    if (!db || !owner) throw new Error("لا توجد بيانات تشغيلية لاختبار نشاط Meta.");
+    const suffix = randomUUID();
+    const storeResult = await db.insert(stores).values({ name: `نشاط Meta ${suffix}`, slug: `meta-activity-${suffix}`, primaryOwnerUserId: owner.id });
+    const storeId = Number(storeResult[0].insertId);
+    cleanups.push({ conversationIds: [], customerIds: [], employeeIds: [], userIds: [], storeIds: [storeId] });
+    await db.insert(channelWebhookEvents).values({ storeId, eventType: "comment", externalEventId: `comment-${suffix}`, payloadHash: `hash-${suffix}`, processingStatus: "processed", normalizedPayloadJson: JSON.stringify({ channel: "instagram", summary: "تعليق على منشور", data: { postId: "post-1", message: "نص التعليق" }, access_token: "must-not-leak" }) });
+    const activity = await listInboxMetaActivity(storeId);
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({ type: "comment", channel: "instagram", summary: "تعليق على منشور", data: { postId: "post-1" } });
+    expect(JSON.stringify(activity[0])).not.toContain("access_token");
+    expect(JSON.stringify(activity[0])).not.toContain("must-not-leak");
   });
 
   it("يمنع الوصول والتعيين وربط العملاء عبر متجر آخر", async () => {

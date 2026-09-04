@@ -15,6 +15,7 @@ import {
   linkInboxConversationOrder,
   listInboxAssignableEmployees,
   listInboxConversations,
+  listInboxMetaActivity,
   listInboxCustomers,
   recordInboxMessage,
   setInboxConversationPriority,
@@ -38,6 +39,7 @@ export const inboxRouter = router({
     return listInboxConversations(store.id, ctx.user.id, input ?? {});
   }),
   detail: protectedProcedure.input(conversationIdInput).query(async ({ ctx, input }) => getInboxConversationDetail((await requireInboxStore(ctx, "inbox.read")).id, input.conversationId)),
+  metaActivity: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional()).query(async ({ ctx, input }) => listInboxMetaActivity((await requireInboxStore(ctx, "inbox.read")).id, input?.limit)),
   assignees: protectedProcedure.query(async ({ ctx }) => listInboxAssignableEmployees((await requireInboxStore(ctx, "inbox.read")).id)),
   customers: protectedProcedure.input(z.object({ search: z.string().trim().max(160).optional() }).optional()).query(async ({ ctx, input }) => listInboxCustomers((await requireInboxStore(ctx, "inbox.read")).id, input?.search)),
   createManual: protectedProcedure.input(z.object({ customerId: z.number().int().positive().nullable().optional(), orderId: z.number().int().positive().nullable().optional(), subject: z.string().trim().max(240).nullable().optional(), contactName: z.string().trim().max(160).nullable().optional(), contactPhone: z.string().trim().max(40).nullable().optional() })).mutation(async ({ ctx, input }) => {

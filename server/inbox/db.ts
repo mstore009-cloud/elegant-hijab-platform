@@ -12,6 +12,7 @@ import {
   customerBotImageMatches,
   products,
   channelAccounts,
+  channelWebhookEvents,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { appendCustomerActivity } from "../crm/db";
@@ -51,6 +52,21 @@ function parseMessageMetadata(value: string | null) {
   } catch {
     return null;
   }
+}
+
+export async function listInboxMetaActivity(storeId: number, limit = 30) {
+  const db = await requireDb();
+  const rows = await db.select({ id: channelWebhookEvents.id, eventType: channelWebhookEvents.eventType, processingStatus: channelWebhookEvents.processingStatus, normalizedPayloadJson: channelWebhookEvents.normalizedPayloadJson, receivedAt: channelWebhookEvents.receivedAt, processedAt: channelWebhookEvents.processedAt, errorSummary: channelWebhookEvents.errorSummary })
+    .from(channelWebhookEvents)
+    .where(and(eq(channelWebhookEvents.storeId, storeId), inArray(channelWebhookEvents.eventType, ["comment", "mention"])))
+    .orderBy(desc(channelWebhookEvents.receivedAt), desc(channelWebhookEvents.id))
+    .limit(Math.min(Math.max(limit, 1), 100));
+  return rows.map(row => {
+    let parsed: any = null;
+    try { parsed = row.normalizedPayloadJson ? JSON.parse(row.normalizedPayloadJson) : null; } catch { parsed = null; }
+    const data = parsed?.data && typeof parsed.data === "object" ? Object.fromEntries(Object.entries(parsed.data).filter(([key]) => ["commentId", "mediaId", "postId", "message", "summary", "leadId"].includes(key)).slice(0, 10)) : {};
+    return { id: row.id, type: row.eventType, channel: parsed?.channel === "instagram" || parsed?.channel === "messenger" ? parsed.channel : "meta", summary: typeof parsed?.summary === "string" ? parsed.summary.slice(0, 500) : row.errorSummary || "نشاط Meta يحتاج مراجعة.", data, processingStatus: row.processingStatus, receivedAt: row.receivedAt, processedAt: row.processedAt };
+  });
 }
 
 const statusLabels: Record<InboxStatus, string> = {

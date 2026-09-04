@@ -48,7 +48,7 @@ describe("Meta history sync", () => {
       const url = new URL(String(input));
       if (url.pathname.endsWith(`/page-${suffix}/conversations`)) return new Response(JSON.stringify({ data: [{ id: `thread-${suffix}`, participants: { data: [{ id: `page-${suffix}`, name: "المتجر" }, { id: `customer-${suffix}`, name: "العميلة" }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
       if (url.pathname.endsWith(`/thread-${suffix}/messages`)) return new Response(JSON.stringify({ data: [
-        { id: `mid-in-${suffix}`, message: "مرحباً", created_time: "2026-08-01T10:00:00+0000", from: { id: `customer-${suffix}` }, to: { data: [{ id: `page-${suffix}` }] } },
+        { id: `mid-in-${suffix}`, type: "text", message: "مرحباً", reply_to: { id: `mid-root-${suffix}`, message: "الرسالة الأصلية" }, story_id: `story-${suffix}`, mentions: [{ id: `staff-${suffix}`, name: "الموظفة" }], created_time: "2026-08-01T10:00:00+0000", from: { id: `customer-${suffix}` }, to: { data: [{ id: `page-${suffix}` }] } },
         { id: `mid-out-${suffix}`, message: "أهلاً بك", created_time: "2026-08-01T10:01:00+0000", from: { id: `page-${suffix}` }, to: { data: [{ id: `customer-${suffix}` }] } },
       ] }), { status: 200, headers: { "content-type": "application/json" } });
       throw new Error(`unexpected graph call ${url.pathname}`);
@@ -60,6 +60,8 @@ describe("Meta history sync", () => {
     expect(conversations).toHaveLength(1);
     const messages = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversations[0].id));
     expect(messages.map(row => ({ direction: row.direction, source: row.source }))).toEqual(expect.arrayContaining([{ direction: "inbound", source: "historical_sync" }, { direction: "outbound", source: "historical_sync" }]));
+    const historicalMetadata = JSON.parse(messages.find(row => row.direction === "inbound")?.metadataJson ?? "{}");
+    expect(historicalMetadata).toMatchObject({ messageType: "text", replyToExternalMessageId: `mid-root-${suffix}`, replyToBodyPreview: "الرسالة الأصلية", storyId: `story-${suffix}`, mentions: [{ id: `staff-${suffix}`, name: "الموظفة" }] });
     expect(await db.select().from(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, storeId))).toHaveLength(0);
     const jobsAfterRepeat = await ensureMetaHistorySyncJobs(storeId, userId);
     expect(jobsAfterRepeat).toHaveLength(1);
