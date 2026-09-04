@@ -90,9 +90,15 @@ describe("Meta history sync", () => {
       const url = new URL(String(input));
       if (url.pathname.endsWith(`/${pageId}/conversations`)) {
         expect(url.searchParams.get("platform")).toBe("instagram");
+        expect(url.searchParams.get("fields")).toBe("id,updated_time");
+        expect(url.searchParams.get("limit")).toBe("5");
         return new Response(JSON.stringify({ data: [{ id: `ig-thread-${suffix}`, participants: { data: [{ id: instagramId, name: "المتجر" }, { id: `ig-customer-${suffix}`, name: "عميلة Instagram" }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (url.pathname.endsWith(`/ig-thread-${suffix}/messages`)) return new Response(JSON.stringify({ data: [{ id: `ig-mid-${suffix}`, message: "هل اللون متوفر؟", created_time: "2026-08-02T10:00:00+0000", from: { id: `ig-customer-${suffix}` }, to: { data: [{ id: instagramId }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.pathname.endsWith(`/ig-thread-${suffix}/messages`)) {
+        expect(url.searchParams.get("fields")).toBe("id,message,created_time,from,attachments");
+        expect(url.searchParams.get("limit")).toBe("10");
+        return new Response(JSON.stringify({ data: [{ id: `ig-mid-${suffix}`, message: "هل اللون متوفر؟", created_time: "2026-08-02T10:00:00+0000", from: { id: `ig-customer-${suffix}` }, to: { data: [{ id: instagramId }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
       throw new Error(`unexpected graph call ${url.pathname}`);
     }));
     const jobs = await ensureMetaHistorySyncJobs(storeId, userId);

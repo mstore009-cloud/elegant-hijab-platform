@@ -1,0 +1,1 @@
+-- message_media_message_idx is created in 0057 before replacing the provider unique index.

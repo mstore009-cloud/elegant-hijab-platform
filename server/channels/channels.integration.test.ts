@@ -104,6 +104,10 @@ describe("موصلات Meta وصور بوت العملاء", () => {
     expect(first.mediaIds).toHaveLength(1);
     const second = await ingestExternalInboundMessage(input);
     expect(second).toMatchObject({ accepted: true, duplicate: true, storeId });
+    const repeatedMedia = await ingestExternalInboundMessage({ ...input, externalEventId: "evt-2", externalMessageId: "msg-2", payloadHash: "hash-2", body: "رسالة ثانية بالملصق نفسه" });
+    expect(repeatedMedia).toMatchObject({ accepted: true, duplicate: false, storeId });
+    expect(repeatedMedia.mediaIds).toHaveLength(1);
+    expect(repeatedMedia.mediaIds[0]).not.toBe(first.mediaIds[0]);
     const [message] = await db.select().from(inboxMessages).where(eq(inboxMessages.id, first.messageId!));
     expect(message.body).toContain("اللون متوفر");
     const [media] = await db.select().from(inboxMessageMedia).where(eq(inboxMessageMedia.id, first.mediaIds[0]));

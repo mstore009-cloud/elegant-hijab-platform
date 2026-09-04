@@ -120,7 +120,7 @@ export async function processMetaHistorySyncJob(jobId: number) {
   const cursor = parseCursor(job.cursor);
   await db.update(metaHistorySyncJobs).set({ status: "running", lastRunAt: new Date(), lastError: null }).where(eq(metaHistorySyncJobs.id, job.id));
   try {
-    const conversations = await graphGet(`${credential.graphAccountId}/conversations`, credential.token, { platform: channel, fields: "id,updated_time,participants", limit: channel === "instagram" ? "10" : "25", after: cursor.conversationsAfter || "" });
+    const conversations = await graphGet(`${credential.graphAccountId}/conversations`, credential.token, { platform: channel, fields: channel === "instagram" ? "id,updated_time" : "id,updated_time,participants", limit: channel === "instagram" ? "5" : "25", after: cursor.conversationsAfter || "" });
     const rows = Array.isArray(conversations?.data) ? conversations.data : [];
     const index = Math.max(0, Math.min(cursor.conversationIndex || 0, rows.length));
     const conversation = rows[index];
@@ -136,7 +136,7 @@ export async function processMetaHistorySyncJob(jobId: number) {
     const participants = Array.isArray(conversation?.participants?.data) ? conversation.participants.data : [];
     const customer = participants.find((item: any) => compact(item?.id) && compact(item?.id) !== job.providerAccountId) || participants[0] || {};
     const customerId = compact(customer?.id) || compact(conversation?.id);
-    const messages = await graphGet(`${compact(conversation?.id)}/messages`, credential.token, { fields: "id,message,created_time,from,to,attachments", limit: channel === "instagram" ? "25" : "50", after: cursor.messagesAfter || "" });
+    const messages = await graphGet(`${compact(conversation?.id)}/messages`, credential.token, { fields: channel === "instagram" ? "id,message,created_time,from,attachments" : "id,message,created_time,from,to,attachments", limit: channel === "instagram" ? "10" : "50", after: cursor.messagesAfter || "" });
     let imported = 0; let duplicates = 0; let oldest: Date | null = job.oldestMessageAt; let newest: Date | null = job.newestMessageAt;
     for (const message of Array.isArray(messages?.data) ? messages.data : []) {
       const result = await importHistoryMessage({ storeId: job.storeId, channel, providerAccountId: job.providerAccountId, businessAccountId: job.providerAccountId, customerId, customerName: compact(customer?.name, 160) || null, message });

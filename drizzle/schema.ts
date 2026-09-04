@@ -742,7 +742,9 @@ export const inboxMessageMedia = mysqlTable(
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   table => [
-    uniqueIndex("message_media_provider_unique").on(table.channelAccountId, table.providerMediaId),
+    uniqueIndex("message_media_provider_unique").on(table.channelAccountId, table.providerMediaId, table.messageId),
+    index("message_media_message_idx").on(table.messageId),
+    index("message_media_channel_account_idx").on(table.channelAccountId),
     index("message_media_store_message_idx").on(table.storeId, table.messageId),
     index("message_media_store_status_idx").on(table.storeId, table.downloadStatus),
   ],
