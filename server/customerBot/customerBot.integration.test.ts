@@ -22,7 +22,7 @@ import {
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { createManualConversation, recordInboxMessage } from "../inbox/db";
-import { generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, updateCustomerBotSettings } from "./db";
+import { generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, simulateCustomerBotInstruction, updateCustomerBotSettings } from "./db";
 
 type Cleanup = { storeId: number; conversationIds: number[]; productIds: number[]; employeeIds?: number[]; userIds?: number[] };
 const cleanups: Cleanup[] = [];
@@ -80,6 +80,18 @@ function mockReply(reply: string, confidence = 90, needsEscalation = false) {
 }
 
 describe("بوت العملاء الهجين", () => {
+  it("تحاكي تعليمة المشغل من دون إنشاء تشغيل أو إرسال خارجي أو تعديل بيانات المتجر", async () => {
+    const setupData = await setup("هل الحجاب الزيتي متوفر؟");
+    const mock = mockReply("يمكنني مساعدتك بالمعلومات العامة.", 84);
+    sendMetaConversationMessageMock.mockReset();
+    const beforeRuns = await listCustomerBotRuns(setupData.storeId, setupData.conversationId);
+    const result = await simulateCustomerBotInstruction({ storeId: setupData.storeId, instruction: "ابدأ بالرد مباشرة وبلهجة عراقية بسيطة.", sampleMessage: "أريد معرفة طريقة اختيار اللون.", llm: mock.llm });
+    expect(result).toMatchObject({ model: "gpt-5-mini", confidence: 84, externalSend: false, persistedRun: false, reply: "يمكنني مساعدتك بالمعلومات العامة." });
+    expect(mock.calls).toEqual([{ model: "gpt-5-mini" }]);
+    expect(sendMetaConversationMessageMock).not.toHaveBeenCalled();
+    expect(await listCustomerBotRuns(setupData.storeId, setupData.conversationId)).toHaveLength(beforeRuns.length);
+  });
+
   it("ينشئ المسار السريع مسودة مبنية على حقائق المنتج الحية من دون كشف بيانات التكلفة", async () => {
     const setupData = await setup("هل الحجاب الزيتي متوفر؟ وكم سعره؟");
     const mock = mockReply("نعم، اللون الزيتي متوفر حالياً وسعره 18,000 د.ع.");

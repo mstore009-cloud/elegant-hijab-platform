@@ -4,7 +4,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { listLLMModels } from "../_core/llm";
-import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, updateCustomerBotSettings } from "../customerBot/db";
+import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, simulateCustomerBotInstruction, updateCustomerBotSettings } from "../customerBot/db";
 import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, updateCustomerBotKnowledge } from "../customerBot/knowledge";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 
@@ -50,6 +50,12 @@ export const customerBotRouter = router({
     return settings;
   }),
   runs: protectedProcedure.input(z.object({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => listCustomerBotRuns((await requireStore(ctx, "inbox.read")).id, input.conversationId)),
+  simulateInstruction: protectedProcedure.input(z.object({ instruction: z.string().trim().min(3).max(12000), sampleMessage: z.string().trim().min(2).max(1200) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await simulateCustomerBotInstruction({ ...input, storeId: store.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_simulation", entityId: store.id, action: "bot.instruction_simulated", summary: "تم اختبار تعليمة مشغل داخل المحاكاة دون إرسال أو إنشاء تشغيل." });
+    return result;
+  }),
   generateDraft: protectedProcedure.input(z.object({ conversationId: z.number().int().positive(), sourceMessageId: z.number().int().positive().optional() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "inbox.reply");
     const result = await generateCustomerBotDraft({ ...input, storeId: store.id, actorUserId: ctx.user.id });

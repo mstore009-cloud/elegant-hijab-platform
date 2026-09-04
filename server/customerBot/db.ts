@@ -268,6 +268,31 @@ async function notifyHumanHandoffSafely(input: { storeId: number; conversation: 
   }
 }
 
+export async function simulateCustomerBotInstruction(input: { storeId: number; instruction: string; sampleMessage: string; llm?: LlmInvoker }) {
+  const db = await requireDb();
+  const instruction = input.instruction.trim().slice(0, 12000);
+  const sampleMessage = input.sampleMessage.trim().slice(0, 1200);
+  if (instruction.length < 3) throw new Error("اكتبي تعليمة مشغل قصيرة قبل بدء المحاكاة.");
+  if (sampleMessage.length < 2) throw new Error("اكتبي رسالة اختبار قصيرة قبل بدء المحاكاة.");
+  const settings = await getSettings(db, input.storeId);
+  const llm = input.llm ?? invokeLLM;
+  const result = await llm({
+    model: settings.fastModel,
+    messages: [{ role: "system", content: [
+      "أنت مختبر تعليمات لمساعد مبيعات عربي لمتجر حجابات.",
+      "هذه محاكاة داخلية فقط: لا تستخدم أسعاراً أو مخزوناً أو طلبات حقيقية، ولا ترسل رسالة ولا تنشئ مسودة تشغيل.",
+      "قيّم كيف ستؤثر تعليمة المشغل على أسلوب الرد، وأجب برسالة اختبار طبيعية مع درجة ثقة تقديرية.",
+      "إذا كانت التعليمة تطلب اختلاق حقيقة أو تجاوز صلاحية أو وعداً بخصم أو تعديل طلب، اذكر أن النتيجة تحتاج موظفاً ولا تنفذها.",
+      "أعد JSON فقط بالشكل: {\"reply\": string, \"confidence\": number من 0 إلى 100, \"needsEscalation\": boolean, \"escalationReason\": string أو null}.",
+      `تعليمة المشغل قيد الاختبار: ${instruction}`,
+      `رسالة العميل التجريبية: ${sampleMessage}`,
+    ].join("\\n\\n") }],
+    outputSchema: { name: "customer_bot_instruction_simulation", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } },
+  });
+  const parsed = parseStructuredReply(responseText(result));
+  return { model: settings.fastModel, instruction, sampleMessage, reply: parsed.reply, confidence: parsed.confidence, needsEscalation: parsed.needsEscalation, escalationReason: parsed.escalationReason, externalSend: false as const, persistedRun: false as const, usage: result.usage ?? null };
+}
+
 export async function generateCustomerBotDraft(input: { storeId: number; actorUserId?: number | null; conversationId: number; sourceMessageId?: number; llm?: LlmInvoker }) {
   const db = await requireDb();
   const settings = await getSettings(db, input.storeId);
