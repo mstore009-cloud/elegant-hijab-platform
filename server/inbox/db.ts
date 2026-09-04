@@ -27,6 +27,32 @@ export type InboxChannel = (typeof inboxChannels)[number];
 export type InboxStatus = (typeof inboxStatuses)[number];
 export type InboxMessageDirection = (typeof inboxMessageDirections)[number];
 
+type InboxMessageMetadata = {
+  messageType?: string | null;
+  replyToExternalMessageId?: string | null;
+  replyToBodyPreview?: string | null;
+  storyId?: string | null;
+  mentions?: Array<{ id: string; name?: string | null }>;
+  unsupportedReason?: string | null;
+};
+
+function parseMessageMetadata(value: string | null) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as InboxMessageMetadata;
+    return {
+      messageType: typeof parsed.messageType === "string" ? parsed.messageType : null,
+      replyToExternalMessageId: typeof parsed.replyToExternalMessageId === "string" ? parsed.replyToExternalMessageId : null,
+      replyToBodyPreview: typeof parsed.replyToBodyPreview === "string" ? parsed.replyToBodyPreview : null,
+      storyId: typeof parsed.storyId === "string" ? parsed.storyId : null,
+      mentions: Array.isArray(parsed.mentions) ? parsed.mentions.filter(item => item && typeof item.id === "string").slice(0, 20) : [],
+      unsupportedReason: typeof parsed.unsupportedReason === "string" ? parsed.unsupportedReason : null,
+    } satisfies InboxMessageMetadata;
+  } catch {
+    return null;
+  }
+}
+
 const statusLabels: Record<InboxStatus, string> = {
   open: "مفتوحة",
   waiting_customer: "بانتظار العميل",
@@ -128,7 +154,8 @@ export async function getInboxConversationDetail(storeId: number, conversationId
   const channelHealth = channelAccount && metaOverview && conversation.channel !== "manual"
     ? deriveChannelHealth({ channel: conversation.channel as "whatsapp" | "instagram" | "messenger", account: channelAccount, connections: metaOverview.connections, assets: metaOverview.assets, capabilities: metaOverview.capabilities })
     : null;
-  return { conversation, messages, events, customer, linkedOrder, assignee, customerOrders, media, channelAccount: channelAccount ?? null, channelHealth };
+  const normalizedMessages = messages.map(message => ({ ...message, metadata: parseMessageMetadata(message.metadataJson) }));
+  return { conversation, messages: normalizedMessages, events, customer, linkedOrder, assignee, customerOrders, media, channelAccount: channelAccount ?? null, channelHealth };
 }
 
 async function listInboxMessageMediaForConversation(storeId: number, conversationId: number, messageIds: number[]) {

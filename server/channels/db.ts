@@ -20,6 +20,15 @@ export type ExternalMediaReference = {
   sourceUrl?: string | null;
 };
 
+export type NormalizedMessageMetadata = {
+  messageType?: string | null;
+  replyToExternalMessageId?: string | null;
+  replyToBodyPreview?: string | null;
+  storyId?: string | null;
+  mentions?: Array<{ id: string; name?: string | null }>;
+  unsupportedReason?: string | null;
+};
+
 export type NormalizedInboundMessage = {
   channel: ExternalChannel;
   providerAccountId: string;
@@ -33,7 +42,21 @@ export type NormalizedInboundMessage = {
   attachments: ExternalMediaReference[];
   direction?: "inbound" | "outbound";
   source?: "live_webhook" | "historical_sync";
+  metadata?: NormalizedMessageMetadata | null;
 };
+
+function compactMetadata(metadata?: NormalizedMessageMetadata | null) {
+  if (!metadata) return null;
+  const safe = {
+    messageType: compactText(metadata.messageType, 40) || null,
+    replyToExternalMessageId: compactText(metadata.replyToExternalMessageId, 255) || null,
+    replyToBodyPreview: compactText(metadata.replyToBodyPreview, 300) || null,
+    storyId: compactText(metadata.storyId, 255) || null,
+    mentions: Array.isArray(metadata.mentions) ? metadata.mentions.slice(0, 20).map(mention => ({ id: compactText(mention.id, 255), name: compactText(mention.name, 160) || null })).filter(mention => mention.id) : [],
+    unsupportedReason: compactText(metadata.unsupportedReason, 255) || null,
+  } satisfies NormalizedMessageMetadata;
+  return JSON.stringify(safe).slice(0, 8_000);
+}
 
 function compactText(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -165,6 +188,7 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
           conversationId,
           direction,
           body: messageBody,
+          metadataJson: compactMetadata(input.metadata),
           externalMessageId: input.externalMessageId,
           source,
           occurredAt: input.occurredAt,

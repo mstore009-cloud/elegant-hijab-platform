@@ -35,6 +35,8 @@ async function setup() {
 
 describe("Unified Meta Webhook Gateway", () => {
   it("يطبع Messenger ورسائل Instagram وحالات WhatsApp والتعليقات إلى أنواع أحداث موحدة", () => {
+    const richMessenger = normalizeMetaEvents({ object: "page", entry: [{ id: "page-rich", messaging: [{ sender: { id: "customer-rich" }, timestamp: 1760000000000, message: { mid: "mid-rich", text: "هل هذا رد على القصة؟", reply_to: { mid: "mid-root", text: "الصورة الأصلية" }, story_id: "story-1", mentions: [{ id: "staff-1", name: "موظفة" }] } }] }] });
+    expect(richMessenger[0]).toMatchObject({ kind: "message", metadata: { messageType: "text", replyToExternalMessageId: "mid-root", replyToBodyPreview: "الصورة الأصلية", storyId: "story-1", mentions: [{ id: "staff-1", name: "موظفة" }] } });
     const messenger = normalizeMetaEvents({ object: "page", entry: [{ id: "page-1", messaging: [{ sender: { id: "customer-1" }, timestamp: 1760000000000, message: { mid: "mid-page-1", text: "هل المنتج متوفر؟" } }], changes: [{ field: "feed", value: { comment_id: "comment-1", post_id: "post-1", message: "أريد هذا اللون" } }] }] });
     expect(messenger).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "message", channel: "messenger", providerAccountId: "page-1", externalMessageId: "mid-page-1" }), expect.objectContaining({ kind: "comment", externalEventId: "comment:comment-1" })]));
     const whatsapp = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: "phone-1" }, statuses: [{ id: "wamid-out-1", status: "read", timestamp: "1760000000" }] } }] }] });
@@ -44,7 +46,7 @@ describe("Unified Meta Webhook Gateway", () => {
   it("يحجز حدث Messenger مرة واحدة وينشئ رسالة واردة داخل متجر الحساب فقط", async () => {
     const { db, owner, storeId, cleanup } = await setup();
     await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "messenger", providerAccountId: "page-gateway", providerDisplayName: "صفحة الاختبار", connectionStatus: "testing" });
-    const [event] = normalizeMetaEvents({ object: "page", entry: [{ id: "page-gateway", messaging: [{ sender: { id: "customer-gateway" }, timestamp: 1760000000000, message: { mid: "mid-gateway", text: "السلام عليكم" } }] }] });
+    const [event] = normalizeMetaEvents({ object: "page", entry: [{ id: "page-gateway", messaging: [{ sender: { id: "customer-gateway" }, timestamp: 1760000000000, message: { mid: "mid-gateway", text: "السلام عليكم", reply_to: { mid: "mid-root-gateway", text: "الرسالة السابقة" }, mentions: [{ id: "staff-gateway", name: "الموظفة" }] } }] }] });
     expect(event.kind).toBe("message");
     const first = await enqueueAndProcessMetaEvent(event, "hash-gateway");
     expect(first).toMatchObject({ accepted: true, duplicate: false, processed: true });
@@ -55,6 +57,7 @@ describe("Unified Meta Webhook Gateway", () => {
     const messages = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversation.id));
     expect(messages).toHaveLength(1);
     expect(messages[0].body).toBe("السلام عليكم");
+    expect(JSON.parse(messages[0].metadataJson ?? "{}")).toMatchObject({ messageType: "text", replyToExternalMessageId: "mid-root-gateway", replyToBodyPreview: "الرسالة السابقة", mentions: [{ id: "staff-gateway", name: "الموظفة" }] });
   });
 
   it("يحدث حالة تسليم رسالة صادرة داخل المتجر ولا ينشئ رسالة جديدة", async () => {

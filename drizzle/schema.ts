@@ -287,6 +287,8 @@ export const inboxMessages = mysqlTable(
     conversationId: int("conversationId").notNull().references(() => inboxConversations.id),
     direction: mysqlEnum("direction", ["inbound", "outbound", "internal_note", "system"]).notNull(),
     body: text("body").notNull(),
+    /** Provider message context only; never contains access tokens or raw provider payloads. */
+    metadataJson: text("metadataJson"),
     externalMessageId: varchar("externalMessageId", { length: 255 }),
     source: mysqlEnum("source", ["manual", "live_webhook", "historical_sync", "outbound"]).default("manual").notNull(),
     actorUserId: int("actorUserId").references(() => users.id),
