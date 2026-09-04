@@ -56,5 +56,10 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("formatElapsed(catalogElapsedMs)");
     expect(source).toContain("lastRunStage === \"failed\"");
     expect(source).toContain("أعد المحاولة");
+    expect(source).toContain("trpc.integrations.oneDriveStatus.useQuery");
+    expect(source).toContain("trpc.integrations.catalogSelectionStatus.useQuery");
+    expect(source).toContain("OneDrive اختياري وغير موصل");
+    expect(source).toContain("المنتجات المحلية لا تعتمد على OneDrive");
+    expect(source).toContain("trpc.integrations.beginCatalogSelection.useMutation");
   });
 });
