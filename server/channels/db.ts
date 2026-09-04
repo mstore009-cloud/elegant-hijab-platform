@@ -6,8 +6,10 @@ import {
   inboxConversations,
   inboxMessageMedia,
   inboxMessages,
+  customerProfiles,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { appendCustomerActivity, normalizeCustomerPhone } from "../crm/db";
 
 export const externalChannels = ["whatsapp", "instagram", "messenger"] as const;
 export type ExternalChannel = (typeof externalChannels)[number];
@@ -164,19 +166,37 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
         eq(inboxConversations.externalConversationId, input.externalConversationId),
       )).limit(1);
       let conversationId = conversation?.id;
+      let customerId = conversation?.customerId ?? null;
+      const phoneDisplay = compactText(input.senderPhone, 40) || "";
+      const phoneNormalized = phoneDisplay ? normalizeCustomerPhone(phoneDisplay) : "";
+      if (!customerId && phoneNormalized.length >= 7 && phoneNormalized.length <= 40) {
+        const [matchedCustomer] = await tx.select().from(customerProfiles).where(and(eq(customerProfiles.storeId, account.storeId), eq(customerProfiles.phoneNormalized, phoneNormalized))).limit(1);
+        if (matchedCustomer) {
+          customerId = matchedCustomer.id;
+          await tx.update(customerProfiles).set({ displayName: compactText(input.senderName, 160) || matchedCustomer.displayName, phoneDisplay, lastChannel: input.channel, updatedAt: new Date() }).where(and(eq(customerProfiles.id, matchedCustomer.id), eq(customerProfiles.storeId, account.storeId)));
+        } else {
+          const createdCustomer = await tx.insert(customerProfiles).values({ storeId: account.storeId, displayName: compactText(input.senderName, 160) || "عميل من المحادثات", phoneNormalized, phoneDisplay, relationshipStage: "new", firstChannel: input.channel, lastChannel: input.channel });
+          customerId = Number(createdCustomer[0].insertId);
+          await appendCustomerActivity(tx, { storeId: account.storeId, customerId, type: "profile_created", title: "أُنشئ ملف العميل من رسالة واردة" });
+        }
+      }
       if (!conversationId) {
         const created = await tx.insert(inboxConversations).values({
           storeId: account.storeId,
+          customerId,
           channel: input.channel,
           externalConversationId: input.externalConversationId,
           contactNameSnapshot: compactText(input.senderName, 160) || null,
-          contactPhoneSnapshot: compactText(input.senderPhone, 40) || null,
+          contactPhoneSnapshot: phoneDisplay || null,
           subject: `رسائل ${input.channel === "whatsapp" ? "واتساب" : input.channel === "instagram" ? "إنستغرام" : "Messenger"}`,
           status: "open",
           lastMessageAt: input.occurredAt,
         });
         conversationId = Number(created[0].insertId);
         await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "created", toValue: input.channel });
+      } else if (customerId && !conversation?.customerId) {
+        await tx.update(inboxConversations).set({ customerId }).where(and(eq(inboxConversations.id, conversationId), eq(inboxConversations.storeId, account.storeId)));
+        await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "customer_linked", toValue: String(customerId) });
       }
 
       const direction = input.direction ?? "inbound";
@@ -223,8 +243,9 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
       await tx.update(inboxConversations).set(source === "historical_sync" ? { lastMessageAt } : { status: "open", snoozedUntil: null, closedAt: null, lastMessageAt }).where(eq(inboxConversations.id, conversationId));
       await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "message_recorded", toValue: source === "historical_sync" ? `historical:${direction}` : direction });
       if (source === "live_webhook" && direction === "inbound") await tx.update(channelAccounts).set({ lastInboundAt: input.occurredAt, lastError: null }).where(eq(channelAccounts.id, account.id));
+      if (customerId && direction === "inbound") await appendCustomerActivity(tx, { storeId: account.storeId, customerId, type: "inbox_message", title: `رسالة واردة عبر ${input.channel}`, body: messageBody });
       if (source === "live_webhook") await tx.update(channelWebhookEvents).set({ processingStatus: "processed", processedAt: new Date() }).where(input.reservedWebhookEventId ? eq(channelWebhookEvents.id, input.reservedWebhookEventId) : and(eq(channelWebhookEvents.channelAccountId, account.id), eq(channelWebhookEvents.externalEventId, input.externalEventId)));
-      return { accepted: true as const, duplicate: false as const, conversationId, messageId, mediaIds, storeId: account.storeId };
+      return { accepted: true as const, duplicate: false as const, conversationId, messageId, mediaIds, storeId: account.storeId, customerId };
     });
   } catch (error) {
     const summary = error instanceof Error ? error.message.slice(0, 500) : "تعذر حفظ الرسالة الواردة.";

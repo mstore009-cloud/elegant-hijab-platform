@@ -65,6 +65,20 @@ describe("Unified Meta Webhook Gateway", () => {
     expect(JSON.parse(messages[0].metadataJson ?? "{}")).toMatchObject({ messageType: "text", replyToExternalMessageId: "mid-root-gateway", replyToBodyPreview: "الرسالة السابقة", mentions: [{ id: "staff-gateway", name: "الموظفة" }] });
   });
 
+  it("يربط رسالة WhatsApp الواردة بملف CRM حسب الهاتف ويسجل نشاط الرسالة", async () => {
+    const { db, owner, storeId, cleanup } = await setup();
+    await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: "phone-crm-link", providerDisplayName: "واتساب CRM", connectionStatus: "testing" });
+    const [event] = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: "phone-crm-link" }, contacts: [{ wa_id: "07861162113", profile: { name: "عميلة واتساب" } }], messages: [{ id: "wamid-crm-link", from: "07861162113", timestamp: "1760000000", text: { body: "أريد معرفة السعر" } }] } }] }] });
+    expect(await enqueueAndProcessMetaEvent(event, "hash-crm-link")).toMatchObject({ processed: true });
+    const [customer] = await db.select().from(customerProfiles).where(eq(customerProfiles.storeId, storeId));
+    expect(customer).toMatchObject({ displayName: "عميلة واتساب", phoneNormalized: "07861162113", lastChannel: "whatsapp" });
+    const [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.externalConversationId, "whatsapp:07861162113"));
+    expect(conversation).toMatchObject({ customerId: customer.id });
+    cleanup.conversationIds.push(conversation.id);
+    const activities = await db.select().from(customerActivities).where(eq(customerActivities.customerId, customer.id));
+    expect(activities).toEqual(expect.arrayContaining([expect.objectContaining({ type: "inbox_message" })]));
+  });
+
   it("ينشئ سياق Inbox لتعليق Meta ويشغل المسار مرة واحدة دون تكرار الرسالة", async () => {
     const { db, owner, storeId, cleanup } = await setup();
     const connection = await db.insert(metaConnections).values({ storeId, purpose: "unified", authMode: "external_business", status: "connected", grantedScopes: "pages_manage_engagement,pages_read_engagement", connectedByUserId: owner.id });
