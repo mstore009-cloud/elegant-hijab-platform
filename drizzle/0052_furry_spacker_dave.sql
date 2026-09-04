@@ -1,0 +1,1 @@
+ALTER TABLE `meta_outbound_messages` MODIFY COLUMN `conversationId` int;

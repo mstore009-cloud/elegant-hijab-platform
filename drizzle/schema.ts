@@ -643,7 +643,7 @@ export const metaOutboundMessages = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     storeId: int("storeId").notNull().references(() => stores.id),
     channelAccountId: int("channelAccountId").notNull().references(() => channelAccounts.id),
-    conversationId: int("conversationId").notNull().references(() => inboxConversations.id),
+    conversationId: int("conversationId").references(() => inboxConversations.id),
     inboxMessageId: int("inboxMessageId").references(() => inboxMessages.id),
     channel: mysqlEnum("channel", ["whatsapp", "instagram", "messenger"]).notNull(),
     recipientExternalId: varchar("recipientExternalId", { length: 255 }).notNull(),

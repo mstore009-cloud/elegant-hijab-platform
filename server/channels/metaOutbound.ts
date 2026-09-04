@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { channelAccounts, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnections, metaOutboundMessages } from "../../drizzle/schema";
+import { channelAccounts, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnectionCapabilities, metaConnections, metaOutboundMessages } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { getMetaSystemUserToken } from "../integrations/meta/db";
@@ -9,11 +9,25 @@ import { decryptMetaToken, metaAssetTokenContext, metaConnectionTokenContext } f
 type SupportedChannel = "whatsapp" | "instagram" | "messenger";
 type SendMode = "manual" | "bot_guarded" | "comment_guarded";
 export type MetaSendTransport = (input: { channel: SupportedChannel; providerAccountId: string; recipientExternalId: string; body: string; accessToken: string }) => Promise<{ externalMessageId: string }>;
+export type MetaCommentReplyTransport = (input: { channel: Extract<SupportedChannel, "messenger" | "instagram">; providerAccountId: string; commentExternalId: string; body: string; accessToken: string }) => Promise<{ externalMessageId: string }>;
 
 function duplicateError(error: unknown): boolean {
   if (!error) return false;
   const anyError = error as any;
   return anyError?.code === "ER_DUP_ENTRY" || anyError?.errno === 1062 || String(anyError?.message ?? "").includes("Duplicate entry") || duplicateError(anyError?.cause);
+}
+
+async function defaultCommentReplyTransport(input: Parameters<MetaCommentReplyTransport>[0]) {
+  const runtime = await getMetaRuntimeSettings();
+  const endpoint = input.channel === "instagram"
+    ? `https://graph.facebook.com/${runtime.graphApiVersion}/${encodeURIComponent(input.commentExternalId)}/replies`
+    : `https://graph.facebook.com/${runtime.graphApiVersion}/${encodeURIComponent(input.commentExternalId)}`;
+  const response = await fetch(input.channel === "instagram" ? `${endpoint}?message=${encodeURIComponent(input.body)}` : endpoint, { method: "POST", headers: { Authorization: `Bearer ${input.accessToken}`, "Content-Type": "application/json" }, body: input.channel === "instagram" ? undefined : JSON.stringify({ message: input.body }) });
+  const json = await response.json().catch(() => ({})) as any;
+  if (!response.ok) throw Object.assign(new Error(json?.error?.message || `رفضت Meta رد التعليق (${response.status}).`), { code: json?.error?.code ? String(json.error.code) : `HTTP_${response.status}` });
+  const externalMessageId = json?.id || json?.comment_id;
+  if (!externalMessageId) throw new Error("قبلت Meta رد التعليق دون إعادة معرفه.");
+  return { externalMessageId: String(externalMessageId) };
 }
 
 async function defaultTransport(input: Parameters<MetaSendTransport>[0]) {
@@ -52,6 +66,42 @@ export async function loadMetaCredential(storeId: number, channelAccount: typeof
   if (!encryptedToken && asset.encryptedConnectionToken) { encryptedToken = asset.encryptedConnectionToken; tokenContext = metaConnectionTokenContext(storeId, asset.connectionPurpose); }
   if (!encryptedToken) throw new Error("لا يوجد رمز وصول صالح للأصل المحدد. أعد تفويض نطاق الرسائل.");
   return { accessToken: decryptMetaToken(encryptedToken, tokenContext), providerAccountId: asset.assetType === "instagram" && asset.parentExternalId ? asset.parentExternalId : asset.assetExternalId };
+}
+
+export async function sendMetaCommentReply(input: { storeId: number; channel: Extract<SupportedChannel, "messenger" | "instagram">; providerAccountId: string; commentExternalId: string; body: string; idempotencyKey: string; actorUserId?: number | null; botRunId?: number | null }, transport: MetaCommentReplyTransport = defaultCommentReplyTransport) {
+  const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة.");
+  const body = input.body.trim(); if (!body || body.length > 4000) throw new Error("نص رد التعليق مطلوب وبحد أقصى 4000 حرف.");
+  const [account] = await db.select().from(channelAccounts).where(and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel), eq(channelAccounts.providerAccountId, input.providerAccountId))).limit(1);
+  if (!account || !["testing", "connected"].includes(account.connectionStatus)) throw new Error("قناة التعليقات غير جاهزة للإرسال. اختبر الاتصال وحدد الأصل أولاً.");
+  const [capabilityRow] = await db.select({ capability: metaConnectionCapabilities }).from(metaConnectionCapabilities).innerJoin(metaAssets, eq(metaAssets.connectionId, metaConnectionCapabilities.connectionId)).where(and(eq(metaConnectionCapabilities.storeId, input.storeId), eq(metaConnectionCapabilities.purpose, "content"), eq(metaAssets.storeId, input.storeId), eq(metaAssets.externalId, input.providerAccountId), eq(metaAssets.isSelected, true))).limit(1);
+  const contentCapability = capabilityRow?.capability;
+  if (!contentCapability || contentCapability.status !== "ready" || !contentCapability.enabled) throw new Error("قدرة التعليقات والمحتوى غير جاهزة أو معطلة لهذا الأصل.");
+  const existing = await db.select().from(metaOutboundMessages).where(and(eq(metaOutboundMessages.storeId, input.storeId), eq(metaOutboundMessages.idempotencyKey, input.idempotencyKey))).limit(1);
+  if (existing[0]) return { outboxId: existing[0].id, status: existing[0].status, externalMessageId: existing[0].externalMessageId, duplicate: true as const };
+  let outboxId: number;
+  try {
+    const created = await db.insert(metaOutboundMessages).values({ storeId: input.storeId, channelAccountId: account.id, conversationId: null, channel: input.channel, recipientExternalId: input.commentExternalId, idempotencyKey: input.idempotencyKey, mode: "comment_guarded", body, actorUserId: input.actorUserId ?? null, botRunId: input.botRunId ?? null });
+    outboxId = Number(created[0].insertId);
+  } catch (error) {
+    if (!duplicateError(error)) throw error;
+    const [duplicate] = await db.select().from(metaOutboundMessages).where(and(eq(metaOutboundMessages.storeId, input.storeId), eq(metaOutboundMessages.idempotencyKey, input.idempotencyKey))).limit(1);
+    if (!duplicate) throw error;
+    return { outboxId: duplicate.id, status: duplicate.status, externalMessageId: duplicate.externalMessageId, duplicate: true as const };
+  }
+  await db.update(metaOutboundMessages).set({ status: "sending", errorCode: null, errorSummary: null }).where(eq(metaOutboundMessages.id, outboxId));
+  try {
+    const credential = await loadMetaCredential(input.storeId, account);
+    const delivered = await transport({ channel: input.channel, providerAccountId: credential.providerAccountId, commentExternalId: input.commentExternalId, body, accessToken: credential.accessToken });
+    await db.update(metaOutboundMessages).set({ status: "sent", externalMessageId: delivered.externalMessageId, sentAt: new Date() }).where(eq(metaOutboundMessages.id, outboxId));
+    await db.update(channelAccounts).set({ lastError: null }).where(eq(channelAccounts.id, account.id));
+    return { outboxId, status: "sent" as const, externalMessageId: delivered.externalMessageId, duplicate: false as const };
+  } catch (error) {
+    const code = String((error as any)?.code ?? "COMMENT_SEND_FAILED").slice(0, 120);
+    const summary = (error instanceof Error ? error.message : "تعذر إرسال رد التعليق إلى Meta.").slice(0, 500);
+    await db.update(metaOutboundMessages).set({ status: "failed", errorCode: code, errorSummary: summary }).where(eq(metaOutboundMessages.id, outboxId));
+    await db.update(channelAccounts).set({ lastError: summary }).where(eq(channelAccounts.id, account.id));
+    throw new Error(summary);
+  }
 }
 
 export async function sendMetaConversationMessage(input: { storeId: number; conversationId: number; body: string; idempotencyKey: string; mode: SendMode; actorUserId?: number | null; botRunId?: number | null }, transport: MetaSendTransport = defaultTransport) {

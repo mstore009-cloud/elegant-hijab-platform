@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { channelAccounts, customerBotRuns, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnections, metaOutboundMessages, stores, users } from "../../drizzle/schema";
+import { channelAccounts, customerBotRuns, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnectionCapabilities, metaConnections, metaOutboundMessages, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { configureChannelAccount } from "./db";
-import { sendMetaConversationMessage } from "./metaOutbound";
+import { sendMetaCommentReply, sendMetaConversationMessage } from "./metaOutbound";
 import { selectMetaAsset, upsertDiscoveredMetaAssets, upsertMetaConnection } from "../integrations/meta/db";
 
 const cleanupStoreIds: number[] = [];
@@ -14,14 +14,15 @@ afterEach(async () => {
   for (const storeId of cleanupStoreIds.splice(0)) {
     const conversations = await db.select({ id: inboxConversations.id }).from(inboxConversations).where(eq(inboxConversations.storeId, storeId));
     const ids = conversations.map(item => item.id);
+    await db.delete(metaOutboundMessages).where(eq(metaOutboundMessages.storeId, storeId));
     if (ids.length) {
-      await db.delete(metaOutboundMessages).where(inArray(metaOutboundMessages.conversationId, ids));
       await db.delete(customerBotRuns).where(inArray(customerBotRuns.conversationId, ids));
       await db.delete(inboxConversationEvents).where(inArray(inboxConversationEvents.conversationId, ids));
       await db.delete(inboxMessages).where(inArray(inboxMessages.conversationId, ids));
       await db.delete(inboxConversations).where(inArray(inboxConversations.id, ids));
     }
     await db.delete(channelAccounts).where(eq(channelAccounts.storeId, storeId));
+    await db.delete(metaConnectionCapabilities).where(eq(metaConnectionCapabilities.storeId, storeId));
     await db.delete(metaAssets).where(eq(metaAssets.storeId, storeId));
     await db.delete(metaConnections).where(eq(metaConnections.storeId, storeId));
     await db.delete(stores).where(eq(stores.id, storeId));
@@ -42,6 +43,7 @@ async function setup() {
   ] });
   const assets = await db.select().from(metaAssets).where(eq(metaAssets.storeId, storeId));
   for (const asset of assets) await selectMetaAsset({ storeId, connectionId: connection.id, assetId: asset.id });
+  await db.insert(metaConnectionCapabilities).values({ storeId, connectionId: connection.id, purpose: "content", status: "ready", enabled: true, requiredScopes: "pages_manage_engagement,instagram_manage_comments", missingScopes: null, lastVerifiedAt: new Date() }).onDuplicateKeyUpdate({ set: { status: "ready", enabled: true, missingScopes: null, lastVerifiedAt: new Date() } });
   for (const [channel, providerAccountId] of [["messenger", `page-send-${suffix}`], ["instagram", `ig-send-${suffix}`], ["whatsapp", `phone-send-${suffix}`]] as const) await configureChannelAccount({ storeId, actorUserId: owner.id, channel, providerAccountId, providerDisplayName: providerAccountId, connectionStatus: "testing" });
   return { db, owner, storeId };
 }
@@ -81,6 +83,23 @@ describe("Meta manual outbound delivery", () => {
     const duplicate = await sendMetaConversationMessage({ storeId, conversationId, body: "أهلاً، أساعدك بالمعلومات المتاحة.", idempotencyKey, mode: "bot_guarded", actorUserId: owner.id, botRunId }, transport as any);
     expect(duplicate.duplicate).toBe(true);
     expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it("يرسل ردود التعليقات عبر comment_guarded لكل من Facebook وInstagram ويمنع التكرار", async () => {
+    const { db, owner, storeId } = await setup();
+    const transports = new Map<string, ReturnType<typeof vi.fn>>();
+    for (const [channel, providerAccountId] of [["messenger", `page-send-${storeId}`], ["instagram", `ig-send-${storeId}`]] as const) {
+      const transport = vi.fn(async (input: { channel: string; commentExternalId: string; accessToken: string }) => ({ externalMessageId: `comment-reply-${input.channel}` }));
+      transports.set(channel, transport);
+      const idempotencyKey = `comment:${channel}:${randomUUID()}`;
+      const sent = await sendMetaCommentReply({ storeId, channel, providerAccountId, commentExternalId: `${channel}-comment-1`, body: "شكراً لتعليقك، نتابع معك التفاصيل.", idempotencyKey, actorUserId: owner.id }, transport as any);
+      expect(sent).toMatchObject({ status: "sent", duplicate: false, externalMessageId: `comment-reply-${channel}` });
+      expect(transport).toHaveBeenCalledWith(expect.objectContaining({ channel, commentExternalId: `${channel}-comment-1`, accessToken: channel === "messenger" || channel === "instagram" ? "page-token-secret" : expect.any(String) }));
+      const duplicate = await sendMetaCommentReply({ storeId, channel, providerAccountId, commentExternalId: `${channel}-comment-1`, body: "شكراً لتعليقك، نتابع معك التفاصيل.", idempotencyKey, actorUserId: owner.id }, transport as any);
+      expect(duplicate).toMatchObject({ duplicate: true, status: "sent", outboxId: sent.outboxId });
+    }
+    expect(transports.get("messenger")).toHaveBeenCalledTimes(1);
+    expect(transports.get("instagram")).toHaveBeenCalledTimes(1);
   });
 
   it("يسجل فشل المزود ولا ينشئ رسالة صادرة ناجحة", async () => {
