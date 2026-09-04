@@ -46,7 +46,12 @@ export default function Inbox() {
   const [status, setStatus] = useState<InboxStatus | "all">("open");
   const [channel, setChannel] = useState<InboxChannel | "all">("all");
   const [assignment, setAssignment] = useState<"all" | "mine" | "unassigned">("all");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const requestedConversationId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const value = Number(new URLSearchParams(window.location.search).get("conversation"));
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }, []);
+  const [selectedId, setSelectedId] = useState<number | null>(requestedConversationId);
   const listInput = useMemo(() => ({ search: search.trim() || undefined, status: status === "all" ? undefined : status, channel: channel === "all" ? undefined : channel, assignment: assignment === "all" ? undefined : assignment }), [search, status, channel, assignment]);
   const detailInput = useMemo(() => selectedId ? { conversationId: selectedId } : skipToken, [selectedId]);
   const conversations = trpc.inbox.list.useQuery(listInput, { enabled: canRead, refetchInterval: REALTIME_INBOX_FALLBACK_REFRESH_MS, refetchOnWindowFocus: true });
@@ -63,7 +68,13 @@ export default function Inbox() {
   }, [utils]);
   useInboxLiveUpdates({ enabled: canRead, onInboxMessage: refreshFromLiveMessage });
 
-  useEffect(() => { if (!selectedId && conversations.data?.[0]) setSelectedId(conversations.data[0].id); }, [conversations.data, selectedId]);
+  useEffect(() => {
+    if (requestedConversationId && conversations.data?.some(item => item.id === requestedConversationId)) {
+      if (selectedId !== requestedConversationId) setSelectedId(requestedConversationId);
+      return;
+    }
+    if (!selectedId && conversations.data?.[0]) setSelectedId(conversations.data[0].id);
+  }, [conversations.data, requestedConversationId, selectedId]);
   const refresh = async () => { await Promise.all([utils.inbox.list.invalidate(), utils.inbox.detail.invalidate(), utils.inbox.customers.invalidate(), utils.customerBot.runs.invalidate(), utils.customerBot.knowledgeSources.invalidate()]); };
 
   const [composerText, setComposerText] = useState("");

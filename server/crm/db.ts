@@ -6,6 +6,7 @@ import {
   customerTags,
   customerTasks,
   employeeProfiles,
+  inboxConversations,
   orders,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
@@ -171,13 +172,14 @@ export async function getCustomerDetail(storeId: number, customerId: number) {
   const db = await getDb();
   if (!db) return null;
   const customer = await getScopedCustomer(db, storeId, customerId);
-  const [ordersList, activities, tasks, tags] = await Promise.all([
+  const [ordersList, activities, tasks, tags, conversations] = await Promise.all([
     db.select().from(orders).where(and(eq(orders.storeId, storeId), eq(orders.customerId, customerId))).orderBy(desc(orders.createdAt)),
     db.select().from(customerActivities).where(and(eq(customerActivities.storeId, storeId), eq(customerActivities.customerId, customerId))).orderBy(desc(customerActivities.occurredAt), desc(customerActivities.id)),
     db.select().from(customerTasks).where(and(eq(customerTasks.storeId, storeId), eq(customerTasks.customerId, customerId))).orderBy(desc(customerTasks.createdAt)),
     db.select({ id: customerTags.id, name: customerTags.name, color: customerTags.color }).from(customerTagAssignments).innerJoin(customerTags, eq(customerTags.id, customerTagAssignments.tagId)).where(and(eq(customerTagAssignments.customerId, customerId), eq(customerTags.storeId, storeId))),
+    db.select({ id: inboxConversations.id, channel: inboxConversations.channel, subject: inboxConversations.subject, status: inboxConversations.status, priority: inboxConversations.priority, lastMessageAt: inboxConversations.lastMessageAt, createdAt: inboxConversations.createdAt }).from(inboxConversations).where(and(eq(inboxConversations.storeId, storeId), eq(inboxConversations.customerId, customerId))).orderBy(desc(inboxConversations.lastMessageAt), desc(inboxConversations.createdAt)).limit(25),
   ]);
-  return { customer, orders: ordersList, activities, tasks, tags };
+  return { customer, orders: ordersList, activities, tasks, tags, conversations };
 }
 
 export async function listCustomerTags(storeId: number) {
