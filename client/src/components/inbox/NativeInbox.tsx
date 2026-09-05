@@ -7,7 +7,7 @@ import { skipToken } from "@tanstack/react-query";
 import { trpc } from "@/lib/trpc";
 import { useInboxLiveUpdates } from "@/hooks/useInboxLiveUpdates";
 import { CheckCheck, ChevronRight, Filter, Inbox as InboxIcon, MessageCircleMore, MoreHorizontal, Paperclip, Phone, Search, Send, Sparkles, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type InboxStatus = "open" | "waiting_customer" | "snoozed" | "closed";
@@ -48,6 +48,8 @@ export default function NativeInbox() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [composerMode, setComposerMode] = useState<MessageDirection>("outbound");
+  const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
+  const messageElements = useRef(new Map<number, HTMLDivElement | null>());
 
   const listInput = useMemo(() => ({ search: search.trim() || undefined, channel: channel === "all" ? undefined : channel, hasAttachments: hasAttachments || undefined, readState: readState === "all" ? undefined : readState }), [search, channel, hasAttachments, readState]);
   const conversations = trpc.inbox.list.useQuery(listInput, { enabled: canRead, refetchInterval: REALTIME_REFRESH_MS, refetchOnWindowFocus: true });
@@ -87,6 +89,19 @@ export default function NativeInbox() {
   const current = detail.data;
   const conversation = current?.conversation;
   const channelReady = Boolean(conversation && conversation.channel !== "manual" && current?.channelHealth?.sendReady);
+  const mediaByMessageId = useMemo(() => {
+    const result = new Map<number, any[]>();
+    for (const media of current?.media ?? []) result.set(media.messageId, [...(result.get(media.messageId) ?? []), media]);
+    return result;
+  }, [current?.media]);
+  const messagesByExternalId = useMemo(() => new Map((current?.messages ?? []).filter((message: any) => message.externalMessageId).map((message: any) => [message.externalMessageId, message])), [current?.messages]);
+  const jumpToMessage = useCallback((messageId: number) => {
+    const element = messageElements.current.get(messageId);
+    if (!element) return;
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedMessageId(messageId);
+    window.setTimeout(() => setHighlightedMessageId(currentId => currentId === messageId ? null : currentId), 1_800);
+  }, []);
 
   const submit = () => {
     if (!conversation || !composerText.trim()) return;
@@ -127,7 +142,10 @@ export default function NativeInbox() {
           {detail.isLoading ? <ThreadLoading /> : conversation ? <>
             <header className="flex items-center gap-3 border-b border-[#ebe5dc] bg-white px-4 py-3.5 sm:px-5"><Button variant="ghost" size="icon" onClick={() => setShowThreadMobile(false)} className="h-9 w-9 shrink-0 rounded-full lg:hidden" aria-label="العودة إلى المحادثات"><ChevronRight className="h-5 w-5" /></Button><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#e9eee9] text-sm font-bold text-[#50665a]">{initial(current?.customer?.displayName || conversation.contactNameSnapshot)}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h2 className="truncate text-sm font-bold text-[#35483f]">{current?.customer?.displayName || conversation.contactNameSnapshot || "جهة اتصال"}</h2><span className={`grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold ${channelTone[conversation.channel as InboxChannel]}`} title={channelLabel[conversation.channel as InboxChannel]}>{channelIcon[conversation.channel as InboxChannel]}</span></div><p className="mt-0.5 text-[11px] text-[#8a958e]">{conversation.unreadCount > 0 ? `${conversation.unreadCount} رسائل غير مقروءة` : ""}</p></div><Button variant="outline" size="icon" onClick={() => setDetailsOpen(open => !open)} className={`h-9 w-9 rounded-full border-[#e8e1d8] ${detailsOpen ? "bg-[#f4e9eb] text-[#82495b]" : "bg-white text-[#63736a]"}`} aria-label="تفاصيل المحادثة"><MoreHorizontal className="h-5 w-5" /></Button></header>
             <div className="relative flex min-h-0 flex-1 overflow-hidden">
-              <div className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7"><div className="mx-auto flex max-w-3xl flex-col gap-2.5">{current.messages.length ? current.messages.map(message => <MessageBubble key={message.id} message={message} media={(current.media ?? []).filter((item: any) => item.messageId === message.id)} reactions={(current.reactions ?? []).filter((item: any) => item.messageId === message.id)} canAnalyze={canReply} analyzingMediaId={analyzeImage.isPending ? analyzeImage.variables?.mediaId ?? null : null} onAnalyze={mediaId => analyzeImage.mutate({ mediaId })} />) : <p className="py-20 text-center text-sm text-[#849087]">لا توجد رسائل بعد.</p>}</div></div>
+              <div className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7"><div className="mx-auto flex max-w-3xl flex-col gap-2.5">{current.messages.length ? current.messages.map(message => {
+                const repliedMessage = message.metadata?.replyToExternalMessageId ? messagesByExternalId.get(message.metadata.replyToExternalMessageId) ?? null : null;
+                return <MessageBubble key={message.id} message={message} media={mediaByMessageId.get(message.id) ?? []} reactions={(current.reactions ?? []).filter((item: any) => item.messageId === message.id)} repliedMessage={repliedMessage ? { ...repliedMessage, media: mediaByMessageId.get(repliedMessage.id) ?? [] } : null} canAnalyze={canReply} analyzingMediaId={analyzeImage.isPending ? analyzeImage.variables?.mediaId ?? null : null} onAnalyze={mediaId => analyzeImage.mutate({ mediaId })} onJump={jumpToMessage} highlighted={highlightedMessageId === message.id} setElement={element => messageElements.current.set(message.id, element)} />;
+              }) : <p className="py-20 text-center text-sm text-[#849087]">لا توجد رسائل بعد.</p>}</div></div>
               {detailsOpen && <ConversationDetails current={current} canManage={canManage} assignees={assignees.data ?? []} customers={customers.data ?? []} onClose={() => setDetailsOpen(false)} onAssign={assigneeEmployeeId => assign.mutate({ conversationId: conversation.id, assigneeEmployeeId })} onChangeStatus={status => changeStatus.mutate({ conversationId: conversation.id, status })} onLinkCustomer={customerId => linkCustomer.mutate({ conversationId: conversation.id, customerId })} onLinkOrder={orderId => linkOrder.mutate({ conversationId: conversation.id, orderId })} />}
             </div>
             <footer className="border-t border-[#ebe5dc] bg-white px-4 py-3 sm:px-5"><div className="mx-auto max-w-3xl"><div className="mb-2 flex items-center justify-between"><button type="button" onClick={() => setComposerMode(mode => mode === "outbound" ? "internal_note" : "outbound")} disabled={!canManage} className="text-[11px] font-medium text-[#78877e] hover:text-[#4a5b51] disabled:cursor-not-allowed disabled:opacity-50">{composerMode === "internal_note" ? "ملاحظة داخلية" : "رد للعميل"}</button>{conversation.channel !== "manual" && !channelReady && <span className="text-[11px] text-[#a15b43]">الإرسال غير متاح للقناة حالياً</span>}</div><div className={`flex items-end gap-2 rounded-2xl border p-1.5 ${composerMode === "internal_note" ? "border-[#e7d9a5] bg-[#fffbed]" : "border-[#dfd9d0] bg-[#faf9f7]"}`}><Textarea value={composerText} onChange={event => setComposerText(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder={composerMode === "internal_note" ? "اكتبي ملاحظة للفريق…" : "اكتبي رسالة…"} className="min-h-10 max-h-32 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0" /><Button disabled={!composerText.trim() || send.isPending || note.isPending || (composerMode === "outbound" && (!canReply || !channelReady)) || (composerMode === "internal_note" && !canManage)} onClick={submit} size="icon" className="h-10 w-10 shrink-0 rounded-xl bg-[#7b4b5a] hover:bg-[#633947]" aria-label="إرسال">{send.isPending || note.isPending ? <Sparkles className="h-4 w-4 animate-pulse" /> : <Send className="h-4 w-4" />}</Button></div></div></footer>
@@ -145,14 +163,18 @@ function ConversationRow({ item, active, onSelect }: { item: any; active: boolea
   return <button type="button" onClick={onSelect} className={`w-full border-b border-[#f0ece7] px-4 py-3.5 text-right transition ${active ? "bg-[#f7eff1]" : "bg-white hover:bg-[#fcfaf8]"}`}><div className="flex items-start gap-2.5"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#e9eee9] text-sm font-bold text-[#4d6258]">{initial(name)}</span><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><b className={`truncate text-sm ${item.unreadCount > 0 ? "text-[#263b31]" : "text-[#4a5a52]"}`}>{name}</b><small className="shrink-0 text-[10px] text-[#949d96]">{formatTime(item.lastMessageAt || item.updatedAt)}</small></span><span className="mt-1 flex items-center gap-1.5"><span className="truncate text-xs text-[#77847c]">{last || " "}</span>{item.unreadCount > 0 && <i className="block h-2 w-2 shrink-0 rounded-full bg-[#c96d7c]" aria-label="غير مقروء" />}</span><span className="mt-1.5 flex items-center gap-1.5"><span className={`grid h-4 min-w-4 place-items-center rounded-full px-0.5 text-[8px] font-bold ${channelTone[itemChannel]}`}>{channelIcon[itemChannel]}</span>{item.hasAttachments && <Paperclip className="h-3 w-3 text-[#9b8472]" />}</span></span></div></button>;
 }
 
-function MessageBubble({ message, media, reactions, canAnalyze, analyzingMediaId, onAnalyze }: { message: any; media: any[]; reactions: any[]; canAnalyze: boolean; analyzingMediaId: number | null; onAnalyze: (id: number) => void }) {
+function MessageBubble({ message, media, reactions, repliedMessage, canAnalyze, analyzingMediaId, onAnalyze, onJump, highlighted, setElement }: { message: any; media: any[]; reactions: any[]; repliedMessage: (any & { media: any[] }) | null; canAnalyze: boolean; analyzingMediaId: number | null; onAnalyze: (id: number) => void; onJump: (id: number) => void; highlighted: boolean; setElement: (element: HTMLDivElement | null) => void }) {
   const outbound = message.direction === "outbound";
   const internal = message.direction === "internal_note";
   const totals = new Map<string, number>();
   for (const reaction of reactions) if (reaction.emoji) totals.set(reaction.emoji, Math.max(0, (totals.get(reaction.emoji) ?? 0) + (reaction.action === "added" ? 1 : -1)));
   if (internal) return <div className="my-2 flex justify-center"><p className="rounded-xl bg-[#fff7d9] px-3 py-1.5 text-[11px] text-[#856d29]">{message.body}</p></div>;
-  return <div className={`flex ${outbound ? "justify-start" : "justify-end"}`}><div className={`max-w-[82%] sm:max-w-[68%] ${outbound ? "rounded-[1.25rem] rounded-tl-md bg-[#7b4b5a] text-white" : "rounded-[1.25rem] rounded-tr-md bg-white text-[#394b42] shadow-[0_2px_7px_rgba(43,48,45,.08)]"} px-3 py-2.5`}>
-    {message.metadata?.replyToExternalMessageId && <div className={`mb-2 border-r-2 pr-2 text-[11px] ${outbound ? "border-white/50 text-white/75" : "border-[#b87d8a] text-[#7c686f]"}`}>{message.metadata.replyToBodyPreview || "رد على رسالة"}</div>}
+  const imageReply = repliedMessage?.media.find((item: any) => item.mediaType === "image" && item.url)?.url;
+  return <div ref={setElement} className={`flex scroll-mt-8 rounded-2xl transition-[box-shadow,background-color] duration-300 ${highlighted ? "bg-[#f5dfe5] p-1.5 shadow-[0_0_0_3px_rgba(195,110,132,.28)]" : ""} ${outbound ? "justify-start" : "justify-end"}`}><div className={`max-w-[82%] sm:max-w-[68%] ${outbound ? "rounded-[1.25rem] rounded-tl-md bg-[#7b4b5a] text-white" : "rounded-[1.25rem] rounded-tr-md bg-white text-[#394b42] shadow-[0_2px_7px_rgba(43,48,45,.08)]"} px-3 py-2.5`}>
+    {message.metadata?.replyToExternalMessageId && <button type="button" onClick={() => repliedMessage && onJump(repliedMessage.id)} disabled={!repliedMessage} className={`mb-2 flex w-full items-center gap-2 overflow-hidden border-r-2 pr-2 text-right text-[11px] transition ${outbound ? "border-white/50 text-white/75 hover:text-white" : "border-[#b87d8a] text-[#7c686f] hover:bg-[#faf1f3]"} ${repliedMessage ? "cursor-pointer" : "cursor-default"}`} aria-label={repliedMessage ? "الانتقال إلى الرسالة الأصلية" : "الرسالة الأصلية غير متاحة"}>
+      {imageReply && <img src={imageReply} alt="الصورة الأصلية" className="h-9 w-9 shrink-0 rounded-lg object-cover" />}
+      <span className="min-w-0 flex-1 truncate">{repliedMessage?.body || message.metadata.replyToBodyPreview || (imageReply ? "" : "رد على رسالة")}</span>
+    </button>}
     {message.body && <p className="whitespace-pre-wrap text-sm leading-6">{message.body}</p>}
     <ThreadMedia items={media} outgoing={outbound} canAnalyze={canAnalyze && !outbound} analyzingMediaId={analyzingMediaId} onAnalyze={onAnalyze} />
     {Array.from(totals.entries()).filter(([, count]) => count > 0).length > 0 && <div className="mt-2 flex flex-wrap gap-1">{Array.from(totals.entries()).filter(([, count]) => count > 0).map(([emoji, count]) => <span key={emoji} className={`rounded-full px-1.5 py-0.5 text-[11px] ${outbound ? "bg-white/15" : "bg-[#f4edef]"}`}>{emoji}{count > 1 ? ` ${count}` : ""}</span>)}</div>}

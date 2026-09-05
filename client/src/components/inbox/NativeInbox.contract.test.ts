@@ -38,4 +38,14 @@ describe("Native Inbox conversation experience", () => {
     expect(nativeInbox).toContain("setShowThreadMobile(false)");
     expect(nativeInbox).toContain("aria-label=\"العودة إلى المحادثات\"");
   });
+
+  it("renders a clickable quote that resolves the original text or image and scrolls to it", () => {
+    expect(nativeInbox).toContain("messagesByExternalId");
+    expect(nativeInbox).toContain("replyToExternalMessageId");
+    expect(nativeInbox).toContain("imageReply");
+    expect(nativeInbox).toContain("alt=\"الصورة الأصلية\"");
+    expect(nativeInbox).toContain("الانتقال إلى الرسالة الأصلية");
+    expect(nativeInbox).toContain('scrollIntoView({ behavior: "smooth", block: "center" })');
+    expect(nativeInbox).toContain("highlightedMessageId");
+  });
 });
