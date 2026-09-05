@@ -50,8 +50,7 @@ export const inboxRouter = router({
     try { profileFromJson = JSON.parse(conversation.contactProfileJson || "{}").id || ""; } catch { profileFromJson = ""; }
     const externalProfileId = current.customer?.externalProfileId || profileFromJson || parts.slice(2).join(":");
     if (!externalProfileId || !parts[1]) return { enriched: false as const, reason: "no_external_profile_id" as const };
-    await hydrateMetaContactProfile({ storeId: store.id, channel: conversation.channel as "instagram" | "messenger", providerAccountId: parts[1], externalProfileId, conversationId: conversation.id });
-    return { enriched: true as const };
+    return hydrateMetaContactProfile({ storeId: store.id, channel: conversation.channel as "instagram" | "messenger", providerAccountId: parts[1], externalProfileId, conversationId: conversation.id });
   }),
   metaActivity: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional()).query(async ({ ctx, input }) => listInboxMetaActivity((await requireInboxStore(ctx, "inbox.read")).id, input?.limit)),
   assignees: protectedProcedure.query(async ({ ctx }) => listInboxAssignableEmployees((await requireInboxStore(ctx, "inbox.read")).id)),

@@ -32,6 +32,12 @@ describe("Native Inbox conversation experience", () => {
     expect(nativeInbox).toContain("hasAttachments");
   });
 
+  it("does not let a generic CRM placeholder hide a real channel identity", () => {
+    expect(nativeInbox).toContain("isGenericContactName");
+    expect(nativeInbox).toContain("contactName({ customer: current?.customer, conversation })");
+    expect(nativeInbox).toContain("graph_profile_unavailable");
+  });
+
   it("renders the contact identity card with avatar, CRM fields, and a safe native-channel action", () => {
     expect(nativeInbox).toContain("ContactAvatar");
     expect(nativeInbox).toContain("profileImageUrl");

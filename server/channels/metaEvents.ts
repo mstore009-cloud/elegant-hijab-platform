@@ -166,24 +166,30 @@ async function resolveBinding(event: NormalizedMetaEvent) {
 }
 
 export async function hydrateMetaContactProfile(input: { storeId: number; channel: ExternalChannel; providerAccountId: string; externalProfileId: string; conversationId: number }) {
-  if (input.channel === "whatsapp" || !input.externalProfileId) return;
+  if (input.channel === "whatsapp" || !input.externalProfileId) return { enriched: false as const, reason: "unsupported_channel" as const };
   const db = await requireDb();
   const [asset] = await db.select({ id: metaAssets.id, connectionId: metaAssets.connectionId }).from(metaAssets).where(and(eq(metaAssets.storeId, input.storeId), eq(metaAssets.externalId, input.providerAccountId), eq(metaAssets.isSelected, true))).limit(1);
-  if (!asset) return;
+  if (!asset) return { enriched: false as const, reason: "asset_not_selected" as const };
   const accessToken = await getMetaAssetAccessToken({ storeId: input.storeId, connectionId: asset.connectionId, assetId: asset.id });
   const runtime = await getMetaRuntimeSettings();
   const endpoint = new URL(`https://graph.facebook.com/${runtime.graphApiVersion}/${encodeURIComponent(input.externalProfileId)}`);
-  endpoint.searchParams.set("fields", input.channel === "instagram" ? "id,name,username,profile_pic" : "id,name,profile_pic");
+  endpoint.searchParams.set("fields", input.channel === "instagram" ? "id,name,username,profile_pic,is_verified_user,follower_count,is_user_follow_business,is_business_follow_user" : "id,name,first_name,last_name,profile_pic,locale,timezone");
   const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(8_000) });
   const payload = await response.json().catch(() => ({})) as any;
-  if (!response.ok || payload?.error) return;
-  const displayName = compact(payload?.name, 160) || null;
+  if (!response.ok || payload?.error) return { enriched: false as const, reason: "graph_profile_unavailable" as const };
+  const profileFields = input.channel === "instagram"
+    ? { id: compact(payload?.id, 255) || input.externalProfileId, provider: input.channel, isVerified: Boolean(payload?.is_verified_user), followerCount: Number.isFinite(Number(payload?.follower_count)) ? Number(payload.follower_count) : null, followsBusiness: typeof payload?.is_user_follow_business === "boolean" ? payload.is_user_follow_business : null, businessFollowsUser: typeof payload?.is_business_follow_user === "boolean" ? payload.is_business_follow_user : null }
+    : { id: compact(payload?.id, 255) || input.externalProfileId, provider: input.channel, locale: compact(payload?.locale, 32) || null, timezone: Number.isFinite(Number(payload?.timezone)) ? Number(payload.timezone) : null };
+
+  const messengerName = [compact(payload?.first_name, 80), compact(payload?.last_name, 80)].filter(Boolean).join(" ");
+  const displayName = compact(payload?.name, 160) || compact(messengerName, 160) || null;
   const username = compact(payload?.username, 160) || null;
   const profileImageUrl = compact(payload?.profile_pic, 2048) || null;
-  const profileJson = JSON.stringify({ id: compact(payload?.id, 255) || input.externalProfileId, provider: input.channel }).slice(0, 4000);
+  const profileJson = JSON.stringify(profileFields).slice(0, 4000);
   const [conversation] = await db.select({ customerId: inboxConversations.customerId }).from(inboxConversations).where(and(eq(inboxConversations.id, input.conversationId), eq(inboxConversations.storeId, input.storeId))).limit(1);
   await db.update(inboxConversations).set({ contactNameSnapshot: displayName, contactUsername: username, contactAvatarUrl: profileImageUrl, contactProfileJson: profileJson }).where(and(eq(inboxConversations.id, input.conversationId), eq(inboxConversations.storeId, input.storeId)));
   if (conversation?.customerId) await db.update(customerProfiles).set({ displayName: displayName || undefined, profileImageUrl: profileImageUrl || undefined, socialUsername: username || undefined, externalProfileId: input.externalProfileId, profileMetadataJson: profileJson, lastChannel: input.channel, updatedAt: new Date() }).where(and(eq(customerProfiles.id, conversation.customerId), eq(customerProfiles.storeId, input.storeId)));
+  return { enriched: Boolean(displayName || username || profileImageUrl), reason: "updated" as const };
 }
 
 async function hydrateLeadFromGraph(row: { storeId: number; metaAssetId?: number | null }, event: BusinessEvent & { kind: "lead" }) {
