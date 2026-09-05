@@ -4,7 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import { channelAccounts, channelWebhookEvents, customerActivities, customerProfiles, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessageReactions, inboxMessages, metaAssets, metaConnections, metaLeadCaptures, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { configureChannelAccount } from "./db";
-import { enqueueAndProcessMetaEvent, getMetaEventHealth, normalizeMetaEvents, requeueMetaDeadLetters, retryDueMetaEvents } from "./metaEvents";
+import { enqueueAndProcessMetaEvent, getMetaEventHealth, listRecentMetaEventDiagnostics, normalizeMetaEvents, requeueMetaDeadLetters, retryDueMetaEvents } from "./metaEvents";
 
 const cleanups: Array<{ storeId: number; conversationIds: number[] }> = [];
 
@@ -154,6 +154,18 @@ describe("Unified Meta Webhook Gateway", () => {
     expect(await enqueueAndProcessMetaEvent(event, "hash-status")).toMatchObject({ processed: true });
     const [message] = await db.select().from(inboxMessages).where(eq(inboxMessages.externalMessageId, "wamid-status"));
     expect(message).toMatchObject({ deliveryStatus: "read", readAt: expect.any(Date) });
+  });
+
+  it("يعيد تشخيصاً مختصراً ومحدوداً بالمتجر دون الحمولة الخام", async () => {
+    const first = await setup();
+    const second = await setup();
+    await first.db.insert(channelWebhookEvents).values({ storeId: first.storeId, eventType: "message", processingStatus: "processed", externalEventId: `diagnostic-${randomUUID()}`, payloadHash: `hash-${randomUUID()}`, errorSummary: "رسالة المتجر الأول" });
+    await second.db.insert(channelWebhookEvents).values({ storeId: second.storeId, eventType: "message", processingStatus: "failed", externalEventId: `diagnostic-${randomUUID()}`, payloadHash: `hash-${randomUUID()}`, errorSummary: "خطأ المتجر الثاني" });
+    const diagnostics = await listRecentMetaEventDiagnostics(first.storeId);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ eventType: "message", processingStatus: "processed" });
+    expect(diagnostics[0]).not.toHaveProperty("normalizedPayloadJson");
+    expect(diagnostics[0]).not.toHaveProperty("payloadHash");
   });
 
   it("ينقل حدث retry بلا حمولة إلى dead-letter ويمكن إعادته يدوياً مع بقاء العزل", async () => {

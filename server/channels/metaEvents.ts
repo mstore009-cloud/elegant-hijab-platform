@@ -245,6 +245,12 @@ export async function getMetaEventHealth(storeId: number) {
   return { total: rows.length, received: rows.filter(row => row.status === "received").length, retryPending: rows.filter(row => row.status === "retry_pending").length, deadLetters: rows.filter(row => row.status === "dead_letter").length, failed: rows.filter(row => row.status === "failed").length };
 }
 
+export async function listRecentMetaEventDiagnostics(storeId: number, limit = 8) {
+  const db = await requireDb();
+  const rows = await db.select({ id: channelWebhookEvents.id, eventType: channelWebhookEvents.eventType, processingStatus: channelWebhookEvents.processingStatus, receivedAt: channelWebhookEvents.receivedAt, processedAt: channelWebhookEvents.processedAt, errorSummary: channelWebhookEvents.errorSummary }).from(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, storeId)).orderBy(desc(channelWebhookEvents.receivedAt), desc(channelWebhookEvents.id)).limit(Math.min(Math.max(limit, 1), 20));
+  return rows.map(row => ({ id: row.id, eventType: row.eventType, processingStatus: row.processingStatus, receivedAt: row.receivedAt, processedAt: row.processedAt, errorSummary: row.errorSummary ? row.errorSummary.slice(0, 240) : null }));
+}
+
 export async function requeueMetaDeadLetters(storeId: number) {
   const db = await requireDb();
   const result = await db.update(channelWebhookEvents).set({ processingStatus: "retry_pending", attemptCount: 0, nextAttemptAt: new Date(), deadLetterAt: null, errorSummary: "أعيد الحدث للمحاولة يدوياً من مركز Meta." }).where(and(eq(channelWebhookEvents.storeId, storeId), eq(channelWebhookEvents.processingStatus, "dead_letter")));

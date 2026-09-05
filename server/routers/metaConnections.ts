@@ -5,7 +5,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { configureChannelAccount, listChannelAccounts, updateChannelSubscriptionHealth } from "../channels/db";
-import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
+import { getMetaEventHealth, listRecentMetaEventDiagnostics, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
 import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
 import { createMetaAuthorizationUrl, discoverMetaAssets, discoverOwnedWhatsAppAssets, ensureMetaPageWebhookSubscription, ensureMetaPlatformWebhookSubscriptions, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectInstagramPageWebhookSubscription, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
@@ -95,12 +95,13 @@ async function ensureSelectedWhatsAppSubscriptions(storeId: number, connectionId
 export const metaConnectionsRouter = router({
   overview: protectedProcedure.query(async ({ ctx }) => {
     const store = await requireStore(ctx);
-    const [connectionOverview, eventHealth, retryStatus, runtime, channelAccounts, historySyncJobs, whatsappOnboardings, whatsappHistoryChunkHealth] = await Promise.all([listMetaConnectionOverview(store.id), getMetaEventHealth(store.id), getMetaRetryStatus(), getMetaRuntimeSettings(), listChannelAccounts(store.id), listMetaHistorySyncJobs(store.id), listWhatsAppOnboardings(store.id), getWhatsAppHistoryChunkHealth(store.id)]);
+    const [connectionOverview, eventHealth, recentEventDiagnostics, retryStatus, runtime, channelAccounts, historySyncJobs, whatsappOnboardings, whatsappHistoryChunkHealth] = await Promise.all([listMetaConnectionOverview(store.id), getMetaEventHealth(store.id), listRecentMetaEventDiagnostics(store.id), getMetaRetryStatus(), getMetaRuntimeSettings(), listChannelAccounts(store.id), listMetaHistorySyncJobs(store.id), listWhatsAppOnboardings(store.id), getWhatsAppHistoryChunkHealth(store.id)]);
     const unifiedConnection = connectionOverview.connections.find(connection => connection.purpose === "unified") ?? null;
     const selectedAssetCount = connectionOverview.assets.filter(asset => asset.connectionId === unifiedConnection?.id && asset.isSelected).length;
     return {
       ...connectionOverview,
       eventHealth,
+      recentEventDiagnostics,
       retryStatus,
       channelAccounts,
       historySyncJobs,
