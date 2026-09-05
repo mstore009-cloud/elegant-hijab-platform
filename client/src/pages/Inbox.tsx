@@ -146,11 +146,13 @@ function MessageBubble({ message, media, canAnalyze, analyzingMediaId, onAnalyze
   const internal = message.direction === "internal_note";
   const outgoing = message.direction === "outbound";
   const metadata = message.metadata;
-  const messageTypeLabel: Record<string, string> = { text: "نص", image: "صورة", video: "فيديو", audio: "صوت", document: "مستند", attachment: "مرفق", unsupported: "نوع غير مدعوم" };
+  const messageTypeLabel: Record<string, string> = { image: "صورة مرفقة", video: "فيديو مرفق", audio: "رسالة صوتية", document: "مستند مرفق", attachment: "مرفق", sticker: "ملصق", reaction: "تفاعل", unsupported: "مرفق غير مدعوم" };
+  const normalizedMessageType = metadata?.messageType?.toLowerCase() ?? null;
+  const visibleMessageType = normalizedMessageType && !["text", "whatsapp", "messenger", "instagram", "message"].includes(normalizedMessageType) ? messageTypeLabel[normalizedMessageType] ?? null : null;
   if (internal) return <div className="flex justify-center"><div className="max-w-[90%] rounded-xl border border-[#efdfaf] bg-[#fff9e7] px-3 py-2 text-center"><p className="text-xs font-bold text-[#98701e]">ملاحظة داخلية</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#66592f]">{message.body}</p><p className="mt-1 text-[10px] text-[#9d915f]">{formatDate(message.occurredAt)}</p></div></div>;
   return <div className={`flex ${outgoing ? "justify-start" : "justify-end"}`}><div className={`max-w-[84%] rounded-2xl px-3.5 py-3 ${outgoing ? "rounded-tl-sm bg-[#1d5a4d] text-white" : "rounded-tr-sm border border-[#e5ded1] bg-white text-[#44534b]"}`}>
-    {metadata && (metadata.messageType || metadata.replyToExternalMessageId || metadata.storyId || metadata.mentions?.length || metadata.unsupportedReason) && <div className={`mb-2 rounded-lg border px-2.5 py-2 text-[10px] leading-5 ${outgoing ? "border-white/20 bg-white/10 text-white/85" : "border-[#e8ded4] bg-[#fffaf6] text-[#78695e]"}`}>
-      <div className="flex flex-wrap items-center gap-2">{metadata.messageType && <span className="font-semibold">نوع الرسالة: {messageTypeLabel[metadata.messageType] ?? metadata.messageType}</span>}{metadata.storyId && <span>رد على قصة</span>}{metadata.mentions?.length ? <span>منشن: {metadata.mentions.map(mention => mention.name || mention.id).join("، ")}</span> : null}</div>
+    {metadata && (visibleMessageType || metadata.replyToExternalMessageId || metadata.storyId || metadata.mentions?.length || metadata.unsupportedReason) && <div className={`mb-2 rounded-lg border px-2.5 py-2 text-[10px] leading-5 ${outgoing ? "border-white/20 bg-white/10 text-white/85" : "border-[#e8ded4] bg-[#fffaf6] text-[#78695e]"}`}>
+      <div className="flex flex-wrap items-center gap-2">{visibleMessageType && <span className="font-semibold">{visibleMessageType}</span>}{metadata.storyId && <span>رد على قصة</span>}{metadata.mentions?.length ? <span>منشن: {metadata.mentions.map(mention => mention.name || mention.id).join("، ")}</span> : null}</div>
       {metadata.replyToExternalMessageId && <p className="mt-1">رد على رسالة سابقة{metadata.replyToBodyPreview ? `: ${metadata.replyToBodyPreview}` : ""}</p>}
       {metadata.unsupportedReason && <p className="mt-1 text-[#a15b3f]">{metadata.unsupportedReason}</p>}
     </div>}
