@@ -231,6 +231,7 @@ describe("Meta Connection Center", () => {
     expect(calls[0].init?.method).toBe("POST");
     expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe("Bearer page-token-private");
     expect(String(calls[0].init?.body)).toContain("messages");
+    expect(String(calls[0].init?.body)).toContain("message_echoes");
     expect(calls[0].url.toString()).not.toContain("page-token-private");
   });
 

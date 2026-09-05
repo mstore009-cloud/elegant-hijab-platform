@@ -12,9 +12,9 @@ describe("CRM linked conversations", () => {
   });
 
   it("keeps the Inbox deep-link target wired to the requested conversation", () => {
-    const source = readFileSync(new URL("./Inbox.tsx", import.meta.url), "utf8");
+    const source = readFileSync(new URL("../components/inbox/NativeInbox.tsx", import.meta.url), "utf8");
     expect(source).toContain('get("conversation")');
     expect(source).toContain("requestedConversationId");
-    expect(source).toContain("item.id === requestedConversationId");
+    expect(source).toContain("rows.some(row => row.id === requestedConversationId)");
   });
 });

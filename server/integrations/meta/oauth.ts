@@ -124,7 +124,9 @@ async function graphGet(pathOrUrl: string, accessToken: string, graphApiVersion:
   return readMetaJson(response, "قراءة أصل Meta");
 }
 
-export const messengerPageSubscribedFields = ["messages", "messaging_postbacks", "message_deliveries", "message_reads"] as const;
+// Replies sent through the Page Inbox arrive as message echoes, not inbound messages.
+// Keep this explicit on both the app- and page-level subscriptions.
+export const messengerPageSubscribedFields = ["messages", "message_echoes", "messaging_postbacks", "message_deliveries", "message_reads"] as const;
 // Messenger API support for Instagram only needs the messaging fields below.
 // Comments and mentions belong to the separate Instagram API webhook flow.
 export const instagramSubscribedFields = ["messages", "messaging_postbacks"] as const;

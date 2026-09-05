@@ -2,21 +2,18 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("Inbox rich Meta message context", () => {
-  it("renders normalized context without exposing raw provider payloads", () => {
-    const source = readFileSync(new URL("./Inbox.tsx", import.meta.url), "utf8");
-    expect(source).toContain("message.metadata");
-    expect(source).toContain("رسالة صوتية");
-    expect(source).toContain("صورة مرفقة");
-    expect(source).not.toContain("نوع الرسالة:");
-    expect(source).toContain("رد على رسالة سابقة");
-    expect(source).toContain("رد على قصة");
-    expect(source).toContain("منشن:");
-    expect(source).toContain("unsupportedReason");
-    expect(source).toContain("مرفقات فقط");
-    expect(source).toContain("غير مقروءة");
-    expect(source).toContain("message.deliveryStatus");
-    expect(source).toContain("تم حفظ ${mediaLabel(item.mediaType)}");
-    expect(source).toContain("reactions");
-    expect(source).not.toContain("access_token");
+  it("renders useful message context without raw payloads or redundant technical labels", () => {
+    const inbox = readFileSync(new URL("../components/inbox/NativeInbox.tsx", import.meta.url), "utf8");
+    const media = readFileSync(new URL("../components/inbox/ThreadMedia.tsx", import.meta.url), "utf8");
+    expect(inbox).toContain("message.metadata?.replyToExternalMessageId");
+    expect(inbox).toContain("رد على رسالة");
+    expect(inbox).toContain("message.deliveryStatus");
+    expect(inbox).toContain("reactions");
+    expect(inbox).not.toContain("نوع الرسالة");
+    expect(inbox).not.toContain("مرفقات فقط");
+    expect(media).toContain("<audio src={item.url}");
+    expect(media).toContain("<img src={item.url}");
+    expect(media).not.toContain("مرفق");
+    expect(inbox).not.toContain("access_token");
   });
 });

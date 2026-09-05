@@ -114,6 +114,9 @@ describe("موصلات Meta وصور بوت العملاء", () => {
     expect(message.body).toContain("اللون متوفر");
     const [media] = await db.select().from(inboxMessageMedia).where(eq(inboxMessageMedia.id, first.mediaIds[0]));
     expect(media).toMatchObject({ storeId, downloadStatus: "pending", storageKey: null });
+    const mediaOnly = await ingestExternalInboundMessage({ ...input, externalEventId: "evt-media-only", externalMessageId: "msg-media-only", payloadHash: "hash-media-only", body: null });
+    const [mediaOnlyMessage] = await db.select().from(inboxMessages).where(eq(inboxMessages.id, mediaOnly.messageId!));
+    expect(mediaOnlyMessage.body).toBe("");
 
     const other = await setup();
     await expect(listChannelAccounts(other.storeId)).resolves.toEqual([]);

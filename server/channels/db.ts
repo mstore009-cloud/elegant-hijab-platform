@@ -206,7 +206,9 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
 
       const direction = input.direction ?? "inbound";
       const source = messageSource;
-      const messageBody = compactText(input.body, 20_000) || (input.attachments.length ? (direction === "inbound" ? "أرسل العميل مرفقًا للاستفسار." : "أرسل المتجر مرفقًا.") : (direction === "inbound" ? "رسالة واردة بلا نص." : "رسالة صادرة بلا نص."));
+      // A media-only message should render as its media, not as a technical sentence
+      // above the asset. Keep a non-null empty body for the append-only schema.
+      const messageBody = compactText(input.body, 20_000) || (input.attachments.length ? "" : (direction === "inbound" ? "رسالة واردة بلا نص." : "رسالة صادرة بلا نص."));
       let messageId: number;
       try {
         const createdMessage = await tx.insert(inboxMessages).values({

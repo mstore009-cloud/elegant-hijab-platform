@@ -75,7 +75,13 @@ export function normalizeMetaEvents(payload: any): NormalizedMetaEvent[] {
     const channel = payload.object === "page" ? "messenger" : "instagram";
     for (const entry of Array.isArray(payload.entry) ? payload.entry : []) {
       const accountId = compact(entry?.id);
-      for (const envelope of Array.isArray(entry?.messaging) ? entry.messaging : []) {
+      // Meta can deliver Page Inbox echoes under `standby` when another inbox app is
+      // the active receiver. Process both envelopes through the exact same pipeline.
+      const messageEnvelopes = [
+        ...(Array.isArray(entry?.messaging) ? entry.messaging : []),
+        ...(Array.isArray(entry?.standby) ? entry.standby : []),
+      ];
+      for (const envelope of messageEnvelopes) {
         const message = envelope?.message; const messageId = compact(message?.mid); const sender = compact(envelope?.sender?.id);
         if (accountId && messageId && sender && message?.reaction && (message.reaction.mid || message.reaction.message_id)) events.push({ kind: "reaction", channel, providerAccountId: accountId, externalEventId: `reaction:${messageId}`, targetExternalMessageId: compact(message.reaction.mid || message.reaction.message_id, 255), actorExternalId: sender, actorDisplayName: null, emoji: compact(message.reaction.emoji || message.reaction.reaction, 32) || null, action: compact(message.reaction.action, 32) === "unreact" ? "removed" : "added", occurredAt: dateFromMilliseconds(envelope?.timestamp) });
         else if (accountId && messageId && (sender || message?.is_echo)) {
