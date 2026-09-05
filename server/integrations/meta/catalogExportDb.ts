@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { metaAssets, metaCatalogExportJobs, metaConnectionCapabilities, metaConnections, productMedia, productVariants, products, stores } from "../../../drizzle/schema";
 import { getDb } from "../../db";
-import { getMetaAssetAccessToken } from "./db";
+import { getMetaCatalogAccessToken } from "./db";
 import { buildCatalogExportIdempotencyKey, buildMetaCatalogProductItems, chunkMetaCatalogBatchRequests, submitMetaCatalogBatch, toMetaCatalogBatchRequests, type MetaCatalogProductItem } from "./catalogExport";
 import { getMetaRuntimeSettings } from "./platformSettings";
 
@@ -71,7 +71,7 @@ export async function runMetaCatalogExport(input: { storeId: number; catalogAsse
   if (["submitted", "processing", "completed"].includes(job.status)) return { job, reused: true, snapshot: { itemCount: snapshot.items.length, idempotencyKey: snapshot.idempotencyKey } };
   await db.update(metaCatalogExportJobs).set({ status: "processing", startedAt: new Date(), lastError: null }).where(eq(metaCatalogExportJobs.id, job.id));
   try {
-    const accessToken = await getMetaAssetAccessToken({ storeId: input.storeId, connectionId: snapshot.connectionId, assetId: snapshot.catalogAssetId });
+    const accessToken = await getMetaCatalogAccessToken({ storeId: input.storeId, connectionId: snapshot.connectionId, assetId: snapshot.catalogAssetId });
     const runtime = await getMetaRuntimeSettings();
     const handles: string[] = [];
     const validationStatus: unknown[] = [];

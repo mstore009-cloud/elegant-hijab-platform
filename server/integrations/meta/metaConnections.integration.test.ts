@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { channelAccounts, metaAssets, metaConnectionCapabilities, metaConnections, metaOAuthStates, stores, users } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { configureChannelAccount } from "../../channels/db";
-import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
+import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaCatalogAccessToken, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
 import { buildMetaAuthorizationUrl, discoverOwnedWhatsAppAssets, ensureMetaPlatformWebhookSubscriptions, messengerPageSubscribedFields, metaScopesByPurpose, subscribeMessengerPage, subscribeWhatsAppBusinessAccount, unifiedMetaScopes } from "./oauth";
 import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext, metaPlatformSecretContext } from "./tokenCipher";
 import { loadMetaCredential } from "../../channels/metaOutbound";
@@ -43,6 +43,13 @@ describe("Meta Connection Center", () => {
     expect(encrypted).not.toContain("token-super-secret");
     expect(decryptMetaToken(encrypted, context)).toBe("token-super-secret");
     expect(() => decryptMetaToken(encrypted, metaConnectionTokenContext(storeId + 1, "messaging"))).toThrow();
+  });
+
+  it("يستخدم رمز الاتصال الموحد المشفّر لأصل Catalog عندما لا يوجد رمز أصل مستقل", async () => {
+    const { db, owner, storeId } = await setup();
+    const connection = await upsertMetaConnection({ storeId, purpose: "unified", authMode: "owner_direct", accessToken: "catalog-connection-token", tokenExpiresAt: null, grantedScopes: ["catalog_management", "business_management"], metaUserId: "meta-catalog-user", metaUserName: "مدير الكتالوج", configurationId: null, connectedByUserId: owner.id });
+    const result = await db.insert(metaAssets).values({ storeId, connectionId: connection.id, assetType: "catalog", externalId: `catalog-${storeId}`, displayName: "Catalog اختبار", isSelected: true });
+    await expect(getMetaCatalogAccessToken({ storeId, connectionId: connection.id, assetId: Number(result[0].insertId) })).resolves.toBe("catalog-connection-token");
   });
 
   it("يستهلك state صالحاً مرة واحدة ويرفض إعادة استخدامه", async () => {

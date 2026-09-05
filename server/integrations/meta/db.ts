@@ -126,6 +126,22 @@ export async function getMetaAssetAccessToken(input: { storeId: number; connecti
   return decryptMetaToken(asset.encryptedAccessToken, metaAssetTokenContext(input.storeId, asset.externalId));
 }
 
+/**
+ * Catalog assets discovered through Business Login do not receive a page token.
+ * They are authorized by the encrypted unified connection token that carries
+ * `catalog_management`, while page-specific calls must continue to require a
+ * page token through getMetaAssetAccessToken above.
+ */
+export async function getMetaCatalogAccessToken(input: { storeId: number; connectionId: number; assetId: number }) {
+  const db = await requireDb();
+  const [asset] = await db.select({ encryptedAccessToken: metaAssets.encryptedAccessToken, assetType: metaAssets.assetType, externalId: metaAssets.externalId }).from(metaAssets).where(and(eq(metaAssets.id, input.assetId), eq(metaAssets.storeId, input.storeId), eq(metaAssets.connectionId, input.connectionId), eq(metaAssets.assetType, "catalog"))).limit(1);
+  if (!asset) throw new Error("أصل Catalog المحدد لا ينتمي إلى اتصال Meta لهذا المتجر.");
+  if (asset.encryptedAccessToken) return decryptMetaToken(asset.encryptedAccessToken, metaAssetTokenContext(input.storeId, asset.externalId));
+  const [connection] = await db.select({ purpose: metaConnections.purpose, encryptedAccessToken: metaConnections.encryptedAccessToken, status: metaConnections.status }).from(metaConnections).where(and(eq(metaConnections.id, input.connectionId), eq(metaConnections.storeId, input.storeId))).limit(1);
+  if (!connection?.encryptedAccessToken || connection.status !== "connected") throw new Error("لا يوجد رمز Meta موحد صالح لتصدير Catalog. أعد تفويض Meta بصلاحية catalog_management.");
+  return decryptMetaToken(connection.encryptedAccessToken, metaConnectionTokenContext(input.storeId, connection.purpose));
+}
+
 export async function upsertDiscoveredMetaAssets(input: { storeId: number; connectionId: number; purpose: MetaConnectionPurpose; assets: Array<{ assetType: MetaAssetType; externalId: string; displayName?: string | null; parentExternalId?: string | null; metadata?: Record<string, unknown> | null; accessToken?: string | null }> }) {
   const db = await requireDb();
   for (const asset of input.assets) {
