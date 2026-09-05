@@ -184,7 +184,9 @@ export async function getInboxConversationDetail(storeId: number, conversationId
   const messageIds = messages.map(message => message.id);
   const media = await listInboxMessageMediaForConversation(storeId, conversation.id, messageIds);
   const reactions = messageIds.length ? await db.select().from(inboxMessageReactions).where(and(eq(inboxMessageReactions.storeId, storeId), inArray(inboxMessageReactions.messageId, messageIds))).orderBy(asc(inboxMessageReactions.occurredAt), asc(inboxMessageReactions.id)) : [];
-  const [channelAccount] = conversation.channel === "manual" ? [] : await db.select().from(channelAccounts).where(and(eq(channelAccounts.storeId, storeId), eq(channelAccounts.channel, conversation.channel))).limit(1);
+  const [channelAccount] = conversation.channel === "manual" ? [] : conversation.channelAccountId
+    ? await db.select().from(channelAccounts).where(and(eq(channelAccounts.id, conversation.channelAccountId), eq(channelAccounts.storeId, storeId))).limit(1)
+    : await db.select().from(channelAccounts).where(and(eq(channelAccounts.storeId, storeId), eq(channelAccounts.channel, conversation.channel))).limit(1);
   const metaOverview = channelAccount && conversation.channel !== "manual" ? await listMetaConnectionOverview(storeId) : null;
   const channelHealth = channelAccount && metaOverview && conversation.channel !== "manual"
     ? deriveChannelHealth({ channel: conversation.channel as "whatsapp" | "instagram" | "messenger", account: channelAccount, connections: metaOverview.connections, assets: metaOverview.assets, capabilities: metaOverview.capabilities })

@@ -1,0 +1,3 @@
+ALTER TABLE `inbox_conversations` ADD `channelAccountId` int;--> statement-breakpoint
+ALTER TABLE `inbox_conversations` ADD CONSTRAINT `inbox_conversations_channelAccountId_channel_accounts_id_fk` FOREIGN KEY (`channelAccountId`) REFERENCES `channel_accounts`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX `inbox_store_channel_account_idx` ON `inbox_conversations` (`storeId`,`channelAccountId`);

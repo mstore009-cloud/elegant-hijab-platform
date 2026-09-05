@@ -121,7 +121,7 @@ describe("موصلات Meta وصور بوت العملاء", () => {
   });
 
   it("يسمح بعدة صفحات Messenger وحسابات Instagram داخل المتجر نفسه", async () => {
-    const { owner, storeId, cleanup } = await setup();
+    const { db, owner, storeId, cleanup } = await setup();
     const pageOneId = `page-one-${randomUUID()}`;
     const pageTwoId = `page-two-${randomUUID()}`;
     const instagramOneId = `ig-one-${randomUUID()}`;
@@ -140,6 +140,12 @@ describe("موصلات Meta وصور بوت العملاء", () => {
     expect(firstResult.conversationId).toBeTruthy();
     expect(secondResult.conversationId).toBeTruthy();
     expect(secondResult.conversationId).not.toBe(firstResult.conversationId);
+    const [firstConversation, secondConversation] = await Promise.all([
+      db.select({ channelAccountId: inboxConversations.channelAccountId }).from(inboxConversations).where(eq(inboxConversations.id, firstResult.conversationId!)).limit(1),
+      db.select({ channelAccountId: inboxConversations.channelAccountId }).from(inboxConversations).where(eq(inboxConversations.id, secondResult.conversationId!)).limit(1),
+    ]);
+    expect(firstConversation[0]?.channelAccountId).toBe(pageOne.id);
+    expect(secondConversation[0]?.channelAccountId).toBe(pageTwo.id);
     cleanup.conversationIds.push(firstResult.conversationId!, secondResult.conversationId!);
   });
 

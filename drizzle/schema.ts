@@ -256,6 +256,7 @@ export const inboxConversations = mysqlTable(
     storeId: int("storeId").notNull().references(() => stores.id),
     customerId: int("customerId").references(() => customerProfiles.id),
     orderId: int("orderId").references(() => orders.id),
+    channelAccountId: int("channelAccountId").references(() => channelAccounts.id),
     channel: mysqlEnum("channel", ["manual", "whatsapp", "instagram", "messenger"]).default("manual").notNull(),
     externalConversationId: varchar("externalConversationId", { length: 255 }),
     contactNameSnapshot: varchar("contactNameSnapshot", { length: 160 }),
@@ -277,6 +278,7 @@ export const inboxConversations = mysqlTable(
     index("inbox_store_assignee_status_idx").on(table.storeId, table.assignedEmployeeId, table.status),
     index("inbox_store_customer_idx").on(table.storeId, table.customerId),
     index("inbox_store_order_idx").on(table.storeId, table.orderId),
+    index("inbox_store_channel_account_idx").on(table.storeId, table.channelAccountId),
   ],
 );
 

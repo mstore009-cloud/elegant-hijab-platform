@@ -48,9 +48,10 @@ describe("Meta history sync", () => {
       const url = new URL(String(input));
       if (url.pathname.endsWith(`/page-${suffix}/conversations`)) return new Response(JSON.stringify({ data: [{ id: `thread-${suffix}`, participants: { data: [{ id: `page-${suffix}`, name: "المتجر" }, { id: `customer-${suffix}`, name: "العميلة" }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
       if (url.pathname.endsWith(`/thread-${suffix}/messages`)) return new Response(JSON.stringify({ data: [
-        { id: `mid-in-${suffix}`, type: "text", message: "مرحباً", reply_to: { id: `mid-root-${suffix}`, message: "الرسالة الأصلية" }, story_id: `story-${suffix}`, mentions: [{ id: `staff-${suffix}`, name: "الموظفة" }], created_time: "2026-08-01T10:00:00+0000", from: { id: `customer-${suffix}` }, to: { data: [{ id: `page-${suffix}` }] } },
+        { id: `mid-in-${suffix}`, type: "text", message: "مرحباً", reply_to: { id: `mid-root-${suffix}`, message: "الرسالة الأصلية" }, story_id: `story-${suffix}`, mentions: [{ id: `staff-${suffix}`, name: "الموظفة" }], attachments: { data: [{ id: `media-${suffix}`, type: "image", mime_type: "image/jpeg", image_data: { url: `https://cdn.example.test/history-${suffix}.jpg` } }] }, created_time: "2026-08-01T10:00:00+0000", from: { id: `customer-${suffix}` }, to: { data: [{ id: `page-${suffix}` }] } },
         { id: `mid-out-${suffix}`, message: "أهلاً بك", created_time: "2026-08-01T10:01:00+0000", from: { id: `page-${suffix}` }, to: { data: [{ id: `customer-${suffix}` }] } },
       ] }), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.hostname === "cdn.example.test") return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/jpeg", "content-length": "3" } });
       throw new Error(`unexpected graph call ${url.pathname}`);
     }));
     const jobs = await ensureMetaHistorySyncJobs(storeId, userId);
@@ -62,6 +63,8 @@ describe("Meta history sync", () => {
     expect(messages.map(row => ({ direction: row.direction, source: row.source }))).toEqual(expect.arrayContaining([{ direction: "inbound", source: "historical_sync" }, { direction: "outbound", source: "historical_sync" }]));
     const historicalMetadata = JSON.parse(messages.find(row => row.direction === "inbound")?.metadataJson ?? "{}");
     expect(historicalMetadata).toMatchObject({ messageType: "text", replyToExternalMessageId: `mid-root-${suffix}`, replyToBodyPreview: "الرسالة الأصلية", storyId: `story-${suffix}`, mentions: [{ id: `staff-${suffix}`, name: "الموظفة" }] });
+    const [historicalMedia] = await db.select().from(inboxMessageMedia).where(eq(inboxMessageMedia.messageId, messages.find(row => row.direction === "inbound")!.id));
+    expect(historicalMedia).toMatchObject({ providerMediaId: `media-${suffix}`, mediaType: "image" });
     expect(await db.select().from(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, storeId))).toHaveLength(0);
     const jobsAfterRepeat = await ensureMetaHistorySyncJobs(storeId, userId);
     expect(jobsAfterRepeat).toHaveLength(1);
@@ -88,7 +91,7 @@ describe("Meta history sync", () => {
     await db.insert(channelAccounts).values({ storeId, channel: "instagram", providerAccountId: instagramId, providerDisplayName: "حساب Instagram", connectionStatus: "connected", createdByUserId: userId });
     vi.stubGlobal("fetch", vi.fn(async (input: URL | RequestInfo) => {
       const url = new URL(String(input));
-      if (url.pathname.endsWith(`/${pageId}/conversations`)) {
+      if (url.pathname.endsWith(`/${instagramId}/conversations`)) {
         expect(url.searchParams.get("platform")).toBe("instagram");
         expect(url.searchParams.get("fields")).toBe("id,updated_time");
         expect(url.searchParams.get("limit")).toBe("5");

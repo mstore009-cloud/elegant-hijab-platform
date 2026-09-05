@@ -188,6 +188,7 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
         const created = await tx.insert(inboxConversations).values({
           storeId: account.storeId,
           customerId,
+          channelAccountId: account.id,
           channel: input.channel,
           externalConversationId: input.externalConversationId,
           contactNameSnapshot: compactText(input.senderName, 160) || null,

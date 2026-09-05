@@ -47,16 +47,17 @@ async function loadHistoryCredential(storeId: number, channel: HistoryChannel, p
   if (channel === "messenger") return { connection, graphAccountId: direct.externalId, token: await getMetaAssetAccessToken({ storeId, connectionId: connection.id, assetId: direct.id }) };
   const page = overview.assets.find(asset => asset.connectionId === connection.id && asset.assetType === "page" && asset.externalId === direct.parentExternalId);
   if (!page) throw new Error("حساب Instagram لا يملك صفحة Facebook مرتبطة برمز صالح.");
-  return { connection, graphAccountId: page.externalId, token: await getMetaAssetAccessToken({ storeId, connectionId: connection.id, assetId: page.id }) };
+  return { connection, graphAccountId: direct.externalId, token: await getMetaAssetAccessToken({ storeId, connectionId: connection.id, assetId: page.id }) };
 }
 
 function mapAttachments(message: any): ExternalMediaReference[] {
   const rows = Array.isArray(message?.attachments?.data) ? message.attachments.data : [];
   return rows.slice(0, 10).map((item: any) => {
     const mime = compact(item?.mime_type, 120);
-    const imageUrl = compact(item?.image_data?.url, 2000);
-    const mediaType = imageUrl || mime.startsWith("image/") ? "image" : mime.startsWith("video/") ? "video" : mime.startsWith("audio/") ? "audio" : "document";
-    return { providerMediaId: compact(item?.id) || null, mediaType, mimeType: mime || null, originalFileName: compact(item?.name, 255) || null, sourceUrl: imageUrl || null } as ExternalMediaReference;
+    const imageUrl = compact(item?.image_data?.url || item?.media_url || item?.payload?.url || item?.url, 2000);
+    const declaredType = compact(item?.type || item?.media_type, 40).toLowerCase();
+    const mediaType = imageUrl && (declaredType === "image" || mime.startsWith("image/") || !declaredType) ? "image" : declaredType === "video" || mime.startsWith("video/") ? "video" : declaredType === "audio" || mime.startsWith("audio/") ? "audio" : "document";
+    return { providerMediaId: compact(item?.id) || null, mediaType, mimeType: mime || null, originalFileName: compact(item?.name || item?.filename, 255) || null, sourceUrl: imageUrl || null } as ExternalMediaReference;
   });
 }
 
@@ -103,7 +104,7 @@ async function importHistoryMessage(input: { storeId: number; channel: HistoryCh
   const attachments = mapAttachments(input.message);
   const result = await ingestExternalInboundMessage({ channel: input.channel, providerAccountId: input.providerAccountId, externalEventId: `history:${messageId}`, externalConversationId: `${input.channel}:${input.providerAccountId}:${input.customerId}`, externalMessageId: messageId, senderName: input.customerName, senderPhone: null, body: compact(input.message?.message, 20_000) || null, occurredAt: parseDate(input.message?.created_time), attachments, metadata: historyMessageMetadata(input.message), direction, source: "historical_sync", payloadHash: `history:${messageId}` });
   if (result.accepted && !result.duplicate && result.storeId) for (let index = 0; index < attachments.length; index += 1) {
-    if (attachments[index]?.mediaType !== "image" || !result.mediaIds[index]) continue;
+    if (!result.mediaIds[index]) continue;
     await storeInboundImageFromProvider({ storeId: result.storeId, mediaId: result.mediaIds[index], sourceUrl: attachments[index]?.sourceUrl }).catch(() => undefined);
   }
   const duplicate = "duplicate" in result && result.duplicate;
