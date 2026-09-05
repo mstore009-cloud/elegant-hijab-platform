@@ -12,21 +12,23 @@ import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth
 import { listCatalogChildren, listCatalogRootFolders, readCatalogFileBytes, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
 import { createSelectedCatalogDrafts, previewCatalogGroupProducts } from "../integrations/onedrive/catalogMultiDraft";
 import { createOneDriveAuthorizationUrl, createPkcePair } from "../integrations/onedrive/oauth";
+import { flattenCategoryNodes, inspectCatalogTree } from "../integrations/onedrive/catalogTree";
 import { parseCatalogProductMetadata, parseCatalogProductMetadataDocx, parseCatalogProductMetadataLenientDocx, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { attachApprovedCatalogImageReferences, createApprovedCatalogColorVariants, createCatalogDraftProduct, listProducts } from "../products/db";
+import { listProductCategories, syncOneDriveCategoryTree } from "../products/categories";
 import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM, listLLMModels } from "../_core/llm";
 
-async function requireSelectedCatalog(userId: number) {
-  const connection = await getUsableCatalogConnection(userId);
+async function requireSelectedCatalog(storeId: number) {
+  const connection = await getUsableCatalogConnection(storeId);
   if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يُعتمد جذر Catalog بعد." });
   }
   return connection;
 }
 
-async function readSelectedCatalogProduct(userId: number, input: { groupId: string; productFolderId: string }) {
-  const connection = await requireSelectedCatalog(userId);
+async function readSelectedCatalogProduct(storeId: number, input: { groupId: string; productFolderId: string }) {
+  const connection = await requireSelectedCatalog(storeId);
   const groups = await listCatalogChildren({
     encryptedAccessToken: connection.encryptedAccessToken,
     driveId: connection.selectedDriveId!,
@@ -66,8 +68,8 @@ function requireOperationalStoreId(storeId: number | null | undefined) {
   return storeId;
 }
 
-async function previewSelectedCatalogGroup(userId: number, storeId: number, groupId: string) {
-  const connection = await requireSelectedCatalog(userId);
+async function previewSelectedCatalogGroup(storeId: number, groupId: string) {
+  const connection = await requireSelectedCatalog(storeId);
   const groups = await listCatalogChildren({
     encryptedAccessToken: connection.encryptedAccessToken,
     driveId: connection.selectedDriveId!,
@@ -90,6 +92,19 @@ async function previewSelectedCatalogGroup(userId: number, storeId: number, grou
   return { group: { id: group.id, name: group.name }, entries };
 }
 
+async function inspectSelectedCatalogTree(storeId: number) {
+  const connection = await requireSelectedCatalog(storeId);
+  return inspectCatalogTree({
+    rootFolderId: connection.selectedFolderId!,
+    rootFolderName: connection.selectedFolderName ?? "جذر المنتجات",
+    listChildren: folderId => listCatalogChildren({
+      encryptedAccessToken: connection.encryptedAccessToken,
+      driveId: connection.selectedDriveId!,
+      folderId,
+    }),
+  });
+}
+
 const colorAnalysisSchema = z.object({
   colorGroups: z.array(z.object({
     colorNameArabic: z.string().min(1).max(80),
@@ -104,21 +119,24 @@ const colorAnalysisSchema = z.object({
 export const integrationsRouter = router({
   oneDriveStatus: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await getOneDriveConnection(ctx.user.id);
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const connection = await getOneDriveConnection(storeId);
     return connection
       ? { configured: true, state: "ready" as const, message: "تم ربط مجلد التطبيق الخاص بالمنصة في OneDrive.", checkedAt: Date.now(), appFolderUrl: connection.appFolderUrl }
       : { configured: false, state: "not_configured" as const, message: "لم تمنح حسابك موافقة OneDrive بعد. سيُطلب الوصول إلى مجلد المنصة فقط.", checkedAt: Date.now(), appFolderUrl: null };
   }),
   beginOneDriveConnect: protectedProcedure.mutation(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     const state = randomBytes(32).toString("base64url");
     const pkce = createPkcePair();
-    await createOAuthState({ state, userId: ctx.user.id, codeVerifier: pkce.verifier, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    await createOAuthState({ state, userId: ctx.user.id, storeId, codeVerifier: pkce.verifier, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
     return { authorizationUrl: createOneDriveAuthorizationUrl({ state, codeChallenge: pkce.challenge }) };
   }),
   catalogSelectionStatus: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await getCatalogConnection(ctx.user.id);
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const connection = await getCatalogConnection(storeId);
     return connection
       ? {
         connected: true,
@@ -130,11 +148,13 @@ export const integrationsRouter = router({
   }),
   beginCatalogSelection: protectedProcedure.mutation(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     const state = randomBytes(32).toString("base64url");
     const pkce = createPkcePair();
     await createOAuthState({
       state,
       userId: ctx.user.id,
+      storeId,
       codeVerifier: pkce.verifier,
       flow: "catalog_read",
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
@@ -145,31 +165,49 @@ export const integrationsRouter = router({
   }),
   catalogRootFolders: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await getUsableCatalogConnection(ctx.user.id);
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const connection = await getUsableCatalogConnection(storeId);
     if (!connection) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يبدأ تفويض قراءة Catalog بعد." });
     if (connection.status === "failed") throw new TRPCError({ code: "PRECONDITION_FAILED", message: connection.lastError ?? "فشل تفويض Catalog." });
     return listCatalogRootFolders(connection.encryptedAccessToken);
   }),
   selectCatalogRoot: protectedProcedure.input(z.object({ folderId: z.string().min(1) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await getUsableCatalogConnection(ctx.user.id);
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const connection = await getUsableCatalogConnection(storeId);
     if (!connection) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يبدأ تفويض قراءة Catalog بعد." });
     const folders = await listCatalogRootFolders(connection.encryptedAccessToken);
-    const catalogFolder = folders.find(folder => folder.id === input.folderId && folder.name === "Catalog");
+    const catalogFolder = folders.find(folder => folder.id === input.folderId);
     if (!catalogFolder || !catalogFolder.driveId) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "اختر مجلد الجذر المسمى Catalog فقط لهذه التجربة." });
+      throw new TRPCError({ code: "BAD_REQUEST", message: "اختر مجلد جذر صالحًا من OneDrive." });
     }
     await selectCatalogRoot({
-      userId: ctx.user.id,
+      storeId,
       driveId: catalogFolder.driveId,
       folderId: catalogFolder.id,
       folderName: catalogFolder.name,
     });
     return { selectedFolderName: catalogFolder.name };
   }),
+  previewCatalogTree: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    return inspectSelectedCatalogTree(requireOperationalStoreId(ctx.operationalStore?.id));
+  }),
+  syncCatalogCategoryTree: protectedProcedure.mutation(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const preview = await inspectSelectedCatalogTree(storeId);
+    const categories = flattenCategoryNodes(preview.root);
+    const result = await syncOneDriveCategoryTree(storeId, categories);
+    return { ...result, previewSummary: preview.summary, productFoldersDetected: preview.summary.products };
+  }),
+  productCategoryTree: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    return listProductCategories(requireOperationalStoreId(ctx.operationalStore?.id));
+  }),
   catalogGroups: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await requireSelectedCatalog(ctx.user.id);
+    const connection = await requireSelectedCatalog(requireOperationalStoreId(ctx.operationalStore?.id));
     const items = await listCatalogChildren({
       encryptedAccessToken: connection.encryptedAccessToken,
       driveId: connection.selectedDriveId!,
@@ -179,7 +217,7 @@ export const integrationsRouter = router({
   }),
   catalogProductFolders: protectedProcedure.input(z.object({ groupId: z.string().min(1) })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await requireSelectedCatalog(ctx.user.id);
+    const connection = await requireSelectedCatalog(requireOperationalStoreId(ctx.operationalStore?.id));
     const groups = await listCatalogChildren({
       encryptedAccessToken: connection.encryptedAccessToken,
       driveId: connection.selectedDriveId!,
@@ -196,14 +234,14 @@ export const integrationsRouter = router({
   }),
   previewCatalogGroupProducts: protectedProcedure.input(z.object({ groupId: z.string().min(1) })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    return { mode: "group_preview" as const, ...(await previewSelectedCatalogGroup(ctx.user.id, requireOperationalStoreId(ctx.operationalStore?.id), input.groupId)) };
+    return { mode: "group_preview" as const, ...(await previewSelectedCatalogGroup(requireOperationalStoreId(ctx.operationalStore?.id), input.groupId)) };
   }),
   previewCatalogProduct: protectedProcedure.input(z.object({
     groupId: z.string().min(1),
     productFolderId: z.string().min(1),
   })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const { group, productFolder, metadataFile, metadataText, images, documents } = await readSelectedCatalogProduct(ctx.user.id, input);
+    const { group, productFolder, metadataFile, metadataText, images, documents } = await readSelectedCatalogProduct(requireOperationalStoreId(ctx.operationalStore?.id), input);
     return {
       mode: "preview" as const,
       group: { id: group.id, name: group.name },
@@ -219,7 +257,7 @@ export const integrationsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
-    const { group, productFolder, metadataFile, metadataText, metadataDocxBytes, images } = await readSelectedCatalogProduct(ctx.user.id, input);
+    const { group, productFolder, metadataFile, metadataText, metadataDocxBytes, images } = await readSelectedCatalogProduct(storeId, input);
     if (!metadataFile || (!metadataText && !metadataDocxBytes)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إنشاء المسودة من دون product.txt أو product.docx." });
     }
@@ -255,7 +293,7 @@ export const integrationsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
-    const preview = await previewSelectedCatalogGroup(ctx.user.id, storeId, input.groupId);
+    const preview = await previewSelectedCatalogGroup(storeId, input.groupId);
     const results = await createSelectedCatalogDrafts({
       entries: preview.entries,
       selectedFolderIds: input.productFolderIds,
@@ -279,7 +317,7 @@ export const integrationsRouter = router({
     colorNames: z.array(z.string().trim().min(1).max(80)).min(1).max(20),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const { productFolder } = await readSelectedCatalogProduct(ctx.user.id, input);
+    const { productFolder } = await readSelectedCatalogProduct(requireOperationalStoreId(ctx.operationalStore?.id), input);
     return createApprovedCatalogColorVariants({
       productCode: productFolder.name,
       colorNames: input.colorNames,
@@ -291,7 +329,7 @@ export const integrationsRouter = router({
     links: z.array(z.object({ colorName: z.string().trim().min(1).max(80), imageFileName: z.string().trim().min(1).max(255) })).min(1).max(20),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const { productFolder, images } = await readSelectedCatalogProduct(ctx.user.id, input);
+    const { productFolder, images } = await readSelectedCatalogProduct(requireOperationalStoreId(ctx.operationalStore?.id), input);
     validateApprovedImageColorLinks({
       approvedColorNames: input.links.map(link => link.colorName),
       availableImageFileNames: images.map(image => image.name),
@@ -311,8 +349,9 @@ export const integrationsRouter = router({
     productFolderId: z.string().min(1),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await requireSelectedCatalog(ctx.user.id);
-    const { images, productFolder } = await readSelectedCatalogProduct(ctx.user.id, input);
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const connection = await requireSelectedCatalog(storeId);
+    const { images, productFolder } = await readSelectedCatalogProduct(storeId, input);
     const previewImages = await Promise.all(images.slice(0, 12).map(async image => ({
       sourceFileId: image.id,
       sourceFileName: image.name,
@@ -337,8 +376,9 @@ export const integrationsRouter = router({
     productFolderId: z.string().min(1),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await requireSelectedCatalog(ctx.user.id);
-    const { images, productFolder } = await readSelectedCatalogProduct(ctx.user.id, input);
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const connection = await requireSelectedCatalog(storeId);
+    const { images, productFolder } = await readSelectedCatalogProduct(storeId, input);
     if (images.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "لا توجد صور صالحة لتحليل اللون في مجلد المنتج." });
     const imageDataUrls = await Promise.all(images.map(async image => ({
       name: image.name,
@@ -415,7 +455,7 @@ export const integrationsRouter = router({
   }),
   previewDirectCatalogProduct: protectedProcedure.input(z.object({ productFolderId: z.string().min(1) })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
-    const connection = await requireSelectedCatalog(ctx.user.id);
+    const connection = await requireSelectedCatalog(requireOperationalStoreId(ctx.operationalStore?.id));
     const rootItems = await listCatalogChildren({
       encryptedAccessToken: connection.encryptedAccessToken,
       driveId: connection.selectedDriveId!,

@@ -12,6 +12,7 @@ import Products from "./pages/Products";
 import Storefront from "./pages/Storefront";
 import Orders from "./pages/Orders";
 import StoreSettings from "./pages/StoreSettings";
+import OneDriveSettings from "./pages/OneDriveSettings";
 import CRM from "./pages/CRM";
 import Inbox from "./pages/Inbox";
 import CustomerBot from "./pages/CustomerBot";
@@ -45,6 +46,7 @@ function Router() {
       <Route path={"/customer-bot"} component={CustomerBot} />
       <Route path={"/employee-bot"} component={EmployeeBot} />
       <Route path={"/settings/store"} component={StoreSettings} />
+      <Route path={"/settings/onedrive"} component={OneDriveSettings} />
       <Route path={"/settings/delivery"} component={StoreSettings} />
       <Route path={"/meta-connections"} component={MetaConnections} />
       <Route path={"/settings/meta-app"} component={MetaPlatformSettings} />

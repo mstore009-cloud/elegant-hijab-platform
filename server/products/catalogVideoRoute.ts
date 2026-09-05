@@ -26,8 +26,7 @@ export function registerCatalogVideoPlaybackRoute(app: Express) {
       }
       const media = (await getProductMedia(productId)).find(item => item.id === mediaId && item.source === "onedrive" && item.mediaType === "video" && Boolean(item.originalFileName));
       if (!media) return res.status(404).json({ error: "فيديو Catalog غير موجود لهذا المنتج." });
-      const ownerUserId = user?.id ?? product.product.createdByUserId;
-      const connection = await getUsableCatalogConnection(ownerUserId);
+      const connection = await getUsableCatalogConnection(product.product.storeId);
       if (!connection?.selectedDriveId || !connection.selectedFolderId) return res.status(412).json({ error: "مرجع Catalog غير متاح لتشغيل الفيديو." });
       const groups = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId });
       const group = groups.find(item => item.kind === "folder" && item.name === product.product.category);

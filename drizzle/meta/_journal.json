@@ -456,6 +456,20 @@
       "when": 1788596280227,
       "tag": "0064_zippy_thunderball",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "5",
+      "when": 1788612238366,
+      "tag": "0065_icy_snowbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "5",
+      "when": 1788613029951,
+      "tag": "0066_gray_jackal",
+      "breakpoints": true
     }
   ]
 }

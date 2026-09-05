@@ -27,10 +27,15 @@ export function registerOneDriveOAuthRoutes(app: Express) {
         res.status(400).send("انتهت صلاحية جلسة الربط أو استُخدمت سابقًا. عد إلى المنصة وابدأ التفويض من جديد.");
         return;
       }
+      if (!oauthState.storeId) {
+        res.status(400).send("جلسة ربط OneDrive قديمة لا تحدد متجرًا. أغلق هذه الصفحة وابدأ الربط من إعدادات المتجر مرة أخرى.");
+        return;
+      }
       const token = await exchangeOneDriveCode({ code, codeVerifier: oauthState.codeVerifier });
       if (oauthState.flow === "catalog_read") {
         await upsertCatalogConnection({
           userId: oauthState.userId,
+          storeId: oauthState.storeId,
           encryptedAccessToken: encryptOneDriveToken(token.accessToken),
           encryptedRefreshToken: encryptOneDriveToken(token.refreshToken),
           accessTokenExpiresAt: new Date(Date.now() + token.expiresIn * 1000),
@@ -42,6 +47,7 @@ export function registerOneDriveOAuthRoutes(app: Express) {
       const appFolder = await getOneDriveAppFolder(token.accessToken);
       await upsertOneDriveConnection({
         userId: oauthState.userId,
+        storeId: oauthState.storeId,
         encryptedAccessToken: encryptOneDriveToken(token.accessToken),
         encryptedRefreshToken: encryptOneDriveToken(token.refreshToken),
         accessTokenExpiresAt: new Date(Date.now() + token.expiresIn * 1000),

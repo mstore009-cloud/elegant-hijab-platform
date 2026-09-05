@@ -251,7 +251,7 @@ async function copyCatalogVideosSafely(input: { db: NonNullable<Awaited<ReturnTy
  * records; it never changes files, folders, permissions, or source data in OneDrive.
  */
 export async function scanCatalogForOwner(input: { ownerUserId: number; storeId: number; onProgress?: (progress: CatalogScanProgress) => Promise<void> | void }): Promise<CatalogAutomationSummary> {
-  const connection = await getUsableCatalogConnection(input.ownerUserId);
+  const connection = await getUsableCatalogConnection(input.storeId);
   if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) {
     throw new Error("مرجع Catalog المفوض غير جاهز للفحص التلقائي.");
   }
@@ -430,7 +430,7 @@ export async function listDeletedCatalogProducts(input: { ownerUserId: number; s
 }
 
 export async function restoreDeletedCatalogProduct(input: { ownerUserId: number; storeId: number; productFolderId: string }) {
-  const connection = await getUsableCatalogConnection(input.ownerUserId);
+  const connection = await getUsableCatalogConnection(input.storeId);
   if (!connection || connection.status !== "catalog_selected" || !connection.selectedDriveId || !connection.selectedFolderId) throw new Error("مرجع Catalog المفوض غير جاهز للاستعادة.");
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");

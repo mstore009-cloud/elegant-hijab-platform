@@ -41,6 +41,8 @@ export default function Products() {
   const metaCatalogPreviewInput = useMemo(() => selectedMetaCatalogAssetId ? { catalogAssetId: selectedMetaCatalogAssetId } : skipToken, [selectedMetaCatalogAssetId]);
   const metaCatalogPreview = trpc.metaCatalog.preview.useQuery(metaCatalogPreviewInput, { enabled: metaCatalogPreviewInput !== skipToken && profile.isSuccess });
   const deletedCatalogProducts = trpc.catalogSync.deletedProducts.useQuery(undefined, { enabled: profile.isSuccess });
+  const [catalogRootPickerOpen, setCatalogRootPickerOpen] = useState(false);
+  const catalogRootFolders = trpc.integrations.catalogRootFolders.useQuery(undefined, { enabled: profile.isSuccess && catalogRootPickerOpen && catalogSelectionStatus.data?.status === "connected" });
   const canEdit = profile.data?.permissions.includes("products.edit") ?? false;
   const canCreate = profile.data?.permissions.includes("products.create") ?? false;
   const canInventory = profile.data?.permissions.includes("products.inventory.update") ?? false;
@@ -93,6 +95,12 @@ export default function Products() {
   });
   const beginCatalogSelection = trpc.integrations.beginCatalogSelection.useMutation({
     onSuccess: result => { window.location.assign(result.authorizationUrl); },
+  });
+  const selectCatalogRoot = trpc.integrations.selectCatalogRoot.useMutation({
+    onSuccess: async () => {
+      await Promise.all([utils.integrations.catalogSelectionStatus.invalidate(), utils.integrations.catalogRootFolders.invalidate(), syncStatus.refetch()]);
+      setCatalogRootPickerOpen(false);
+    },
   });
   const restoreDeletedProduct = trpc.catalogSync.restoreDeletedProduct.useMutation({ onSuccess: async result => { await invalidateProducts(); await deletedCatalogProducts.refetch(); setRestoreTarget(null); setRestoreOpen(false); setSelectedProductId(result.productId); } });
   const exportMetaCatalog = trpc.metaCatalog.exportNow.useMutation({ onSuccess: () => { void utils.metaCatalog.jobs.invalidate(); } });

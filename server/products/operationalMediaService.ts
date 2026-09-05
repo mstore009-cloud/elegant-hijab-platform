@@ -17,7 +17,7 @@ export async function generateOperationalVideosForProduct(input: { userId: numbe
   const candidates = media.filter(entry => entry.source === "onedrive" && entry.mediaType === "video" && Boolean(entry.originalFileName) && !entry.storageKey);
   if (candidates.length === 0) return { created: [], skipped: media.filter(entry => entry.mediaType === "video" && entry.storageKey).map(entry => entry.id) };
 
-  const connection = await getUsableCatalogConnection(input.userId);
+  const connection = await getUsableCatalogConnection(item.product.storeId);
   if (!connection?.selectedDriveId || !connection.selectedFolderId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مرجع Catalog غير متاح لإنشاء نسخ الفيديو التشغيلية." });
   const groups = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId });
   const group = groups.find(entry => entry.kind === "folder" && entry.name === item.product.category);
@@ -72,7 +72,7 @@ async function materializeOperationalMediaForProduct(input: {
     : selectOperationalRegenerationCandidates(media);
   if (candidates.length === 0) return { created: [], skipped: media.filter(entry => entry.storageKey).map(entry => entry.id) };
 
-  const connection = await getUsableCatalogConnection(input.userId);
+  const connection = await getUsableCatalogConnection(item.product.storeId);
   if (!connection?.selectedDriveId || !connection.selectedFolderId) {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مرجع Catalog غير متاح لإنشاء النسخ التشغيلية." });
   }

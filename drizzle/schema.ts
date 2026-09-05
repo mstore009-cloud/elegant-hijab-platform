@@ -1,4 +1,4 @@
-import { boolean, decimal, index, int, mediumtext, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { AnyMySqlColumn, boolean, decimal, index, int, mediumtext, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 const orderStatuses = ["new", "needs_contact", "confirmed", "preparing", "out_for_delivery", "completed", "cancelled"] as const;
 
@@ -119,6 +119,7 @@ export const products = mysqlTable(
     productCode: varchar("productCode", { length: 80 }).notNull(),
     name: varchar("name", { length: 220 }).notNull(),
     category: varchar("category", { length: 120 }),
+    categoryId: int("categoryId").references(() => productCategories.id),
     description: text("description"),
     sizeLabels: text("sizeLabels"),
     status: mysqlEnum("status", ["draft", "needs_review", "ready", "active", "archived"]).default("draft").notNull(),
@@ -135,6 +136,29 @@ export const products = mysqlTable(
     index("product_store_status_idx").on(table.storeId, table.status),
     index("product_status_idx").on(table.status),
     index("product_category_idx").on(table.category),
+  ],
+);
+
+/** Hierarchical, store-scoped product taxonomy derived from OneDrive or created manually. */
+export const productCategories = mysqlTable(
+  "product_categories",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    parentId: int("parentId").references((): AnyMySqlColumn => productCategories.id),
+    name: varchar("name", { length: 180 }).notNull(),
+    source: mysqlEnum("source", ["onedrive", "manual"]).default("manual").notNull(),
+    sourceFolderId: varchar("sourceFolderId", { length: 255 }),
+    sourcePath: varchar("sourcePath", { length: 1000 }).notNull(),
+    sortOrder: int("sortOrder").default(0).notNull(),
+    lastSeenAt: timestamp("lastSeenAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("product_category_store_path_unique").on(table.storeId, table.sourcePath),
+    uniqueIndex("product_category_store_folder_unique").on(table.storeId, table.sourceFolderId),
+    index("product_category_store_parent_idx").on(table.storeId, table.parentId),
   ],
 );
 
@@ -1772,20 +1796,22 @@ export const oneDriveOAuthStates = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     state: varchar("state", { length: 160 }).notNull().unique(),
     userId: int("userId").notNull().references(() => users.id),
+    storeId: int("storeId").references(() => stores.id),
     codeVerifier: varchar("codeVerifier", { length: 160 }).notNull(),
     flow: mysqlEnum("flow", ["app_folder", "catalog_read"]).default("app_folder").notNull(),
     expiresAt: timestamp("expiresAt").notNull(),
     usedAt: timestamp("usedAt"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  table => [index("onedrive_oauth_state_user_idx").on(table.userId)],
+  table => [index("onedrive_oauth_state_user_idx").on(table.userId), index("onedrive_oauth_state_store_idx").on(table.storeId)],
 );
 
 export const oneDriveConnections = mysqlTable(
   "onedrive_connections",
   {
     id: int("id").autoincrement().primaryKey(),
-    userId: int("userId").notNull().unique().references(() => users.id),
+    userId: int("userId").notNull().references(() => users.id),
+    storeId: int("storeId").references(() => stores.id),
     encryptedAccessToken: text("encryptedAccessToken").notNull(),
     encryptedRefreshToken: text("encryptedRefreshToken").notNull(),
     accessTokenExpiresAt: timestamp("accessTokenExpiresAt").notNull(),
@@ -1795,7 +1821,11 @@ export const oneDriveConnections = mysqlTable(
     connectedAt: timestamp("connectedAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("onedrive_connection_folder_idx").on(table.appFolderId)],
+  table => [
+    uniqueIndex("onedrive_connection_store_unique").on(table.storeId),
+    index("onedrive_connection_user_idx").on(table.userId),
+    index("onedrive_connection_folder_idx").on(table.appFolderId),
+  ],
 );
 
 /**
@@ -1807,7 +1837,8 @@ export const oneDriveCatalogConnections = mysqlTable(
   "onedrive_catalog_connections",
   {
     id: int("id").autoincrement().primaryKey(),
-    userId: int("userId").notNull().unique().references(() => users.id),
+    userId: int("userId").notNull().references(() => users.id),
+    storeId: int("storeId").references(() => stores.id),
     encryptedAccessToken: text("encryptedAccessToken").notNull(),
     encryptedRefreshToken: text("encryptedRefreshToken").notNull(),
     accessTokenExpiresAt: timestamp("accessTokenExpiresAt").notNull(),
@@ -1820,5 +1851,9 @@ export const oneDriveCatalogConnections = mysqlTable(
     connectedAt: timestamp("connectedAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [index("onedrive_catalog_connection_status_idx").on(table.status)],
+  table => [
+    uniqueIndex("onedrive_catalog_connection_store_unique").on(table.storeId),
+    index("onedrive_catalog_connection_user_idx").on(table.userId),
+    index("onedrive_catalog_connection_status_idx").on(table.status),
+  ],
 );
