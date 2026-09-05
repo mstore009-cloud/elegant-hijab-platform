@@ -1,0 +1,1 @@
+ALTER TABLE `onedrive_catalog_connections` ADD `selectedFolderPath` varchar(2048);

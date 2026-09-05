@@ -6,6 +6,7 @@ export async function createOAuthState(input: {
   state: string;
   userId: number;
   storeId: number;
+  appConfigId: number;
   codeVerifier: string;
   flow?: "app_folder" | "catalog_read";
   expiresAt: Date;
@@ -32,6 +33,7 @@ export async function consumeOAuthState(state: string) {
 export async function upsertOneDriveConnection(input: {
   userId: number;
   storeId: number;
+  appConfigId: number;
   encryptedAccessToken: string;
   encryptedRefreshToken: string;
   accessTokenExpiresAt: Date;
@@ -44,6 +46,7 @@ export async function upsertOneDriveConnection(input: {
   await db.insert(oneDriveConnections).values(input).onDuplicateKeyUpdate({
     set: {
       userId: input.userId,
+      appConfigId: input.appConfigId,
       encryptedAccessToken: input.encryptedAccessToken,
       encryptedRefreshToken: input.encryptedRefreshToken,
       accessTokenExpiresAt: input.accessTokenExpiresAt,
@@ -64,6 +67,7 @@ export async function getOneDriveConnection(storeId: number) {
 export async function upsertCatalogConnection(input: {
   userId: number;
   storeId: number;
+  appConfigId: number;
   encryptedAccessToken: string;
   encryptedRefreshToken: string;
   accessTokenExpiresAt: Date;
@@ -74,6 +78,7 @@ export async function upsertCatalogConnection(input: {
   await db.insert(oneDriveCatalogConnections).values({ ...input, status: "connected", lastError: null }).onDuplicateKeyUpdate({
     set: {
       userId: input.userId,
+      appConfigId: input.appConfigId,
       encryptedAccessToken: input.encryptedAccessToken,
       encryptedRefreshToken: input.encryptedRefreshToken,
       accessTokenExpiresAt: input.accessTokenExpiresAt,
@@ -83,6 +88,7 @@ export async function upsertCatalogConnection(input: {
       selectedDriveId: null,
       selectedFolderId: null,
       selectedFolderName: null,
+      selectedFolderPath: null,
     },
   });
 }
@@ -111,7 +117,7 @@ export async function markCatalogConnectionFailed(storeId: number, lastError: st
   await db.update(oneDriveCatalogConnections).set({ status: "failed", lastError }).where(eq(oneDriveCatalogConnections.storeId, storeId));
 }
 
-export async function selectCatalogRoot(input: { storeId: number; driveId: string; folderId: string; folderName: string }) {
+export async function selectCatalogRoot(input: { storeId: number; driveId: string; folderId: string; folderName: string; folderPath: string }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   await db.update(oneDriveCatalogConnections).set({
@@ -120,6 +126,7 @@ export async function selectCatalogRoot(input: { storeId: number; driveId: strin
     selectedDriveId: input.driveId,
     selectedFolderId: input.folderId,
     selectedFolderName: input.folderName,
+    selectedFolderPath: input.folderPath,
   }).where(eq(oneDriveCatalogConnections.storeId, input.storeId));
 }
 

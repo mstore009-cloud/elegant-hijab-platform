@@ -84,6 +84,18 @@ export async function listCatalogRootFolders(encryptedAccessToken: string): Prom
     }));
 }
 
+/** Lists only direct subfolders of a user-selected branch during root selection. */
+export async function listCatalogFolderChildren(input: {
+  encryptedAccessToken: string;
+  driveId: string;
+  folderId: string;
+}): Promise<CatalogRootFolder[]> {
+  const children = await listCatalogChildren(input);
+  return children
+    .filter((item): item is CatalogDriveItem & { kind: "folder" } => item.kind === "folder")
+    .map(item => ({ id: item.id, name: item.name, driveId: input.driveId, webUrl: item.webUrl }));
+}
+
 /** Lists direct children of the already selected Catalog path; no write API is used. */
 export async function listCatalogChildren(input: {
   encryptedAccessToken: string;

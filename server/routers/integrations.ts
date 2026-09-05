@@ -9,9 +9,10 @@ import {
   selectCatalogRoot,
 } from "../integrations/onedrive/db";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
-import { listCatalogChildren, listCatalogRootFolders, readCatalogFileBytes, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
+import { listCatalogChildren, listCatalogFolderChildren, listCatalogRootFolders, readCatalogFileBytes, readCatalogImageDataUrl, readCatalogTextFile } from "../integrations/onedrive/catalog";
 import { createSelectedCatalogDrafts, previewCatalogGroupProducts } from "../integrations/onedrive/catalogMultiDraft";
 import { createOneDriveAuthorizationUrl, createPkcePair } from "../integrations/onedrive/oauth";
+import { getMaskedOneDriveAppSettings, getStoreOneDriveAppSettings, oneDriveAuthorities, saveOneDriveAppSettings, testOneDriveAppSettings } from "../integrations/onedrive/appSettings";
 import { flattenCategoryNodes, inspectCatalogTree } from "../integrations/onedrive/catalogTree";
 import { parseCatalogProductMetadata, parseCatalogProductMetadataDocx, parseCatalogProductMetadataLenientDocx, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { attachApprovedCatalogImageReferences, createApprovedCatalogColorVariants, createCatalogDraftProduct, listProducts } from "../products/db";
@@ -117,6 +118,30 @@ const colorAnalysisSchema = z.object({
 });
 
 export const integrationsRouter = router({
+  oneDriveAppSettings: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    return getMaskedOneDriveAppSettings(requireOperationalStoreId(ctx.operationalStore?.id));
+  }),
+  saveOneDriveAppSettings: protectedProcedure.input(z.object({
+    clientId: z.string().min(1).max(255),
+    clientSecret: z.string().max(1000).optional(),
+    authority: z.enum(oneDriveAuthorities),
+    publicBaseUrl: z.string().min(1).max(2048),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    return saveOneDriveAppSettings({
+      storeId: requireOperationalStoreId(ctx.operationalStore?.id),
+      actorUserId: ctx.user.id,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      authority: input.authority,
+      publicBaseUrl: input.publicBaseUrl,
+    });
+  }),
+  testOneDriveAppSettings: protectedProcedure.mutation(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    return testOneDriveAppSettings(requireOperationalStoreId(ctx.operationalStore?.id));
+  }),
   oneDriveStatus: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
@@ -128,10 +153,11 @@ export const integrationsRouter = router({
   beginOneDriveConnect: protectedProcedure.mutation(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const application = await getStoreOneDriveAppSettings(storeId);
     const state = randomBytes(32).toString("base64url");
     const pkce = createPkcePair();
-    await createOAuthState({ state, userId: ctx.user.id, storeId, codeVerifier: pkce.verifier, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
-    return { authorizationUrl: createOneDriveAuthorizationUrl({ state, codeChallenge: pkce.challenge }) };
+    await createOAuthState({ state, userId: ctx.user.id, storeId, appConfigId: application.id, codeVerifier: pkce.verifier, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    return { authorizationUrl: createOneDriveAuthorizationUrl({ state, codeChallenge: pkce.challenge, application }) };
   }),
   catalogSelectionStatus: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
@@ -141,26 +167,30 @@ export const integrationsRouter = router({
       ? {
         connected: true,
         status: connection.status,
+        requiresAppConfig: !connection.appConfigId,
         selectedFolderName: connection.selectedFolderName,
+        selectedFolderPath: connection.selectedFolderPath,
         lastError: connection.lastError,
       }
-      : { connected: false, status: "not_connected" as const, selectedFolderName: null, lastError: null };
+      : { connected: false, status: "not_connected" as const, requiresAppConfig: false, selectedFolderName: null, selectedFolderPath: null, lastError: null };
   }),
   beginCatalogSelection: protectedProcedure.mutation(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const application = await getStoreOneDriveAppSettings(storeId);
     const state = randomBytes(32).toString("base64url");
     const pkce = createPkcePair();
     await createOAuthState({
       state,
       userId: ctx.user.id,
       storeId,
+      appConfigId: application.id,
       codeVerifier: pkce.verifier,
       flow: "catalog_read",
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     });
     return {
-      authorizationUrl: createOneDriveAuthorizationUrl({ state, codeChallenge: pkce.challenge, flow: "catalog_read" }),
+      authorizationUrl: createOneDriveAuthorizationUrl({ state, codeChallenge: pkce.challenge, application, flow: "catalog_read" }),
     };
   }),
   catalogRootFolders: protectedProcedure.query(async ({ ctx }) => {
@@ -171,23 +201,31 @@ export const integrationsRouter = router({
     if (connection.status === "failed") throw new TRPCError({ code: "PRECONDITION_FAILED", message: connection.lastError ?? "فشل تفويض Catalog." });
     return listCatalogRootFolders(connection.encryptedAccessToken);
   }),
-  selectCatalogRoot: protectedProcedure.input(z.object({ folderId: z.string().min(1) })).mutation(async ({ ctx, input }) => {
+  catalogFolderChildren: protectedProcedure.input(z.object({ driveId: z.string().min(1), folderId: z.string().min(1) })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const connection = await getUsableCatalogConnection(requireOperationalStoreId(ctx.operationalStore?.id));
+    if (!connection) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يبدأ تفويض قراءة Catalog بعد." });
+    return listCatalogFolderChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: input.driveId, folderId: input.folderId });
+  }),
+  selectCatalogRoot: protectedProcedure.input(z.object({
+    driveId: z.string().min(1),
+    folderId: z.string().min(1),
+    folderName: z.string().min(1).max(255),
+    folderPath: z.string().min(1).max(2048),
+  })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     const connection = await getUsableCatalogConnection(storeId);
     if (!connection) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يبدأ تفويض قراءة Catalog بعد." });
-    const folders = await listCatalogRootFolders(connection.encryptedAccessToken);
-    const catalogFolder = folders.find(folder => folder.id === input.folderId);
-    if (!catalogFolder || !catalogFolder.driveId) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "اختر مجلد جذر صالحًا من OneDrive." });
-    }
+    await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: input.driveId, folderId: input.folderId });
     await selectCatalogRoot({
       storeId,
-      driveId: catalogFolder.driveId,
-      folderId: catalogFolder.id,
-      folderName: catalogFolder.name,
+      driveId: input.driveId,
+      folderId: input.folderId,
+      folderName: input.folderName,
+      folderPath: input.folderPath,
     });
-    return { selectedFolderName: catalogFolder.name };
+    return { selectedFolderName: input.folderName, selectedFolderPath: input.folderPath };
   }),
   previewCatalogTree: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");

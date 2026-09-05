@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createOneDriveAuthorizationUrl, createPkcePair, formatOneDriveGraphError, oneDriveAppFolderUrl } from "./oauth";
 
+const application = {
+  clientId: "11111111-2222-4333-8aaa-123456789abc",
+  clientSecret: "secret-not-used-in-url",
+  authority: "consumers" as const,
+  redirectUri: "https://example.test/api/onedrive/callback",
+};
+
 describe("OAuth الخاص بـ OneDrive", () => {
   it("ينشئ PKCE verifier وchallenge مختلفين وصالحين للاستخدام", () => {
     const pair = createPkcePair();
@@ -10,8 +17,9 @@ describe("OAuth الخاص بـ OneDrive", () => {
   });
 
   it("يستخدم رابط العودة المسجل في Azure داخل رابط التفويض", () => {
-    const authorizationUrl = new URL(createOneDriveAuthorizationUrl({ state: "test-state", codeChallenge: "test-challenge" }));
-    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe(process.env.MICROSOFT_ONEDRIVE_REDIRECT_URI);
+    const authorizationUrl = new URL(createOneDriveAuthorizationUrl({ state: "test-state", codeChallenge: "test-challenge", application }));
+    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe(application.redirectUri);
+    expect(authorizationUrl.searchParams.get("client_id")).toBe(application.clientId);
     expect(authorizationUrl.searchParams.get("scope")).toContain("Files.ReadWrite.AppFolder");
     expect(authorizationUrl.pathname).toContain("/consumers/");
   });
@@ -20,6 +28,7 @@ describe("OAuth الخاص بـ OneDrive", () => {
     const authorizationUrl = new URL(createOneDriveAuthorizationUrl({
       state: "catalog-state",
       codeChallenge: "catalog-challenge",
+      application,
       flow: "catalog_read",
     }));
     const scope = authorizationUrl.searchParams.get("scope") ?? "";

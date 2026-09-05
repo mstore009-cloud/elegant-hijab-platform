@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { consumeOAuthState, upsertCatalogConnection, upsertOneDriveConnection } from "./db";
 import { exchangeOneDriveCode, getOneDriveAppFolder } from "./oauth";
+import { getStoreOneDriveAppSettings } from "./appSettings";
 import { encryptOneDriveToken } from "./tokenCipher";
 
 /**
@@ -31,11 +32,17 @@ export function registerOneDriveOAuthRoutes(app: Express) {
         res.status(400).send("جلسة ربط OneDrive قديمة لا تحدد متجرًا. أغلق هذه الصفحة وابدأ الربط من إعدادات المتجر مرة أخرى.");
         return;
       }
-      const token = await exchangeOneDriveCode({ code, codeVerifier: oauthState.codeVerifier });
+      if (!oauthState.appConfigId) {
+        res.status(400).send("جلسة ربط OneDrive قديمة لا تحدد إعداد Microsoft للمتجر. أغلق هذه الصفحة وابدأ الربط من إعدادات المتجر مرة أخرى.");
+        return;
+      }
+      const application = await getStoreOneDriveAppSettings(oauthState.storeId, oauthState.appConfigId);
+      const token = await exchangeOneDriveCode({ code, codeVerifier: oauthState.codeVerifier, application });
       if (oauthState.flow === "catalog_read") {
         await upsertCatalogConnection({
           userId: oauthState.userId,
           storeId: oauthState.storeId,
+          appConfigId: application.id,
           encryptedAccessToken: encryptOneDriveToken(token.accessToken),
           encryptedRefreshToken: encryptOneDriveToken(token.refreshToken),
           accessTokenExpiresAt: new Date(Date.now() + token.expiresIn * 1000),
@@ -48,6 +55,7 @@ export function registerOneDriveOAuthRoutes(app: Express) {
       await upsertOneDriveConnection({
         userId: oauthState.userId,
         storeId: oauthState.storeId,
+        appConfigId: application.id,
         encryptedAccessToken: encryptOneDriveToken(token.accessToken),
         encryptedRefreshToken: encryptOneDriveToken(token.refreshToken),
         accessTokenExpiresAt: new Date(Date.now() + token.expiresIn * 1000),

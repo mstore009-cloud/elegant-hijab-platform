@@ -1,7 +1,13 @@
 import { createHash, randomBytes } from "crypto";
-import { ENV } from "../../_core/env";
+import type { OneDriveAuthority } from "./appSettings";
 
 export type OneDriveOAuthFlow = "app_folder" | "catalog_read";
+export type OneDriveOAuthApplication = {
+  clientId: string;
+  clientSecret: string;
+  authority: OneDriveAuthority;
+  redirectUri: string;
+};
 
 const scopesByFlow: Record<OneDriveOAuthFlow, string[]> = {
   app_folder: ["openid", "profile", "offline_access", "User.Read", "Files.ReadWrite.AppFolder"],
@@ -18,14 +24,15 @@ export function createPkcePair() {
   return { verifier, challenge };
 }
 
-export function createOneDriveAuthorizationUrl(input: { state: string; codeChallenge: string; flow?: OneDriveOAuthFlow }) {
-  if (!ENV.oneDriveClientId || !ENV.oneDriveRedirectUri) {
-    throw new Error("إعداد OAuth لـ OneDrive غير مكتمل.");
-  }
-  const url = new URL("https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize");
-  url.searchParams.set("client_id", ENV.oneDriveClientId);
+function authorityBase(authority: OneDriveAuthority) {
+  return `https://login.microsoftonline.com/${authority}/oauth2/v2.0`;
+}
+
+export function createOneDriveAuthorizationUrl(input: { state: string; codeChallenge: string; application: OneDriveOAuthApplication; flow?: OneDriveOAuthFlow }) {
+  const url = new URL(`${authorityBase(input.application.authority)}/authorize`);
+  url.searchParams.set("client_id", input.application.clientId);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", ENV.oneDriveRedirectUri);
+  url.searchParams.set("redirect_uri", input.application.redirectUri);
   url.searchParams.set("response_mode", "query");
   url.searchParams.set("scope", scopesByFlow[input.flow ?? "app_folder"].join(" "));
   url.searchParams.set("state", input.state);
@@ -34,19 +41,16 @@ export function createOneDriveAuthorizationUrl(input: { state: string; codeChall
   return url.toString();
 }
 
-export async function exchangeOneDriveCode(input: { code: string; codeVerifier: string }) {
-  if (!ENV.oneDriveClientSecret) {
-    throw new Error("سر تطبيق OneDrive غير مهيأ.");
-  }
+export async function exchangeOneDriveCode(input: { code: string; codeVerifier: string; application: OneDriveOAuthApplication }) {
   const body = new URLSearchParams({
-    client_id: ENV.oneDriveClientId,
-    client_secret: ENV.oneDriveClientSecret,
+    client_id: input.application.clientId,
+    client_secret: input.application.clientSecret,
     grant_type: "authorization_code",
     code: input.code,
-    redirect_uri: ENV.oneDriveRedirectUri,
+    redirect_uri: input.application.redirectUri,
     code_verifier: input.codeVerifier,
   });
-  const response = await fetch("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
+  const response = await fetch(`${authorityBase(input.application.authority)}/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -70,17 +74,14 @@ export async function exchangeOneDriveCode(input: { code: string; codeVerifier: 
   };
 }
 
-export async function refreshOneDriveToken(input: { refreshToken: string }) {
-  if (!ENV.oneDriveClientSecret) {
-    throw new Error("سر تطبيق OneDrive غير مهيأ.");
-  }
+export async function refreshOneDriveToken(input: { refreshToken: string; application: OneDriveOAuthApplication }) {
   const body = new URLSearchParams({
-    client_id: ENV.oneDriveClientId,
-    client_secret: ENV.oneDriveClientSecret,
+    client_id: input.application.clientId,
+    client_secret: input.application.clientSecret,
     grant_type: "refresh_token",
     refresh_token: input.refreshToken,
   });
-  const response = await fetch("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
+  const response = await fetch(`${authorityBase(input.application.authority)}/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,

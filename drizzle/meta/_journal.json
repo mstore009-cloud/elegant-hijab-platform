@@ -470,6 +470,27 @@
       "when": 1788613029951,
       "tag": "0066_gray_jackal",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "5",
+      "when": 1788614532079,
+      "tag": "0067_aromatic_silver_centurion",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "5",
+      "when": 1788615221805,
+      "tag": "0068_complete_argent",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "5",
+      "when": 1788615600534,
+      "tag": "0069_light_victor_mancha",
+      "breakpoints": true
     }
   ]
 }

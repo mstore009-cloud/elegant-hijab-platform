@@ -1,0 +1,1 @@
+ALTER TABLE `onedrive_app_configs` ADD `publicBaseUrl` varchar(2048) NOT NULL;

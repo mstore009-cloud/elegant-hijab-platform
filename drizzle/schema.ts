@@ -1790,6 +1790,28 @@ export type ContentPostMedia = typeof contentPostMedia.$inferSelect;
 export type OrderFulfillment = typeof orderFulfillments.$inferSelect;
 export type OrderFulfillmentItemCheck = typeof orderFulfillmentItemChecks.$inferSelect;
 
+/** Microsoft OAuth app credentials owned and configured independently by each store. */
+export const oneDriveAppConfigs = mysqlTable(
+  "onedrive_app_configs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    clientId: varchar("clientId", { length: 255 }).notNull(),
+    encryptedClientSecret: text("encryptedClientSecret").notNull(),
+    authority: mysqlEnum("authority", ["consumers", "organizations", "common"]).default("consumers").notNull(),
+    publicBaseUrl: varchar("publicBaseUrl", { length: 2048 }).notNull(),
+    redirectUri: varchar("redirectUri", { length: 2048 }).notNull(),
+    status: mysqlEnum("status", ["configured", "verified", "needs_attention"]).default("configured").notNull(),
+    lastTestedAt: timestamp("lastTestedAt"),
+    lastError: text("lastError"),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    updatedByUserId: int("updatedByUserId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("onedrive_app_config_store_unique").on(table.storeId), index("onedrive_app_config_status_idx").on(table.status)],
+);
+
 export const oneDriveOAuthStates = mysqlTable(
   "onedrive_oauth_states",
   {
@@ -1797,13 +1819,14 @@ export const oneDriveOAuthStates = mysqlTable(
     state: varchar("state", { length: 160 }).notNull().unique(),
     userId: int("userId").notNull().references(() => users.id),
     storeId: int("storeId").references(() => stores.id),
+    appConfigId: int("appConfigId").references(() => oneDriveAppConfigs.id),
     codeVerifier: varchar("codeVerifier", { length: 160 }).notNull(),
     flow: mysqlEnum("flow", ["app_folder", "catalog_read"]).default("app_folder").notNull(),
     expiresAt: timestamp("expiresAt").notNull(),
     usedAt: timestamp("usedAt"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  table => [index("onedrive_oauth_state_user_idx").on(table.userId), index("onedrive_oauth_state_store_idx").on(table.storeId)],
+  table => [index("onedrive_oauth_state_user_idx").on(table.userId), index("onedrive_oauth_state_store_idx").on(table.storeId), index("onedrive_oauth_state_config_idx").on(table.appConfigId)],
 );
 
 export const oneDriveConnections = mysqlTable(
@@ -1812,6 +1835,7 @@ export const oneDriveConnections = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     userId: int("userId").notNull().references(() => users.id),
     storeId: int("storeId").references(() => stores.id),
+    appConfigId: int("appConfigId").references(() => oneDriveAppConfigs.id),
     encryptedAccessToken: text("encryptedAccessToken").notNull(),
     encryptedRefreshToken: text("encryptedRefreshToken").notNull(),
     accessTokenExpiresAt: timestamp("accessTokenExpiresAt").notNull(),
@@ -1824,6 +1848,7 @@ export const oneDriveConnections = mysqlTable(
   table => [
     uniqueIndex("onedrive_connection_store_unique").on(table.storeId),
     index("onedrive_connection_user_idx").on(table.userId),
+    index("onedrive_connection_config_idx").on(table.appConfigId),
     index("onedrive_connection_folder_idx").on(table.appFolderId),
   ],
 );
@@ -1839,6 +1864,7 @@ export const oneDriveCatalogConnections = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     userId: int("userId").notNull().references(() => users.id),
     storeId: int("storeId").references(() => stores.id),
+    appConfigId: int("appConfigId").references(() => oneDriveAppConfigs.id),
     encryptedAccessToken: text("encryptedAccessToken").notNull(),
     encryptedRefreshToken: text("encryptedRefreshToken").notNull(),
     accessTokenExpiresAt: timestamp("accessTokenExpiresAt").notNull(),
@@ -1848,12 +1874,14 @@ export const oneDriveCatalogConnections = mysqlTable(
     selectedDriveId: varchar("selectedDriveId", { length: 255 }),
     selectedFolderId: varchar("selectedFolderId", { length: 255 }),
     selectedFolderName: varchar("selectedFolderName", { length: 255 }),
+    selectedFolderPath: varchar("selectedFolderPath", { length: 2048 }),
     connectedAt: timestamp("connectedAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   table => [
     uniqueIndex("onedrive_catalog_connection_store_unique").on(table.storeId),
     index("onedrive_catalog_connection_user_idx").on(table.userId),
+    index("onedrive_catalog_connection_config_idx").on(table.appConfigId),
     index("onedrive_catalog_connection_status_idx").on(table.status),
   ],
 );
