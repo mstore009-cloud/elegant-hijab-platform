@@ -8,6 +8,7 @@ describe("Owner-direct WhatsApp selection guidance", () => {
     expect(source).toContain("لا يستخدم هذا المتجر Embedded Signup أو Configuration ID");
     expect(source).toContain("System User Token");
     expect(source).toContain("whatsapp_business");
+    expect(source).toContain("ينتهي بـ");
   });
 
   it("removes the owner-facing Embedded Signup launcher", () => {
