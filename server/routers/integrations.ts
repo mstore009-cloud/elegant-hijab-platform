@@ -6,6 +6,7 @@ import {
   createOAuthState,
   getCatalogConnection,
   getOneDriveConnection,
+  requireCatalogReauthorization,
   selectCatalogRoot,
 } from "../integrations/onedrive/db";
 import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth";
@@ -173,6 +174,16 @@ export const integrationsRouter = router({
         lastError: connection.lastError,
       }
       : { connected: false, status: "not_connected" as const, requiresAppConfig: false, selectedFolderName: null, selectedFolderPath: null, lastError: null };
+  }),
+  reauthorizeCatalog: protectedProcedure.mutation(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const application = await getStoreOneDriveAppSettings(storeId);
+    await requireCatalogReauthorization(storeId);
+    const state = randomBytes(32).toString("base64url");
+    const pkce = createPkcePair();
+    await createOAuthState({ state, userId: ctx.user.id, storeId, appConfigId: application.id, codeVerifier: pkce.verifier, flow: "catalog_read", expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    return { authorizationUrl: createOneDriveAuthorizationUrl({ state, codeChallenge: pkce.challenge, application, flow: "catalog_read" }) };
   }),
   beginCatalogSelection: protectedProcedure.mutation(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");

@@ -117,6 +117,19 @@ export async function markCatalogConnectionFailed(storeId: number, lastError: st
   await db.update(oneDriveCatalogConnections).set({ status: "failed", lastError }).where(eq(oneDriveCatalogConnections.storeId, storeId));
 }
 
+export async function requireCatalogReauthorization(storeId: number, reason = "تغير إعداد تطبيق Microsoft؛ أعد تفويض OneDrive بالتطبيق الحالي.") {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  await db.update(oneDriveCatalogConnections).set({
+    status: "failed",
+    lastError: reason,
+    selectedDriveId: null,
+    selectedFolderId: null,
+    selectedFolderName: null,
+    selectedFolderPath: null,
+  }).where(eq(oneDriveCatalogConnections.storeId, storeId));
+}
+
 export async function selectCatalogRoot(input: { storeId: number; driveId: string; folderId: string; folderName: string; folderPath: string }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");

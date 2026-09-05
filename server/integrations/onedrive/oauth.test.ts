@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createOneDriveAuthorizationUrl, createPkcePair, formatOneDriveGraphError, oneDriveAppFolderUrl } from "./oauth";
+import { oneDriveRefreshFailureMessage } from "./catalogAuth";
 
 const application = {
   clientId: "11111111-2222-4333-8aaa-123456789abc",
@@ -38,6 +39,11 @@ describe("OAuth الخاص بـ OneDrive", () => {
 
   it("يطلب مجلد التطبيق عبر المسار الرسمي الذي ينشئه Graph عند الحاجة", () => {
     expect(oneDriveAppFolderUrl()).toBe("https://graph.microsoft.com/v1.0/me/drive/special/approot");
+  });
+
+  it("يحوّل اختلاف Client ID إلى توجيه إعادة تفويض واضح دون كشف تفاصيل الرمز", () => {
+    expect(oneDriveRefreshFailureMessage("AADSTS70000: The provided value for refresh_token is not valid. The token was issued for a different client id")).toContain("أعد تفويض OneDrive");
+    expect(oneDriveRefreshFailureMessage("network timeout")).toContain("تعذر تجديد اتصال OneDrive");
   });
 
   it("يعرض حالة Graph وكودها عند فشل الوصول بدل رسالة عامة", () => {

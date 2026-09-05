@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { oneDriveAppConfigs } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { decryptOneDriveToken, encryptOneDriveToken } from "./tokenCipher";
+import { requireCatalogReauthorization } from "./db";
 
 export const oneDriveAuthorities = ["consumers", "organizations", "common"] as const;
 export type OneDriveAuthority = (typeof oneDriveAuthorities)[number];
@@ -77,6 +78,7 @@ export async function saveOneDriveAppSettings(input: {
   const current = await getOneDriveAppConfig(input.storeId);
   const clientId = normalizeOneDriveClientId(input.clientId);
   const clientSecret = input.clientSecret?.trim();
+  const appIdentityChanged = Boolean(current && (current.clientId !== clientId || current.authority !== input.authority || current.publicBaseUrl !== normalizeOneDrivePublicBaseUrl(input.publicBaseUrl)));
   if (!current?.encryptedClientSecret && !clientSecret) throw new Error("أدخل Client Secret عند الإعداد الأول.");
   const publicBaseUrl = normalizeOneDrivePublicBaseUrl(input.publicBaseUrl);
   const redirectUri = buildOneDriveCallbackUrl(publicBaseUrl);
@@ -106,6 +108,7 @@ export async function saveOneDriveAppSettings(input: {
       updatedByUserId: values.updatedByUserId,
     },
   });
+  if (appIdentityChanged) await requireCatalogReauthorization(input.storeId);
   return getMaskedOneDriveAppSettings(input.storeId);
 }
 
