@@ -525,10 +525,10 @@
 - [x] منع تسجيل كل الرسائل التاريخية كنشاط CRM؛ يضاف inbox_message للنشاط الحي فقط مع بقاء المحادثة والرسالة التاريخية محفوظتين.
 - [x] تحديث تنظيف اختبارات القنوات وWhatsApp Coexistence لحذف customerActivities وcustomerProfiles الناتجة عن الربط التلقائي قبل حذف متجر الاختبار.
 - [ ] التحقق من اتصال My Browser بالجلسة الشخصية فعلياً قبل إجراء اختبارات Meta الحية، ومنع استخدام Sandbox بديلاً عنها.
-- [ ] تنفيذ وتوثيق اختبارات Meta الحية للقنوات وLead Ads وCatalog باستخدام أصول المستخدم المختارة فقط.
+- [ ] تنفيذ وتوثيق اختبارات Meta الحية المتبقية لـMessenger وInstagram وLead Ads وCatalog باستخدام أصول المستخدم المختارة فقط؛ اختبار WhatsApp الحي نجح ووصلت الرسالة خلال نحو 3 ثوانٍ.
 - [x] إصلاح خطأ `inbox_message_media` عند استقبال رسائل Messenger؛ اتضح أن قيد providerMediaId كان واسعاً لملصقات Messenger، فصار الفهرس الفريد يشمل messageId مع فهارس FK مستقلة واختبار إعادة الاستخدام.
 - [x] معالجة خطأ Instagram `Please reduce the amount of data you're asking for` في المزامنة التاريخية بتقليص الحقول وحدود الصفحات مع اختبار عقدي للطلب.
-- [x] التحقق من حالة WhatsApp Embedded Signup وإكمال ربط System User Token؛ تم اختبار الاعتماد وحفظه مشفراً، ويبقى اختيار رقم Business App داخل Embedded Signup.
+- [x] التحقق من حالة اعتماد WhatsApp؛ تم اختبار System User Token وحفظه مشفراً، ثم اختيار رقم Cloud API من الأصول الموحدة ووصول رسالة حية خلال نحو 3 ثوانٍ.
 - [x] توثيق أن أرقام WhatsApp Business App ليست أصول Cloud API مكتشفة مسبقاً؛ لا يُعرض لها مسار Coexistence في واجهة محفظة مالك التطبيق.
 - [x] إيقاف مسار Embedded Signup في محفظة مالك التطبيق؛ يبقى حصراً كبنية خلفية مستقبلية للمتاجر الخارجية، وليس مساراً لتفعيل WhatsApp في هذا المتجر.
 - [x] إزالة توجيه واجهة المالك إلى Embedded Signup وConfiguration ID، مع اختبار عقدي يمنع عودتهما.

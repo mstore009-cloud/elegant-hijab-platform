@@ -17,3 +17,9 @@ WhatsApp: قسم Embedded Signup يظهر `غير مرتبط` و`مؤهل الب
 ## نتائج الاختبار الداخلي بعد الإصلاح
 
 نجحت اختبارات القنوات وMeta history sync، بما فيها اختبار إعادة استخدام providerMediaId في رسالتين مختلفتين، واختبارات pagination وInstagram fields. ما زال اختبار WhatsApp الحي متوقفاً على إكمال Embedded Signup وSystem User Token من حساب Meta.
+
+## اختبار WhatsApp الموحد — 2026-09-05
+
+بعد اكتشاف أصول WABA والأرقام عبر اتصال Meta الموحد وSystem User Token، اختار صاحب المتجر رقماً إنتاجياً من تبويب الأصول. ظهرت حالة القناة `بانتظار اختبار Webhook`. أُرسلت رسالة اختبار من هاتف آخر ووصلت إلى Inbox خلال نحو ثلاث ثوانٍ. يثبت ذلك المسار الحي للرقم المختار، والاعتماد المشفر، وWebhook، وحفظ الرسالة في Inbox. لم يُستخدم Embedded Signup في هذا الاختبار.
+
+يبقى اختبار Messenger وInstagram وLead Ads وCatalog منفصلاً عن هذا الإثبات.
