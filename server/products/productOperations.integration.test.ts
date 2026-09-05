@@ -102,6 +102,32 @@ describe("عمليات المنتج الموحدة", () => {
     }
   }, 15_000);
 
+  it("لا ينشئ اقتراح ألوان ثانياً بينما يوجد اقتراح سابق بانتظار المراجعة", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار منع تكرار اقتراح اللون.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار منع تكرار اقتراح اللون.");
+    const storeId = await getTestStoreId();
+    const productCode = `TST-PENDING-COLOR-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ productCode, storeId, name: "منتج اقتراح قيد المراجعة", category: "اختبار", sizeLabels: null, status: "draft", sellingPrice: "1.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: `products/test/${productCode}.webp`, originalFileName: "pending.webp", colorVerified: false });
+      await db.insert(productOperations).values({ productId, actorUserId: owner.id, source: "products_ui", action: "color_suggestions_generated", changes: JSON.stringify({ suggestion: { colorGroups: [], uncertainMediaIds: [], overallReviewNote: "قيد المراجعة" } }) });
+      expect(await generateAutomaticColorSuggestion({ productId, actorUserId: owner.id, source: "products_ui" })).toBeNull();
+      const generated = await db.select().from(productOperations).where(and(eq(productOperations.productId, productId), eq(productOperations.action, "color_suggestions_generated")));
+      expect(generated).toHaveLength(1);
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productMedia).where(eq(productMedia.productId, productId));
+        await db.delete(productVariants).where(eq(productVariants.productId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 15_000);
+
   it("يعتمد اسمًا وصورًا معدلة للاقتراح في عملية واحدة من دون نشر المنتج", async () => {
     const db = await getDb();
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار تحرير اقتراح اللون.");

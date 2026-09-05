@@ -174,11 +174,21 @@ export async function getProductForVariantInStore(variantId: number, storeId: nu
   return getProductByIdInStore(variant.productId, storeId);
 }
 
-export async function generateAutomaticColorSuggestion(input: { productId: number; actorUserId: number; mediaIds?: number[] }) {
+export async function generateAutomaticColorSuggestion(input: { productId: number; actorUserId: number; mediaIds?: number[]; source?: "catalog_scan" | "products_ui" }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
   if (!product) throw new Error("المنتج غير موجود.");
+  const operations = await db.select().from(productOperations).where(eq(productOperations.productId, input.productId));
+  const reviewedSuggestionIds = new Set(operations.filter(operation => operation.action === "color_suggestions_reviewed").flatMap(operation => {
+    try {
+      const parsed = JSON.parse(operation.changes) as { suggestionOperationId?: number };
+      return typeof parsed.suggestionOperationId === "number" ? [parsed.suggestionOperationId] : [];
+    } catch {
+      return [];
+    }
+  }));
+  if (operations.some(operation => operation.action === "color_suggestions_generated" && !reviewedSuggestionIds.has(operation.id))) return null;
   const media = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
   const requestedIds = input.mediaIds ? new Set(input.mediaIds) : null;
   const eligibleMedia = media.filter(item => Boolean(item.storageKey) && !item.variantId && !item.colorVerified && (!requestedIds || requestedIds.has(item.id)));
@@ -187,7 +197,7 @@ export async function generateAutomaticColorSuggestion(input: { productId: numbe
   const inserted = await db.insert(productOperations).values({
     productId: input.productId,
     actorUserId: input.actorUserId,
-    source: "catalog_scan",
+    source: input.source ?? "catalog_scan",
     action: "color_suggestions_generated",
     changes: JSON.stringify({ suggestion }),
   });

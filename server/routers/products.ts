@@ -341,7 +341,22 @@ export const productsRouter = router({
     await requireProductInOperationalStore(ctx, input.productId);
     const bytes = Buffer.from(input.base64Data, "base64");
     if (bytes.length === 0 || bytes.length > 25 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "حجم الصورة يجب أن يكون بين 1 بايت و25 ميغابايت." });
-    return addManualProductImage({ productId: input.productId, fileName: input.fileName, bytes, actorUserId: ctx.user.id });
+    const uploaded = await addManualProductImage({ productId: input.productId, fileName: input.fileName, bytes, actorUserId: ctx.user.id });
+    let colorAnalysis: Awaited<ReturnType<typeof generateAutomaticColorSuggestion>> = null;
+    let colorAnalysisError: string | null = null;
+    try {
+      colorAnalysis = await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: ctx.user.id, source: "products_ui", mediaIds: [uploaded.mediaId] });
+    } catch (error) {
+      colorAnalysisError = error instanceof Error ? error.message : "تعذر إنشاء اقتراح ألوان للصورة المضافة.";
+    }
+    return {
+      ...uploaded,
+      colorAnalysis: colorAnalysis
+        ? { status: "suggestion_ready" as const, operationId: colorAnalysis.operationId }
+        : colorAnalysisError
+          ? { status: "analysis_failed" as const, message: colorAnalysisError }
+          : { status: "review_pending" as const },
+    };
   }),
   detachMedia: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
