@@ -8,7 +8,7 @@ import { configureChannelAccount, listChannelAccounts, updateChannelSubscription
 import { getMetaEventHealth, getMetaRetryStatus, requeueMetaDeadLetters, retryDueMetaEvents } from "../channels/metaEvents";
 import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaAssetAccessToken, getMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, markMetaSystemUserTokenStatus, metaPurposes, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets } from "../integrations/meta/db";
 import { decryptMetaToken, metaConnectionTokenContext } from "../integrations/meta/tokenCipher";
-import { createMetaAuthorizationUrl, discoverMetaAssets, ensureMetaPageWebhookSubscription, ensureMetaPlatformWebhookSubscriptions, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectInstagramPageWebhookSubscription, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
+import { createMetaAuthorizationUrl, discoverMetaAssets, discoverOwnedWhatsAppAssets, ensureMetaPageWebhookSubscription, ensureMetaPlatformWebhookSubscriptions, exchangeWhatsAppEmbeddedSignupCode, getActiveMetaTemplateScopes, inspectInstagramPageWebhookSubscription, inspectMessengerPageWebhookSubscription, inspectMetaToken, inspectWhatsAppBusinessPhone, metaConfigurationId, metaScopesByPurpose, requestWhatsAppSmbData, subscribeMessengerPage, subscribeWhatsAppBusinessAccount } from "../integrations/meta/oauth";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { enableWhatsAppHistorySyncJob, ensureMetaHistorySyncJobs, listMetaHistorySyncJobs, processDueMetaHistorySyncJobs, processMetaHistorySyncJob, setMetaHistorySyncStatus } from "../integrations/meta/historySync";
 import { listWhatsAppOnboardings, markWhatsAppSyncRequested, upsertWhatsAppOnboarding } from "../integrations/meta/whatsappCoexistence";
@@ -205,7 +205,19 @@ export const metaConnectionsRouter = router({
     if (!connection?.encryptedAccessToken || connection.status === "revoked") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "اربط Meta مرة واحدة قبل تحديث الأصول." });
     const token = decryptMetaToken(connection.encryptedAccessToken, metaConnectionTokenContext(store.id, "unified"));
     const discovered = await discoverMetaAssets(token, "unified");
-    await upsertDiscoveredMetaAssets({ storeId: store.id, connectionId: connection.id, purpose: "unified", assets: discovered.assets });
+    const overviewBeforeOwnerWhatsApp = await listMetaConnectionOverview(store.id);
+    const ownerBusinessIds = overviewBeforeOwnerWhatsApp.assets
+      .filter(asset => asset.connectionId === connection.id && asset.assetType === "business" && asset.isSelected)
+      .map(asset => asset.externalId);
+    const systemUserToken = connection.authMode === "owner_direct" ? await getMetaSystemUserToken(store.id) : null;
+    const ownerWhatsApp = connection.authMode !== "owner_direct"
+      ? { assets: [], failures: [] as string[] }
+      : !systemUserToken
+        ? { assets: [], failures: ["WhatsApp: أضف System User Token صالحاً لاكتشاف أصول محفظة مالك التطبيق."] }
+        : !ownerBusinessIds.length
+          ? { assets: [], failures: ["WhatsApp: اختر Business Portfolio المالك أولاً من الأصول الموحدة."] }
+          : await discoverOwnedWhatsAppAssets({ businessIds: ownerBusinessIds, accessToken: systemUserToken });
+    await upsertDiscoveredMetaAssets({ storeId: store.id, connectionId: connection.id, purpose: "unified", assets: [...discovered.assets, ...ownerWhatsApp.assets] });
     await carryLegacyMetaAssetSelections(store.id, connection.id);
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: connection.id, grantedScopes: connection.grantedScopes.split(",").filter(Boolean) });
     const messengerWarnings = await ensureSelectedMessengerPageSubscriptions(store.id, connection.id);
@@ -221,13 +233,13 @@ export const metaConnectionsRouter = router({
       await updateChannelSubscriptionHealth({ storeId: store.id, channel: "instagram", appSubscriptionStatus: "unknown", assetSubscriptionStatus: instagramWarnings.length ? "error" : "ready", error: instagramWarnings.join(" | ") || null });
     }
     await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
-    const warnings = [...discovered.failures, ...subscriptionWarnings];
+    const warnings = [...discovered.failures, ...ownerWhatsApp.failures, ...subscriptionWarnings];
     await markMetaConnectionVerified(
       connection.id,
       warnings.length ? warnings.join(" | ").slice(0, 500) : null,
       { fatal: false },
     );
-    return { discovered: discovered.assets.length, warnings };
+    return { discovered: discovered.assets.length + ownerWhatsApp.assets.length, warnings, ownerWhatsApp: { discovered: ownerWhatsApp.assets.length, available: ownerWhatsApp.assets.some(asset => asset.assetType === "whatsapp_phone") } };
   }),
   repairMessengerReception: protectedProcedure.mutation(async ({ ctx }) => {
     const store = await requireStore(ctx);

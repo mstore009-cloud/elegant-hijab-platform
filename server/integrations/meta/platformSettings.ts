@@ -162,7 +162,9 @@ export async function saveMetaPlatformSettings(input: {
   const appId = input.appId.trim();
   const appSecret = input.appSecret?.trim();
   const businessLoginConfigurationId = input.businessLoginConfigurationId.trim();
-  const whatsappEmbeddedSignupConfigurationId = input.whatsappEmbeddedSignupConfigurationId?.trim() || null;
+  const whatsappEmbeddedSignupConfigurationId = input.whatsappEmbeddedSignupConfigurationId === undefined
+    ? current?.whatsappEmbeddedSignupConfigurationId ?? null
+    : input.whatsappEmbeddedSignupConfigurationId.trim() || null;
   const publicBaseUrl = normalizeMetaPublicBaseUrl(input.publicBaseUrl);
   if (!/^\d{5,80}$/.test(appId)) throw new Error("معرّف تطبيق Meta يجب أن يتكون من أرقام فقط.");
   if (!current?.encryptedAppSecret && !appSecret) throw new Error("أدخل App Secret عند الإعداد الأول.");

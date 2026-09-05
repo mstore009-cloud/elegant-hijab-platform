@@ -5,7 +5,7 @@ import { channelAccounts, metaAssets, metaConnectionCapabilities, metaConnection
 import { getDb } from "../../db";
 import { configureChannelAccount } from "../../channels/db";
 import { carryLegacyMetaAssetSelections, consumeMetaOAuthState, createMetaOAuthState, disconnectMetaConnection, getMetaSystemUserToken, listMetaConnectionOverview, markMetaConnectionVerified, revokeMetaSystemUserToken, saveMetaSystemUserToken, selectMetaAsset, setMetaAssetSelection, setMetaCapabilityEnabled, syncMetaConnectionCapabilities, upsertDiscoveredMetaAssets, upsertMetaConnection } from "./db";
-import { buildMetaAuthorizationUrl, ensureMetaPlatformWebhookSubscriptions, messengerPageSubscribedFields, metaScopesByPurpose, subscribeMessengerPage, subscribeWhatsAppBusinessAccount, unifiedMetaScopes } from "./oauth";
+import { buildMetaAuthorizationUrl, discoverOwnedWhatsAppAssets, ensureMetaPlatformWebhookSubscriptions, messengerPageSubscribedFields, metaScopesByPurpose, subscribeMessengerPage, subscribeWhatsAppBusinessAccount, unifiedMetaScopes } from "./oauth";
 import { decryptMetaToken, encryptMetaToken, metaConnectionTokenContext, metaPlatformSecretContext } from "./tokenCipher";
 import { loadMetaCredential } from "../../channels/metaOutbound";
 import { buildMetaPlatformUrls, normalizeMetaPublicBaseUrl } from "./platformSettings";
@@ -186,6 +186,29 @@ describe("Meta Connection Center", () => {
     const account = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: asset.externalId, providerDisplayName: asset.displayName, connectionStatus: "testing" });
     await saveMetaSystemUserToken({ storeId, token: "preferred-whatsapp-system-user-token" });
     await expect(loadMetaCredential(storeId, account)).resolves.toEqual({ accessToken: "preferred-whatsapp-system-user-token", providerAccountId: "phone-system-token" });
+  });
+
+  it("يكتشف WABA وأرقام Cloud API المملوكة عبر System User دون فتح Embedded Signup", async () => {
+    const calls: Array<{ url: URL; init?: RequestInit }> = [];
+    const discovered = await discoverOwnedWhatsAppAssets({
+      businessIds: ["owner-business"],
+      accessToken: "system-owner-token",
+      fetcher: async (input, init) => {
+        const url = new URL(String(input));
+        calls.push({ url, init });
+        if (url.pathname.endsWith("/owner-business/owned_whatsapp_business_accounts")) return new Response(JSON.stringify({ data: [{ id: "owner-waba", name: "حساب المالك", account_review_status: "APPROVED" }] }), { status: 200, headers: { "content-type": "application/json" } });
+        if (url.pathname.endsWith("/owner-waba/phone_numbers")) return new Response(JSON.stringify({ data: [{ id: "owner-phone", display_phone_number: "+964 770 000 0000", verified_name: "عالم الحجابات", quality_rating: "GREEN", platform_type: "CLOUD_API", code_verification_status: "VERIFIED" }] }), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ error: { message: "unexpected path" } }), { status: 400, headers: { "content-type": "application/json" } });
+      },
+    });
+    expect(discovered.failures).toEqual([]);
+    expect(discovered.assets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ assetType: "whatsapp_business", externalId: "owner-waba", parentExternalId: "owner-business" }),
+      expect.objectContaining({ assetType: "whatsapp_phone", externalId: "owner-phone", parentExternalId: "owner-waba", metadata: expect.objectContaining({ discoverySource: "owner_system_user", platformType: "CLOUD_API" }) }),
+    ]));
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url.toString()).not.toContain("system-owner-token");
+    expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe("Bearer system-owner-token");
   });
 
   it("يبقي Owner Direct متصلاً عند نجاح الأصول الأساسية ووجود تحذير اكتشاف اختياري", async () => {

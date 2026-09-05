@@ -117,10 +117,10 @@ export async function inspectMetaToken(accessToken: string) {
   return { userId: payload.data.user_id ? String(payload.data.user_id) : null, scopes: Array.isArray(payload.data.scopes) ? payload.data.scopes.map(String) : [], expiresAt: payload.data.expires_at ? new Date(Number(payload.data.expires_at) * 1000) : null };
 }
 
-async function graphGet(pathOrUrl: string, accessToken: string, graphApiVersion: string) {
+async function graphGet(pathOrUrl: string, accessToken: string, graphApiVersion: string, fetcher: typeof fetch = fetch) {
   const url = pathOrUrl.startsWith("https://") ? new URL(pathOrUrl) : new URL(graphBase(pathOrUrl, graphApiVersion));
   if (url.hostname !== "graph.facebook.com") throw new Error("رفض رابط Graph غير موثوق.");
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const response = await fetcher(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   return readMetaJson(response, "قراءة أصل Meta");
 }
 
@@ -256,14 +256,14 @@ export async function inspectInstagramPageWebhookSubscription(pageId: string, pa
 // Backward-compatible export used by the Meta connections router.
 export const inspectInstagramWebhookSubscription = inspectInstagramPageWebhookSubscription;
 
-async function graphList(path: string, accessToken: string, fields: string, graphApiVersion: string) {
+async function graphList(path: string, accessToken: string, fields: string, graphApiVersion: string, fetcher: typeof fetch = fetch) {
   const first = new URL(graphBase(path, graphApiVersion));
   first.searchParams.set("fields", fields);
   first.searchParams.set("limit", "100");
   const rows: any[] = [];
   let next: string | null = first.toString();
   for (let page = 0; next && page < 5; page += 1) {
-    const payload = await graphGet(next, accessToken, graphApiVersion);
+    const payload = await graphGet(next, accessToken, graphApiVersion, fetcher);
     if (Array.isArray(payload.data)) rows.push(...payload.data);
     next = typeof payload?.paging?.next === "string" ? payload.paging.next : null;
   }
@@ -277,6 +277,50 @@ export async function getMetaProfile(accessToken: string) {
 }
 
 export type DiscoveredMetaAsset = { assetType: MetaAssetType; externalId: string; displayName?: string | null; parentExternalId?: string | null; metadata?: Record<string, unknown> | null; accessToken?: string | null };
+
+/**
+ * The app-owner path uses an admin System User token, never Embedded Signup.
+ * It discovers only WABAs and numbers Graph has already exposed to the owner's
+ * business portfolio; it does not fabricate Business App numbers that Meta has
+ * not registered as API assets.
+ */
+export async function discoverOwnedWhatsAppAssets(input: { businessIds: string[]; accessToken: string; fetcher?: typeof fetch }) {
+  const runtime = await getMetaRuntimeSettings();
+  const fetcher = input.fetcher ?? fetch;
+  const assets: DiscoveredMetaAsset[] = [];
+  const failures: string[] = [];
+  for (const businessId of Array.from(new Set(input.businessIds.map(value => value.trim()).filter(Boolean)))) {
+    try {
+      const wabas = await graphList(`${encodeURIComponent(businessId)}/owned_whatsapp_business_accounts`, input.accessToken, "id,name,account_review_status", runtime.graphApiVersion, fetcher);
+      for (const waba of wabas) {
+        const wabaId = String(waba.id || "");
+        if (!wabaId) continue;
+        assets.push({ assetType: "whatsapp_business", externalId: wabaId, displayName: waba.name ? String(waba.name) : "WhatsApp Business", parentExternalId: businessId, metadata: { discoverySource: "owner_system_user", accountReviewStatus: waba.account_review_status || null } });
+        const phones = await graphList(`${encodeURIComponent(wabaId)}/phone_numbers`, input.accessToken, "id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status", runtime.graphApiVersion, fetcher);
+        for (const phone of phones) {
+          const phoneId = String(phone.id || "");
+          if (!phoneId) continue;
+          assets.push({
+            assetType: "whatsapp_phone",
+            externalId: phoneId,
+            displayName: phone.verified_name ? String(phone.verified_name) : phone.display_phone_number ? String(phone.display_phone_number) : "WhatsApp",
+            parentExternalId: wabaId,
+            metadata: {
+              discoverySource: "owner_system_user",
+              displayPhoneNumber: phone.display_phone_number || null,
+              qualityRating: phone.quality_rating || null,
+              platformType: phone.platform_type || null,
+              codeVerificationStatus: phone.code_verification_status || null,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      failures.push(`WhatsApp لملف الأعمال ${businessId}: ${error instanceof Error ? error.message : "تعذر اكتشاف الأصول"}`.slice(0, 350));
+    }
+  }
+  return { assets, failures };
+}
 
 export async function discoverMetaAssets(accessToken: string, purpose: MetaConnectionPurpose) {
   const runtime = await getMetaRuntimeSettings();

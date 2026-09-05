@@ -15,7 +15,6 @@ export default function MetaPlatformSettings() {
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [businessConfigId, setBusinessConfigId] = useState("");
-  const [whatsappConfigId, setWhatsappConfigId] = useState("");
   const [graphVersion, setGraphVersion] = useState("v26.0");
   const [publicBaseUrl, setPublicBaseUrl] = useState("");
   const [capabilities, setCapabilities] = useState<string[]>([]);
@@ -26,7 +25,6 @@ export default function MetaPlatformSettings() {
     if (!settings) return;
     setAppId(settings.appId || "");
     setBusinessConfigId(settings.businessLoginConfigurationId || "");
-    setWhatsappConfigId(settings.whatsappEmbeddedSignupConfigurationId || "");
     setGraphVersion(settings.graphApiVersion || "v26.0");
     setPublicBaseUrl(settings.publicBaseUrl || "");
     setCapabilities(settings.defaultCapabilities || []);
@@ -75,11 +73,10 @@ export default function MetaPlatformSettings() {
         <Field label="App ID"><Input value={appId} onChange={event => setAppId(event.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="معرّف التطبيق الرقمي" /></Field>
         <Field label="App Secret" hint={settings.appSecretConfigured ? "محفوظ ومشفر — اتركه فارغاً للإبقاء عليه" : "مطلوب عند الحفظ الأول"}><div className="relative"><Input type="password" value={appSecret} onChange={event => setAppSecret(event.target.value)} placeholder={settings.appSecretConfigured ? "••••••••••••••••" : "أدخل App Secret"} className="pl-10" /><EyeOff className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /></div></Field>
         <Field label="Business Login Configuration ID" hint="اختياري لمسار ربط محفظة عميل خارجي فقط؛ لا يستخدم عند ربط محفظة مالك التطبيق"><Input value={businessConfigId} onChange={event => setBusinessConfigId(event.target.value)} placeholder="اختياري للعملاء الخارجيين" /></Field>
-        <Field label="WhatsApp Embedded Signup Configuration ID" hint="اختياري، يستخدم فقط عند إنشاء أو نقل رقم WhatsApp"><Input value={whatsappConfigId} onChange={event => setWhatsappConfigId(event.target.value)} placeholder="اختياري" /></Field>
         <Field label="النطاق العام للمنصة" hint="يُحفظ داخل المنصة ويولد منه رابط OAuth وWebhook لجميع المتاجر"><Input dir="ltr" value={publicBaseUrl} onChange={event => setPublicBaseUrl(event.target.value)} placeholder="https://example.com" /></Field>
         <Field label="Graph API Version"><Select value={graphVersion} onValueChange={setGraphVersion}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{data.allowedGraphVersions.map(version => <SelectItem key={version} value={version}>{version}</SelectItem>)}</SelectContent></Select></Field>
         <Field label="القدرات الافتراضية للمتاجر" hint="تحدد ما يطلبه قالب الربط الجديد. يمكن للمتجر تعطيل أي قدرة لاحقاً."><div className="grid gap-2 sm:grid-cols-2">{data.allowedCapabilities.map(purpose => <button key={purpose} type="button" onClick={() => toggleCapability(purpose)} className={`rounded-xl border px-3 py-2.5 text-right text-sm font-bold transition ${capabilities.includes(purpose) ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground"}`}>{capabilities.includes(purpose) ? "✓ " : ""}{capabilityLabels[purpose] || purpose}</button>)}</div></Field>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy || capabilities.length === 0} onClick={() => save.mutate({ appId, appSecret: appSecret || undefined, businessLoginConfigurationId: businessConfigId, whatsappEmbeddedSignupConfigurationId: whatsappConfigId || undefined, graphApiVersion: graphVersion as "v26.0" | "v25.0" | "v24.0", publicBaseUrl, defaultCapabilities: capabilities as ("messaging" | "content" | "ads_read" | "leads" | "catalog" | "measurement")[] })}><Save className="ml-2 h-4 w-4" />نشر نسخة جديدة من القالب</Button><Button variant="outline" disabled={busy || !settings.appSecretConfigured} onClick={() => test.mutate()}>{test.isPending ? <LoaderCircle className="ml-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="ml-2 h-4 w-4" />}اختبار Meta</Button></div>
+        <div className="flex flex-wrap gap-2"><Button disabled={busy || capabilities.length === 0} onClick={() => save.mutate({ appId, appSecret: appSecret || undefined, businessLoginConfigurationId: businessConfigId, graphApiVersion: graphVersion as "v26.0" | "v25.0" | "v24.0", publicBaseUrl, defaultCapabilities: capabilities as ("messaging" | "content" | "ads_read" | "leads" | "catalog" | "measurement")[] })}><Save className="ml-2 h-4 w-4" />نشر نسخة جديدة من القالب</Button><Button variant="outline" disabled={busy || !settings.appSecretConfigured} onClick={() => test.mutate()}>{test.isPending ? <LoaderCircle className="ml-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="ml-2 h-4 w-4" />}اختبار Meta</Button></div>
       </CardContent></Card>
 
       <div className="space-y-5">

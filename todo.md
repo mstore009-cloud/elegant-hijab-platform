@@ -529,6 +529,9 @@
 - [x] إصلاح خطأ `inbox_message_media` عند استقبال رسائل Messenger؛ اتضح أن قيد providerMediaId كان واسعاً لملصقات Messenger، فصار الفهرس الفريد يشمل messageId مع فهارس FK مستقلة واختبار إعادة الاستخدام.
 - [x] معالجة خطأ Instagram `Please reduce the amount of data you're asking for` في المزامنة التاريخية بتقليص الحقول وحدود الصفحات مع اختبار عقدي للطلب.
 - [x] التحقق من حالة WhatsApp Embedded Signup وإكمال ربط System User Token؛ تم اختبار الاعتماد وحفظه مشفراً، ويبقى اختيار رقم Business App داخل Embedded Signup.
-- [ ] دعم عرض واختيار أرقام WhatsApp Business App المؤهلة لمسار Coexistence، منفصلة عن حساب WhatsApp Manager Cloud API.
-- [ ] ربط الرقم المختار من Business App بمسار Embedded Signup وWhatsApp webhook واختباره.
-- [x] توضيح واجهة WhatsApp بأن رقم Business App يُختار داخل Embedded Signup، مع إبقاء إكمال Coexistence والاختبار العقدي على المسار الحالي.
+- [x] توثيق أن أرقام WhatsApp Business App ليست أصول Cloud API مكتشفة مسبقاً؛ لا يُعرض لها مسار Coexistence في واجهة محفظة مالك التطبيق.
+- [x] إيقاف مسار Embedded Signup في محفظة مالك التطبيق؛ يبقى حصراً كبنية خلفية مستقبلية للمتاجر الخارجية، وليس مساراً لتفعيل WhatsApp في هذا المتجر.
+- [x] إزالة توجيه واجهة المالك إلى Embedded Signup وConfiguration ID، مع اختبار عقدي يمنع عودتهما.
+- [x] حفظ Configuration ID داخلياً عند وجوده من دون عرضه أو طلبه في إعدادات مالك التطبيق؛ لا يُمسح عند نشر قالب Meta لاحقاً.
+- [ ] تنفيذ اختبار حي للبحث عن WABA ورقم Cloud API عبر System User Token في محفظة عالم الحجابات الأنيقة، ثم اختيار الرقم من الأصول الموحدة إن أعادته Meta.
+- [x] إعادة توحيد WhatsApp لمحفظة مالك التطبيق: اكتشاف WABA وأرقام Cloud API عبر اتصال Meta الموحد وSystem User Token، وإخفاء Configuration ID وEmbedded Signup من واجهة المالك.
