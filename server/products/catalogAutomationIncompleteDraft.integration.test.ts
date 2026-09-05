@@ -25,7 +25,7 @@ vi.mock("../notifications/db", () => ({
   notifyPermissionHolders: catalogMocks.notifyPermissionHolders,
 }));
 
-import { catalogFolderImports, catalogGroupImports, productImportJobs, productOperations, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, catalogGroupImports, productImportJobs, productMedia, productOperations, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
 import { scanCatalogForOwner } from "./catalogAutomation";
@@ -62,8 +62,9 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     });
     catalogMocks.listChildren.mockImplementation(async ({ folderId: requestedFolderId }: { folderId: string }) => {
       if (requestedFolderId === "catalog-root") return [{ id: "group-hijab", name: "حجابات اختبار", kind: "folder" }];
-      if (requestedFolderId === "group-hijab") return [{ id: folderId, name: productCode, kind: "folder" }];
-      if (requestedFolderId === folderId) return [];
+      if (requestedFolderId === "group-hijab") return [{ id: "category-cotton", name: "قطن سادة", kind: "folder" }];
+      if (requestedFolderId === "category-cotton") return [{ id: folderId, name: productCode, kind: "folder" }];
+      if (requestedFolderId === folderId) return [{ id: "image-1", name: "product.webp", kind: "file", webUrl: "https://onedrive.test/product.webp" }];
       return [];
     });
 
@@ -79,14 +80,14 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
       const [draft] = await db.select().from(products).where(and(eq(products.storeId, store.id), eq(products.productCode, productCode))).limit(1);
       expect(draft).toMatchObject({
         status: "draft",
-        category: "حجابات اختبار",
+        category: "حجابات اختبار/قطن سادة",
         name: `منتج يحتاج بيانات — ${productCode}`,
         sellingPrice: "0.00",
       });
       productId = draft!.id;
       const [folder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, store.id), eq(catalogFolderImports.ownerUserId, owner.id), eq(catalogFolderImports.productFolderId, folderId))).limit(1);
-      expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual(expect.arrayContaining(["product.txt", "images"]));
-      expect(JSON.parse(folder!.missingFields ?? "[]")).not.toEqual(expect.arrayContaining(["colors", "inventory"]));
+      expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual(expect.arrayContaining(["product.txt"]));
+      expect(JSON.parse(folder!.missingFields ?? "[]")).not.toEqual(expect.arrayContaining(["images", "colors", "inventory"]));
       const [job] = await db.select().from(productImportJobs).where(eq(productImportJobs.linkedProductId, productId)).limit(1);
       expect(job).toMatchObject({ status: "needs_review" });
 
@@ -99,13 +100,14 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
         source: "products_ui",
       });
       expect(updated.product).toMatchObject({ status: "draft", description: "وصف استكمل من واجهة المنتجات", sellingPrice: "9000.00" });
-      expect(updated.missingFields).toEqual(expect.arrayContaining(["product.txt", "images"]));
-      expect(updated.missingFields).not.toEqual(expect.arrayContaining(["colors", "inventory"]));
+      expect(updated.missingFields).toEqual(expect.arrayContaining(["product.txt"]));
+      expect(updated.missingFields).not.toEqual(expect.arrayContaining(["images", "colors", "inventory"]));
       expect(updated.missingFields).not.toContain("description");
       expect(updated.missingFields).not.toContain("sellingPrice");
     } finally {
       if (productId) {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productMedia).where(eq(productMedia.productId, productId));
         await db.delete(productImportJobs).where(eq(productImportJobs.linkedProductId, productId));
         await db.delete(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId));
         await db.delete(products).where(eq(products.id, productId));
@@ -131,7 +133,7 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     catalogMocks.listChildren.mockImplementation(async ({ folderId }: { folderId: string }) => {
       if (folderId === "catalog-root") return [{ id: groupFolderId, name: "مجموعة جديدة", kind: "folder" }];
       if (folderId === groupFolderId) return [{ id: productFolderId, name: "HJB-NEW-CODE", kind: "folder" }];
-      if (folderId === productFolderId) return [];
+      if (folderId === productFolderId) return [{ id: "recon-image", name: "product.webp", kind: "file", webUrl: "https://onedrive.test/recon.webp" }];
       return [];
     });
     try {
@@ -147,6 +149,7 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     } finally {
       await db.delete(catalogFolderImports).where(eq(catalogFolderImports.productFolderId, productFolderId));
       await db.delete(catalogGroupImports).where(eq(catalogGroupImports.groupFolderId, groupFolderId));
+      await db.delete(productMedia).where(eq(productMedia.productId, productId));
       await db.delete(products).where(eq(products.id, productId));
     }
   }, 15_000);
