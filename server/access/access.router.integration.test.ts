@@ -67,8 +67,10 @@ describe("access router createCaller", () => {
     cleanup.storeIds.push(storeId);
     const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
     const [store] = await db.select().from(stores).where(eq(stores.id, storeId)).limit(1);
+    await db.insert(employeeProfiles).values({ userId, storeId, displayName: "مستخدم بلا صلاحية Inbox", isActive: true });
     const caller = appRouter.createCaller(context(user, store));
     await expect(caller.access.catalog()).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(caller.access.saveStaffAccess({ userId, displayName: "محاولة", isActive: true, permissionCodes: [] })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.inbox.list({})).rejects.toMatchObject({ code: "FORBIDDEN" });
   }, 15_000);
 });

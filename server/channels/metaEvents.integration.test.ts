@@ -127,6 +127,21 @@ describe("Unified Meta Webhook Gateway", () => {
     expect(customers[0]).toMatchObject({ displayName: "عميلة Lead", phoneNormalized: "07861162113" });
   });
 
+  it("يعزل echoes الصادرة من حسابي Messenger مهنيين داخل خيطين مستقلين", async () => {
+    const { db, owner, storeId, cleanup } = await setup();
+    await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "messenger", providerAccountId: "page-echo-a", providerDisplayName: "صفحة أ", connectionStatus: "testing" });
+    await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "messenger", providerAccountId: "page-echo-b", providerDisplayName: "صفحة ب", connectionStatus: "testing" });
+    const [echoA] = normalizeMetaEvents({ object: "page", entry: [{ id: "page-echo-a", messaging: [{ sender: { id: "page-echo-a" }, recipient: { id: "customer-echo-a" }, timestamp: 1760000003000, message: { mid: "mid-echo-a", text: "رد من صفحة أ", is_echo: true } }] }] });
+    const [echoB] = normalizeMetaEvents({ object: "page", entry: [{ id: "page-echo-b", messaging: [{ sender: { id: "page-echo-b" }, recipient: { id: "customer-echo-b" }, timestamp: 1760000004000, message: { mid: "mid-echo-b", text: "رد من صفحة ب", is_echo: true } }] }] });
+    expect(await enqueueAndProcessMetaEvent(echoA, "hash-echo-a")).toMatchObject({ processed: true, duplicate: false });
+    expect(await enqueueAndProcessMetaEvent(echoB, "hash-echo-b")).toMatchObject({ processed: true, duplicate: false });
+    const conversations = await db.select().from(inboxConversations).where(eq(inboxConversations.storeId, storeId));
+    expect(conversations.map(item => item.externalConversationId)).toEqual(expect.arrayContaining(["messenger:page-echo-a:customer-echo-a", "messenger:page-echo-b:customer-echo-b"]));
+    const messages = await db.select().from(inboxMessages).where(inArray(inboxMessages.conversationId, conversations.map(item => item.id)));
+    expect(messages).toEqual(expect.arrayContaining([expect.objectContaining({ externalMessageId: "mid-echo-a", direction: "outbound", body: "رد من صفحة أ" }), expect.objectContaining({ externalMessageId: "mid-echo-b", direction: "outbound", body: "رد من صفحة ب" })]));
+    cleanup.conversationIds.push(...conversations.map(item => item.id));
+  });
+
   it("يحدث حالة تسليم رسالة صادرة داخل المتجر ولا ينشئ رسالة جديدة", async () => {
     const { db, owner, storeId, cleanup } = await setup();
     await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: "phone-status", providerDisplayName: "رقم الاختبار", connectionStatus: "testing" });

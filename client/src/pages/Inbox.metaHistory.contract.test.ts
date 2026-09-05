@@ -18,4 +18,14 @@ describe("Inbox Meta history sync visibility", () => {
     expect(source).toContain("refetchOnWindowFocus: true");
     expect(source).toContain("useInboxLiveUpdates");
   });
+
+  it("exposes attachment and read-state filters with per-message timestamps and read indicators", () => {
+    const source = readFileSync(new URL("./Inbox.tsx", import.meta.url), "utf8");
+    expect(source).toContain("hasAttachments");
+    expect(source).toContain("aria-pressed={hasAttachments}");
+    expect(source).toContain("readState");
+    expect(source).toContain("formatDate(message.occurredAt)");
+    expect(source).toContain("message.readAt ? \"مقروءة\" : \"غير مقروءة\"");
+    expect(source).toContain("deliveryStatus === \"read\"");
+  });
 });
