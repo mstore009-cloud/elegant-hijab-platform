@@ -296,7 +296,7 @@ export const metaConnectionsRouter = router({
         providerDisplayName: asset.displayName,
         connectionStatus: input.selected ? (["messenger", "instagram"].includes(channel) && !subscriptionWarnings.length ? "connected" : "testing") : "disabled",
       });
-      if (input.selected && ["messenger", "instagram"].includes(channel)) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
+      if (input.selected && ["messenger", "instagram", "whatsapp"].includes(channel)) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
     }
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: input.connectionId, grantedScopes: asset.grantedScopes.split(",").filter(Boolean) });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_asset", entityId: asset.id, action: input.selected ? "meta.asset_enabled" : "meta.asset_disabled", summary: `${input.selected ? "تم تفعيل" : "تم استبعاد"} أصل Meta من نوع ${asset.assetType} داخل المتجر.` });
@@ -332,7 +332,7 @@ export const metaConnectionsRouter = router({
         connectionStatus: input.selected ? (["messenger", "instagram"].includes(channel) && !channelWarnings.length ? "connected" : "testing") : "disabled",
       });
     }
-    if (input.selected && selected.some(asset => ["page", "instagram"].includes(asset.assetType))) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
+    if (input.selected && selected.some(asset => ["page", "instagram", "whatsapp_phone"].includes(asset.assetType))) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: input.connectionId, grantedScopes: grantedScopes.split(",").filter(Boolean) });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "meta_assets", entityId: String(input.connectionId), action: input.selected ? "meta.assets_bulk_enabled" : "meta.assets_bulk_disabled", summary: `${input.selected ? "تم تفعيل" : "تم استبعاد"} ${uniqueAssetIds.length} من أصول Meta دفعة واحدة.` });
     return { updated: uniqueAssetIds.length, selected: input.selected, subscriptionWarnings };
