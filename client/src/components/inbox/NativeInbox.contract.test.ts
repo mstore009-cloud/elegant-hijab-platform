@@ -32,6 +32,17 @@ describe("Native Inbox conversation experience", () => {
     expect(nativeInbox).toContain("hasAttachments");
   });
 
+  it("renders the contact identity card with avatar, CRM fields, and a safe native-channel action", () => {
+    expect(nativeInbox).toContain("ContactAvatar");
+    expect(nativeInbox).toContain("profileImageUrl");
+    expect(nativeInbox).toContain("socialUsername");
+    expect(nativeInbox).toContain("governorate");
+    expect(nativeInbox).toContain("nativeThreadUrl");
+    expect(nativeInbox).toContain("فتح في");
+    expect(nativeInbox).toContain("ملف CRM");
+    expect(nativeInbox).toContain("safeNativeUrl");
+  });
+
   it("opens the selected thread on mobile and provides a direct return to the conversation list", () => {
     expect(nativeInbox).toContain("showThreadMobile");
     expect(nativeInbox).toContain("setShowThreadMobile(true)");

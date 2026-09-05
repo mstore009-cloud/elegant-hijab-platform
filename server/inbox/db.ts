@@ -138,7 +138,7 @@ export async function listInboxConversations(storeId: number, userId: number, in
   const employeeIds = conversations.flatMap(row => row.assignedEmployeeId ? [row.assignedEmployeeId] : []);
   const orderIds = conversations.flatMap(row => row.orderId ? [row.orderId] : []);
   const [customers, employees, linkedOrders, messages] = await Promise.all([
-    customerIds.length ? db.select({ id: customerProfiles.id, displayName: customerProfiles.displayName, phoneDisplay: customerProfiles.phoneDisplay }).from(customerProfiles).where(and(eq(customerProfiles.storeId, storeId), inArray(customerProfiles.id, customerIds))) : [],
+    customerIds.length ? db.select({ id: customerProfiles.id, displayName: customerProfiles.displayName, phoneDisplay: customerProfiles.phoneDisplay, profileImageUrl: customerProfiles.profileImageUrl, socialUsername: customerProfiles.socialUsername, externalProfileId: customerProfiles.externalProfileId, governorate: customerProfiles.governorate, relationshipStage: customerProfiles.relationshipStage }).from(customerProfiles).where(and(eq(customerProfiles.storeId, storeId), inArray(customerProfiles.id, customerIds))) : [],
     employeeIds.length ? db.select({ id: employeeProfiles.id, displayName: employeeProfiles.displayName }).from(employeeProfiles).where(and(eq(employeeProfiles.storeId, storeId), inArray(employeeProfiles.id, employeeIds))) : [],
     orderIds.length ? db.select({ id: orders.id, orderNumber: orders.orderNumber, customerId: orders.customerId }).from(orders).where(and(eq(orders.storeId, storeId), inArray(orders.id, orderIds))) : [],
     db.select().from(inboxMessages).where(inArray(inboxMessages.conversationId, ids)).orderBy(desc(inboxMessages.occurredAt), desc(inboxMessages.id)),

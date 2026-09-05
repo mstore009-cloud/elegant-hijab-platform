@@ -44,6 +44,12 @@ export type NormalizedInboundMessage = {
   attachments: ExternalMediaReference[];
   direction?: "inbound" | "outbound";
   source?: "live_webhook" | "historical_sync";
+  externalThreadId?: string | null;
+  nativeThreadUrl?: string | null;
+  senderExternalId?: string | null;
+  senderAvatarUrl?: string | null;
+  senderUsername?: string | null;
+  senderProfileMetadata?: Record<string, unknown> | null;
   metadata?: NormalizedMessageMetadata | null;
 };
 
@@ -62,6 +68,21 @@ function compactMetadata(metadata?: NormalizedMessageMetadata | null) {
 
 function compactText(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function socialIdentityKey(channel: ExternalChannel, externalId: string) {
+  let hash = 2166136261;
+  for (const character of `${channel}:${externalId}`) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  return `social:${channel}:${(hash >>> 0).toString(36)}`.slice(0, 40);
+}
+
+function nativeThreadFallback(input: Pick<NormalizedInboundMessage, "channel" | "providerAccountId" | "senderPhone" | "nativeThreadUrl" | "externalThreadId">) {
+  if (input.nativeThreadUrl) return compactText(input.nativeThreadUrl, 2048);
+  const threadId = compactText(input.externalThreadId, 255);
+  if (input.channel === "messenger") return `https://www.facebook.com/messages/t/${encodeURIComponent(threadId || input.providerAccountId)}`;
+  if (input.channel === "instagram") return threadId ? `https://www.instagram.com/direct/t/${encodeURIComponent(threadId)}` : "https://www.instagram.com/direct/inbox/";
+  const digits = compactText(input.senderPhone, 40).replace(/[^0-9]/g, "");
+  return digits ? `https://wa.me/${digits}` : "https://web.whatsapp.com/";
 }
 
 async function requireDb() {
@@ -173,13 +194,26 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
       let customerId = conversation?.customerId ?? null;
       const phoneDisplay = compactText(input.senderPhone, 40) || "";
       const phoneNormalized = phoneDisplay ? normalizeCustomerPhone(phoneDisplay) : "";
-      if (!customerId && phoneNormalized.length >= 7 && phoneNormalized.length <= 40) {
-        const [matchedCustomer] = await tx.select().from(customerProfiles).where(and(eq(customerProfiles.storeId, account.storeId), eq(customerProfiles.phoneNormalized, phoneNormalized))).limit(1);
+      const senderExternalId = compactText(input.senderExternalId, 255) || null;
+      const profileImageUrl = compactText(input.senderAvatarUrl, 2048) || null;
+      const socialUsername = compactText(input.senderUsername, 160) || null;
+      const profileMetadataJson = input.senderProfileMetadata ? JSON.stringify(input.senderProfileMetadata).slice(0, 4000) : null;
+      const socialPhone = senderExternalId ? socialIdentityKey(input.channel, senderExternalId) : "";
+      if (!customerId && senderExternalId) {
+        const [matchedSocialCustomer] = await tx.select().from(customerProfiles).where(and(eq(customerProfiles.storeId, account.storeId), eq(customerProfiles.externalProfileId, senderExternalId))).limit(1);
+        if (matchedSocialCustomer) {
+          customerId = matchedSocialCustomer.id;
+          await tx.update(customerProfiles).set({ displayName: compactText(input.senderName, 160) || matchedSocialCustomer.displayName, profileImageUrl: profileImageUrl || matchedSocialCustomer.profileImageUrl, socialUsername: socialUsername || matchedSocialCustomer.socialUsername, profileMetadataJson: profileMetadataJson || matchedSocialCustomer.profileMetadataJson, updatedAt: new Date() }).where(and(eq(customerProfiles.id, matchedSocialCustomer.id), eq(customerProfiles.storeId, account.storeId)));
+        }
+      }
+      if (!customerId && (phoneNormalized.length >= 7 && phoneNormalized.length <= 40 || socialPhone)) {
+        const identityPhone = phoneNormalized.length >= 7 && phoneNormalized.length <= 40 ? phoneNormalized : socialPhone;
+        const [matchedCustomer] = await tx.select().from(customerProfiles).where(and(eq(customerProfiles.storeId, account.storeId), eq(customerProfiles.phoneNormalized, identityPhone))).limit(1);
         if (matchedCustomer) {
           customerId = matchedCustomer.id;
-          await tx.update(customerProfiles).set({ displayName: compactText(input.senderName, 160) || matchedCustomer.displayName, phoneDisplay, lastChannel: input.channel, updatedAt: new Date() }).where(and(eq(customerProfiles.id, matchedCustomer.id), eq(customerProfiles.storeId, account.storeId)));
+          await tx.update(customerProfiles).set({ displayName: compactText(input.senderName, 160) || matchedCustomer.displayName, phoneDisplay, profileImageUrl: profileImageUrl || matchedCustomer.profileImageUrl, socialUsername: socialUsername || matchedCustomer.socialUsername, externalProfileId: senderExternalId || matchedCustomer.externalProfileId, profileMetadataJson: profileMetadataJson || matchedCustomer.profileMetadataJson, lastChannel: input.channel, updatedAt: new Date() }).where(and(eq(customerProfiles.id, matchedCustomer.id), eq(customerProfiles.storeId, account.storeId)));
         } else {
-          const createdCustomer = await tx.insert(customerProfiles).values({ storeId: account.storeId, displayName: compactText(input.senderName, 160) || "عميل من المحادثات", phoneNormalized, phoneDisplay, relationshipStage: "new", firstChannel: input.channel, lastChannel: input.channel });
+          const createdCustomer = await tx.insert(customerProfiles).values({ storeId: account.storeId, displayName: compactText(input.senderName, 160) || "عميل من المحادثات", phoneNormalized: identityPhone, phoneDisplay, profileImageUrl, socialUsername, externalProfileId: senderExternalId, profileMetadataJson, relationshipStage: "new", firstChannel: input.channel, lastChannel: input.channel });
           customerId = Number(createdCustomer[0].insertId);
           await appendCustomerActivity(tx, { storeId: account.storeId, customerId, type: "profile_created", title: "أُنشئ ملف العميل من رسالة واردة" });
         }
@@ -191,17 +225,22 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
           channelAccountId: account.id,
           channel: input.channel,
           externalConversationId: input.externalConversationId,
+          externalThreadId: compactText(input.externalThreadId, 255) || null,
+          nativeThreadUrl: nativeThreadFallback(input),
           contactNameSnapshot: compactText(input.senderName, 160) || null,
           contactPhoneSnapshot: phoneDisplay || null,
+          contactAvatarUrl: profileImageUrl,
+          contactUsername: socialUsername,
+          contactProfileJson: profileMetadataJson,
           subject: `رسائل ${input.channel === "whatsapp" ? "واتساب" : input.channel === "instagram" ? "إنستغرام" : "Messenger"}`,
           status: "open",
           lastMessageAt: input.occurredAt,
         });
         conversationId = Number(created[0].insertId);
         await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "created", toValue: input.channel });
-      } else if (customerId && !conversation?.customerId) {
-        await tx.update(inboxConversations).set({ customerId }).where(and(eq(inboxConversations.id, conversationId), eq(inboxConversations.storeId, account.storeId)));
-        await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "customer_linked", toValue: String(customerId) });
+      } else if (conversationId) {
+        await tx.update(inboxConversations).set({ customerId: customerId ?? conversation?.customerId ?? null, externalThreadId: compactText(input.externalThreadId, 255) || conversation?.externalThreadId || null, nativeThreadUrl: nativeThreadFallback(input) || conversation?.nativeThreadUrl || null, contactNameSnapshot: compactText(input.senderName, 160) || conversation?.contactNameSnapshot || null, contactPhoneSnapshot: phoneDisplay || conversation?.contactPhoneSnapshot || null, contactAvatarUrl: profileImageUrl || conversation?.contactAvatarUrl || null, contactUsername: socialUsername || conversation?.contactUsername || null, contactProfileJson: profileMetadataJson || conversation?.contactProfileJson || null }).where(and(eq(inboxConversations.id, conversationId), eq(inboxConversations.storeId, account.storeId)));
+        if (customerId && !conversation?.customerId) await tx.insert(inboxConversationEvents).values({ storeId: account.storeId, conversationId, type: "customer_linked", toValue: String(customerId) });
       }
 
       const direction = input.direction ?? "inbound";

@@ -98,11 +98,11 @@ export async function listMetaHistorySyncJobs(storeId: number) {
   return db.select().from(metaHistorySyncJobs).where(eq(metaHistorySyncJobs.storeId, storeId)).orderBy(asc(metaHistorySyncJobs.channel));
 }
 
-async function importHistoryMessage(input: { storeId: number; channel: HistoryChannel; providerAccountId: string; businessAccountId: string; customerId: string; customerName: string | null; message: any }) {
+async function importHistoryMessage(input: { storeId: number; channel: HistoryChannel; providerAccountId: string; businessAccountId: string; customerId: string; externalThreadId: string; customerName: string | null; message: any }) {
   const messageId = compact(input.message?.id); if (!messageId) return { imported: false, duplicate: false };
   const senderId = compact(input.message?.from?.id); const direction = senderId === input.businessAccountId ? "outbound" as const : "inbound" as const;
   const attachments = mapAttachments(input.message);
-  const result = await ingestExternalInboundMessage({ channel: input.channel, providerAccountId: input.providerAccountId, externalEventId: `history:${messageId}`, externalConversationId: `${input.channel}:${input.providerAccountId}:${input.customerId}`, externalMessageId: messageId, senderName: input.customerName, senderPhone: null, body: compact(input.message?.message, 20_000) || null, occurredAt: parseDate(input.message?.created_time), attachments, metadata: historyMessageMetadata(input.message), direction, source: "historical_sync", payloadHash: `history:${messageId}` });
+  const result = await ingestExternalInboundMessage({ channel: input.channel, providerAccountId: input.providerAccountId, externalEventId: `history:${messageId}`, externalConversationId: `${input.channel}:${input.providerAccountId}:${input.customerId}`, externalThreadId: compact(input.message?.conversation?.id || input.message?.thread_id || input.externalThreadId, 255) || null, externalMessageId: messageId, senderExternalId: senderId || input.customerId, senderName: input.customerName, senderPhone: null, senderProfileMetadata: { provider: input.channel, imported: true }, body: compact(input.message?.message, 20_000) || null, occurredAt: parseDate(input.message?.created_time), attachments, metadata: historyMessageMetadata(input.message), direction, source: "historical_sync", payloadHash: `history:${messageId}` });
   if (result.accepted && !result.duplicate && result.storeId) for (let index = 0; index < attachments.length; index += 1) {
     if (!result.mediaIds[index]) continue;
     await storeInboundImageFromProvider({ storeId: result.storeId, mediaId: result.mediaIds[index], sourceUrl: attachments[index]?.sourceUrl }).catch(() => undefined);
@@ -140,7 +140,7 @@ export async function processMetaHistorySyncJob(jobId: number) {
     const messages = await graphGet(`${compact(conversation?.id)}/messages`, credential.token, { fields: channel === "instagram" ? "id,message,created_time,from,attachments" : "id,message,created_time,from,to,attachments", limit: channel === "instagram" ? "10" : "50", after: cursor.messagesAfter || "" });
     let imported = 0; let duplicates = 0; let oldest: Date | null = job.oldestMessageAt; let newest: Date | null = job.newestMessageAt;
     for (const message of Array.isArray(messages?.data) ? messages.data : []) {
-      const result = await importHistoryMessage({ storeId: job.storeId, channel, providerAccountId: job.providerAccountId, businessAccountId: job.providerAccountId, customerId, customerName: compact(customer?.name, 160) || null, message });
+      const result = await importHistoryMessage({ storeId: job.storeId, channel, providerAccountId: job.providerAccountId, businessAccountId: job.providerAccountId, customerId, externalThreadId: compact(conversation?.id, 255), customerName: compact(customer?.name, 160) || null, message });
       if (result.imported) imported += 1; if (result.duplicate) duplicates += 1;
       if (result.occurredAt) { if (!oldest || result.occurredAt < oldest) oldest = result.occurredAt; if (!newest || result.occurredAt > newest) newest = result.occurredAt; }
     }

@@ -24,6 +24,7 @@ afterEach(async () => {
       await db.delete(customerProfiles).where(eq(customerProfiles.id, customerId));
     }
     for (const employeeId of cleanup.employeeIds) await db.delete(employeeProfiles).where(eq(employeeProfiles.id, employeeId));
+    for (const storeId of cleanup.storeIds) await db.delete(customerActivities).where(eq(customerActivities.storeId, storeId));
     for (const userId of cleanup.userIds) await db.delete(users).where(eq(users.id, userId));
     for (const storeId of cleanup.storeIds) { await db.delete(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, storeId)); await db.delete(stores).where(eq(stores.id, storeId)); }
   }

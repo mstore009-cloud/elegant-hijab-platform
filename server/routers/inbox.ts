@@ -22,6 +22,7 @@ import {
   snoozeInboxConversation,
 } from "../inbox/db";
 import { sendMetaConversationMessage } from "../channels/metaOutbound";
+import { hydrateMetaContactProfile } from "../channels/metaEvents";
 
 const conversationIdInput = z.object({ conversationId: z.number().int().positive() });
 const inboxStatusSchema = z.enum(inboxStatuses);
@@ -39,6 +40,19 @@ export const inboxRouter = router({
     return listInboxConversations(store.id, ctx.user.id, input ?? {});
   }),
   detail: protectedProcedure.input(conversationIdInput).query(async ({ ctx, input }) => getInboxConversationDetail((await requireInboxStore(ctx, "inbox.read")).id, input.conversationId)),
+  enrichContact: protectedProcedure.input(conversationIdInput).mutation(async ({ ctx, input }) => {
+    const store = await requireInboxStore(ctx, "inbox.read");
+    const current = await getInboxConversationDetail(store.id, input.conversationId);
+    const conversation = current.conversation;
+    if (conversation.channel === "whatsapp") return { enriched: false as const, reason: "channel_not_supported" as const };
+    const parts = (conversation.externalConversationId || "").split(":");
+    let profileFromJson = "";
+    try { profileFromJson = JSON.parse(conversation.contactProfileJson || "{}").id || ""; } catch { profileFromJson = ""; }
+    const externalProfileId = current.customer?.externalProfileId || profileFromJson || parts.slice(2).join(":");
+    if (!externalProfileId || !parts[1]) return { enriched: false as const, reason: "no_external_profile_id" as const };
+    await hydrateMetaContactProfile({ storeId: store.id, channel: conversation.channel as "instagram" | "messenger", providerAccountId: parts[1], externalProfileId, conversationId: conversation.id });
+    return { enriched: true as const };
+  }),
   metaActivity: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional()).query(async ({ ctx, input }) => listInboxMetaActivity((await requireInboxStore(ctx, "inbox.read")).id, input?.limit)),
   assignees: protectedProcedure.query(async ({ ctx }) => listInboxAssignableEmployees((await requireInboxStore(ctx, "inbox.read")).id)),
   customers: protectedProcedure.input(z.object({ search: z.string().trim().max(160).optional() }).optional()).query(async ({ ctx, input }) => listInboxCustomers((await requireInboxStore(ctx, "inbox.read")).id, input?.search)),

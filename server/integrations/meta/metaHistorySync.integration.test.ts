@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { channelAccounts, channelWebhookEvents, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessages, metaAssets, metaConnections, metaHistorySyncJobs, stores, users } from "../../../drizzle/schema";
+import { channelAccounts, channelWebhookEvents, customerActivities, customerProfiles, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessages, metaAssets, metaConnections, metaHistorySyncJobs, stores, users } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { encryptMetaToken, metaAssetTokenContext, metaConnectionTokenContext } from "./tokenCipher";
 import { ensureMetaHistorySyncJobs, processMetaHistorySyncJob } from "./historySync";
@@ -26,6 +26,8 @@ afterEach(async () => {
     await db.delete(channelAccounts).where(eq(channelAccounts.storeId, cleanup.storeId));
     await db.delete(metaAssets).where(eq(metaAssets.storeId, cleanup.storeId));
     await db.delete(metaConnections).where(eq(metaConnections.storeId, cleanup.storeId));
+    await db.delete(customerActivities).where(eq(customerActivities.storeId, cleanup.storeId));
+    await db.delete(customerProfiles).where(eq(customerProfiles.storeId, cleanup.storeId));
     await db.delete(stores).where(eq(stores.id, cleanup.storeId));
     await db.delete(users).where(eq(users.id, cleanup.userId));
   }
