@@ -1,0 +1,1 @@
+ALTER TABLE `channel_webhook_events` MODIFY COLUMN `eventType` enum('message','delivery_status','comment','mention','lead','publish_status','unsupported','account_event','reaction') NOT NULL;

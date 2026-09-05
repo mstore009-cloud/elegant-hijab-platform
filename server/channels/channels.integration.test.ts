@@ -15,6 +15,7 @@ import {
   inboxConversationEvents,
   inboxConversations,
   inboxMessageMedia,
+  inboxMessageReactions,
   inboxMessages,
   productVariants,
   products,
@@ -35,9 +36,13 @@ afterEach(async () => {
   const db = await getDb();
   if (!db) return;
   for (const cleanup of cleanups.splice(0)) {
-    const messages = cleanup.conversationIds.length ? await db.select({ id: inboxMessages.id }).from(inboxMessages).where(inArray(inboxMessages.conversationId, cleanup.conversationIds)) : [];
+    const allConversations = await db.select({ id: inboxConversations.id }).from(inboxConversations).where(eq(inboxConversations.storeId, cleanup.storeId));
+    const conversationIds = allConversations.map(row => row.id);
+    for (const conversationId of conversationIds) await db.delete(customerBotRuns).where(eq(customerBotRuns.conversationId, conversationId));
+    const messages = conversationIds.length ? await db.select({ id: inboxMessages.id }).from(inboxMessages).where(inArray(inboxMessages.conversationId, conversationIds)) : [];
     const messageIds = messages.map(message => message.id);
     if (messageIds.length) {
+      await db.delete(inboxMessageReactions).where(inArray(inboxMessageReactions.messageId, messageIds));
       const media = await db.select({ id: inboxMessageMedia.id }).from(inboxMessageMedia).where(inArray(inboxMessageMedia.messageId, messageIds));
       const mediaIds = media.map(item => item.id);
       if (mediaIds.length) {
@@ -46,13 +51,10 @@ afterEach(async () => {
         await db.delete(customerBotImageAnalyses).where(inArray(customerBotImageAnalyses.mediaId, mediaIds));
       }
       await db.delete(inboxMessageMedia).where(inArray(inboxMessageMedia.messageId, messageIds));
+      await db.delete(inboxMessages).where(inArray(inboxMessages.id, messageIds));
     }
-    for (const conversationId of cleanup.conversationIds) {
-      await db.delete(customerBotRuns).where(eq(customerBotRuns.conversationId, conversationId));
-      await db.delete(inboxConversationEvents).where(eq(inboxConversationEvents.conversationId, conversationId));
-      await db.delete(inboxMessages).where(eq(inboxMessages.conversationId, conversationId));
-      await db.delete(inboxConversations).where(eq(inboxConversations.id, conversationId));
-    }
+    for (const conversationId of conversationIds) await db.delete(inboxConversationEvents).where(eq(inboxConversationEvents.conversationId, conversationId));
+    if (conversationIds.length) await db.delete(inboxConversations).where(inArray(inboxConversations.id, conversationIds));
     await db.delete(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, cleanup.storeId));
     await db.delete(channelAccounts).where(eq(channelAccounts.storeId, cleanup.storeId));
     for (const productId of cleanup.productIds) {
@@ -91,7 +93,7 @@ describe("موصلات Meta وصور بوت العملاء", () => {
     expect(whatsapp).toEqual([expect.objectContaining({ channel: "whatsapp", providerAccountId: "phone-123", externalMessageId: "wamid-123", senderName: "عميلة", body: "هل هذا متوفر؟", attachments: [expect.objectContaining({ providerMediaId: "media-123", mediaType: "image" })] })]);
 
     const instagram = normalizeMetaWebhook({ object: "instagram", entry: [{ id: "ig-456", messaging: [{ sender: { id: "sender-2" }, timestamp: 1760000000000, message: { mid: "mid-456", attachments: [{ type: "image", payload: { url: "https://cdn.example.test/image.jpg" } }] } }] }] });
-    expect(instagram).toEqual([expect.objectContaining({ channel: "instagram", providerAccountId: "ig-456", externalConversationId: "instagram:sender-2", attachments: [expect.objectContaining({ mediaType: "image" })] })]);
+    expect(instagram).toEqual([expect.objectContaining({ channel: "instagram", providerAccountId: "ig-456", externalConversationId: "instagram:ig-456:sender-2", attachments: [expect.objectContaining({ mediaType: "image" })] })]);
   });
 
   it("يحجز الرسالة الخارجية مرة واحدة داخل متجر الحساب ولا يقبل حساباً من متجر آخر", async () => {
@@ -116,6 +118,29 @@ describe("موصلات Meta وصور بوت العملاء", () => {
     const other = await setup();
     await expect(listChannelAccounts(other.storeId)).resolves.toEqual([]);
     await expect(configureChannelAccount({ storeId: other.storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: "phone-test", providerDisplayName: null, connectionStatus: "testing" })).rejects.toThrow("متجر آخر");
+  });
+
+  it("يسمح بعدة صفحات Messenger وحسابات Instagram داخل المتجر نفسه", async () => {
+    const { owner, storeId, cleanup } = await setup();
+    const pageOneId = `page-one-${randomUUID()}`;
+    const pageTwoId = `page-two-${randomUUID()}`;
+    const instagramOneId = `ig-one-${randomUUID()}`;
+    const instagramTwoId = `ig-two-${randomUUID()}`;
+    const pageOne = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "messenger", providerAccountId: pageOneId, providerDisplayName: "صفحة أولى", connectionStatus: "testing" });
+    const pageTwo = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "messenger", providerAccountId: pageTwoId, providerDisplayName: "صفحة ثانية", connectionStatus: "testing" });
+    const instagramOne = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "instagram", providerAccountId: instagramOneId, providerDisplayName: "Instagram أول", connectionStatus: "testing" });
+    const instagramTwo = await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "instagram", providerAccountId: instagramTwoId, providerDisplayName: "Instagram ثانٍ", connectionStatus: "testing" });
+    const accounts = await listChannelAccounts(storeId);
+    expect(accounts.filter(account => account.channel === "messenger").map(account => account.id)).toEqual(expect.arrayContaining([pageOne.id, pageTwo.id]));
+    expect(accounts.filter(account => account.channel === "instagram").map(account => account.id)).toEqual(expect.arrayContaining([instagramOne.id, instagramTwo.id]));
+    const pageMessage = { channel: "messenger" as const, providerAccountId: pageOneId, externalEventId: `page-event-${randomUUID()}`, externalConversationId: `messenger:${pageOneId}:customer-same`, externalMessageId: `page-message-${randomUUID()}`, senderName: "عميلة الصفحة", senderPhone: null, body: "رسالة من الصفحة الأولى", occurredAt: new Date(), attachments: [], payloadHash: randomUUID() };
+    const secondPageMessage = { ...pageMessage, providerAccountId: pageTwoId, externalEventId: `page-event-${randomUUID()}`, externalConversationId: `messenger:${pageTwoId}:customer-same`, externalMessageId: `page-message-${randomUUID()}`, body: "رسالة من الصفحة الثانية", payloadHash: randomUUID() };
+    const firstResult = await ingestExternalInboundMessage(pageMessage);
+    const secondResult = await ingestExternalInboundMessage(secondPageMessage);
+    expect(firstResult.conversationId).toBeTruthy();
+    expect(secondResult.conversationId).toBeTruthy();
+    expect(secondResult.conversationId).not.toBe(firstResult.conversationId);
+    cleanup.conversationIds.push(firstResult.conversationId!, secondResult.conversationId!);
   });
 
   it("يمرر تحليل الصورة ومطابقة المنتج الآمنة إلى مسودة البوت من دون تكلفة أو هامش", async () => {
@@ -167,7 +192,7 @@ describe("موصلات Meta وصور بوت العملاء", () => {
       putter: async (key) => { storedKeys.push(key); return { key: `stored/${key}`, url: "https://storage.example.test/customer.jpg" }; },
     });
     expect(good.status).toBe("stored");
-    expect(storedKeys[0]).toContain(`stores/${storeId}/inbox/${messageId}/customer-image.jpg`);
+    expect(storedKeys[0]).toContain(`stores/${storeId}/inbox/${messageId}/customer-media.jpg`);
     const [storedRow] = await db.select().from(inboxMessageMedia).where(eq(inboxMessageMedia.id, goodMediaId));
     expect(storedRow).toMatchObject({ downloadStatus: "stored", storageKey: expect.stringContaining("stored/stores/"), sizeBytes: 4, sha256: expect.any(String) });
 
@@ -182,7 +207,26 @@ describe("موصلات Meta وصور بوت العملاء", () => {
     expect(bad.status).toBe("failed");
     const [failedRow] = await db.select().from(inboxMessageMedia).where(eq(inboxMessageMedia.id, Number(badMedia[0].insertId)));
     expect(failedRow).toMatchObject({ downloadStatus: "failed", storageKey: null });
-    expect(failedRow.errorSummary).toContain("JPEG أو PNG");
+    expect(failedRow.errorSummary).toContain("صور JPEG/PNG");
+
+    const supported = [
+      { mediaType: "video" as const, mimeType: "video/mp4", extension: "mp4" },
+      { mediaType: "audio" as const, mimeType: "audio/ogg", extension: "ogg" },
+      { mediaType: "document" as const, mimeType: "application/pdf", extension: "pdf" },
+    ];
+    for (const item of supported) {
+      const mediaResult = await db.insert(inboxMessageMedia).values({ storeId, messageId, channelAccountId: account.id, providerMediaId: `${item.mediaType}-${randomUUID()}`, mediaType: item.mediaType, mimeType: item.mimeType, downloadStatus: "pending" });
+      const stored = await storeInboundImageFromProvider({
+        storeId,
+        mediaId: Number(mediaResult[0].insertId),
+        sourceUrl: `https://cdn.example.test/customer.${item.extension}`,
+        fetcher: async () => new Response(new Uint8Array([5, 6, 7]), { status: 200, headers: { "content-type": item.mimeType, "content-length": "3" } }),
+        putter: async key => ({ key: `stored/${key}`, url: `https://storage.example.test/customer.${item.extension}` }),
+      });
+      expect(stored.status).toBe("stored");
+      expect(stored.media.downloadStatus).toBe("stored");
+      expect(stored.media.mimeType).toBe(item.mimeType);
+    }
   });
 
   it("يحلل الصورة المخزنة بصيغة منظمة ويحفظ صفاتها من دون استدعاء خدمة أو صورة حية", async () => {

@@ -79,7 +79,7 @@ async function processWhatsAppHistoryChunk(chunkId: number) {
         const messageId = compact(message?.id); if (!messageId) continue;
         const occurredAt = dateFromSeconds(message?.timestamp);
         const sender = compact(message?.from); const direction = sender === customerId ? "inbound" as const : "outbound" as const;
-        const result = await ingestExternalInboundMessage({ channel: "whatsapp", providerAccountId: phoneNumberId, externalEventId: `history:${messageId}`, externalConversationId: `whatsapp:${customerId}`, externalMessageId: messageId, senderName: null, senderPhone: customerId, body: historyMessageBody(message), occurredAt, attachments: [], direction, source: "historical_sync", payloadHash: chunk.payloadHash });
+        const result = await ingestExternalInboundMessage({ channel: "whatsapp", providerAccountId: phoneNumberId, externalEventId: `history:${messageId}`, externalConversationId: `whatsapp:${phoneNumberId}:${customerId}`, externalMessageId: messageId, senderName: null, senderPhone: customerId, body: historyMessageBody(message), occurredAt, attachments: [], direction, source: "historical_sync", payloadHash: chunk.payloadHash });
         const duplicate = "duplicate" in result && result.duplicate;
         if (result.accepted && !duplicate) imported += 1; if (duplicate) duplicates += 1;
         if (!oldest || occurredAt < oldest) oldest = occurredAt; if (!newest || occurredAt > newest) newest = occurredAt;

@@ -12,6 +12,11 @@ describe("Inbox rich Meta message context", () => {
     expect(source).toContain("رد على قصة");
     expect(source).toContain("منشن:");
     expect(source).toContain("unsupportedReason");
+    expect(source).toContain("مرفقات فقط");
+    expect(source).toContain("غير مقروءة");
+    expect(source).toContain("message.deliveryStatus");
+    expect(source).toContain("تم حفظ ${mediaLabel(item.mediaType)}");
+    expect(source).toContain("reactions");
     expect(source).not.toContain("access_token");
   });
 });

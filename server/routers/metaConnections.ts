@@ -288,11 +288,14 @@ export const metaConnectionsRouter = router({
     const subscriptionWarnings = input.selected && asset.assetType === "page" ? await ensureSelectedMessengerPageSubscriptions(store.id, input.connectionId) : input.selected && asset.assetType === "instagram" ? await ensureSelectedInstagramSubscriptions(store.id, input.connectionId) : input.selected && ["whatsapp_business", "whatsapp_phone"].includes(asset.assetType) ? await ensureSelectedWhatsAppSubscriptions(store.id, input.connectionId) : [];
     const channel = asset.connectionPurpose === "unified" || asset.connectionPurpose === "messaging" ? (asset.assetType === "whatsapp_phone" ? "whatsapp" : asset.assetType === "instagram" ? "instagram" : asset.assetType === "page" ? "messenger" : null) : null;
     if (channel) {
-      const latest = await listMetaConnectionOverview(store.id);
-      const compatibleType = channel === "whatsapp" ? "whatsapp_phone" : channel === "instagram" ? "instagram" : "page";
-      const fallback = latest.assets.find(item => item.connectionId === input.connectionId && item.assetType === compatibleType && item.isSelected);
-      const active = input.selected ? asset : fallback;
-      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? (["messenger", "instagram"].includes(channel) && !subscriptionWarnings.length ? "connected" : "testing") : "disabled" });
+      await configureChannelAccount({
+        storeId: store.id,
+        actorUserId: ctx.user.id,
+        channel,
+        providerAccountId: asset.externalId,
+        providerDisplayName: asset.displayName,
+        connectionStatus: input.selected ? (["messenger", "instagram"].includes(channel) && !subscriptionWarnings.length ? "connected" : "testing") : "disabled",
+      });
       if (input.selected && ["messenger", "instagram"].includes(channel)) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
     }
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: input.connectionId, grantedScopes: asset.grantedScopes.split(",").filter(Boolean) });
@@ -303,8 +306,10 @@ export const metaConnectionsRouter = router({
     const store = await requireStore(ctx);
     const uniqueAssetIds = Array.from(new Set(input.assetIds));
     let grantedScopes = "";
+    const updatedAssets = [] as Awaited<ReturnType<typeof setMetaAssetSelection>>[];
     for (const assetId of uniqueAssetIds) {
       const asset = await setMetaAssetSelection({ storeId: store.id, connectionId: input.connectionId, assetId, selected: input.selected });
+      updatedAssets.push(asset);
       grantedScopes = asset.grantedScopes;
     }
     const latest = await listMetaConnectionOverview(store.id);
@@ -313,11 +318,19 @@ export const metaConnectionsRouter = router({
     const instagramWarnings = await ensureSelectedInstagramSubscriptions(store.id, input.connectionId);
     const whatsappWarnings = await ensureSelectedWhatsAppSubscriptions(store.id, input.connectionId);
     const subscriptionWarnings = [...messengerWarnings, ...instagramWarnings, ...whatsappWarnings];
-    const channelTypes = [{ channel: "whatsapp" as const, assetType: "whatsapp_phone" as const }, { channel: "instagram" as const, assetType: "instagram" as const }, { channel: "messenger" as const, assetType: "page" as const }];
-    for (const item of channelTypes) {
-      const active = selected.find(asset => asset.assetType === item.assetType);
-      const channelWarnings = item.channel === "messenger" ? messengerWarnings : item.channel === "instagram" ? instagramWarnings : whatsappWarnings;
-      await configureChannelAccount({ storeId: store.id, actorUserId: ctx.user.id, channel: item.channel, providerAccountId: active?.externalId ?? null, providerDisplayName: active?.displayName ?? null, connectionStatus: active ? (["messenger", "instagram"].includes(item.channel) && !channelWarnings.length ? "connected" : "testing") : "disabled" });
+    const channelWarningsByType = { messenger: messengerWarnings, instagram: instagramWarnings, whatsapp: whatsappWarnings } as const;
+    for (const asset of updatedAssets) {
+      const channel = asset.assetType === "whatsapp_phone" ? "whatsapp" : asset.assetType === "instagram" ? "instagram" : asset.assetType === "page" ? "messenger" : null;
+      if (!channel) continue;
+      const channelWarnings = channelWarningsByType[channel];
+      await configureChannelAccount({
+        storeId: store.id,
+        actorUserId: ctx.user.id,
+        channel,
+        providerAccountId: asset.externalId,
+        providerDisplayName: asset.displayName,
+        connectionStatus: input.selected ? (["messenger", "instagram"].includes(channel) && !channelWarnings.length ? "connected" : "testing") : "disabled",
+      });
     }
     if (input.selected && selected.some(asset => ["page", "instagram"].includes(asset.assetType))) await ensureMetaHistorySyncJobs(store.id, ctx.user.id);
     await syncMetaConnectionCapabilities({ storeId: store.id, connectionId: input.connectionId, grantedScopes: grantedScopes.split(",").filter(Boolean) });

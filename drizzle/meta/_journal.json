@@ -421,6 +421,27 @@
       "when": 1788563675291,
       "tag": "0059_nasty_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "5",
+      "when": 1788569786759,
+      "tag": "0060_cloudy_ronan",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "5",
+      "when": 1788570075603,
+      "tag": "0061_skinny_morgan_stark",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "5",
+      "when": 1788570800404,
+      "tag": "0062_chief_zaran",
+      "breakpoints": true
     }
   ]
 }

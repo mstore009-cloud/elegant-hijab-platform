@@ -98,7 +98,8 @@ export async function configureChannelAccount(input: {
   const db = await requireDb();
   const providerAccountId = compactText(input.providerAccountId, 255) || null;
   const providerDisplayName = compactText(input.providerDisplayName, 160) || null;
-  const [existing] = await db.select().from(channelAccounts).where(and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel))).limit(1);
+  const accountMatch = providerAccountId ? and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel), eq(channelAccounts.providerAccountId, providerAccountId)) : and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel));
+  const [existing] = await db.select().from(channelAccounts).where(accountMatch).limit(1);
   try {
     if (existing) {
       await db.update(channelAccounts).set({ providerAccountId, providerDisplayName, connectionStatus: input.connectionStatus, lastError: null }).where(eq(channelAccounts.id, existing.id));
@@ -120,9 +121,12 @@ export async function updateChannelSubscriptionHealth(input: {
   appSubscriptionStatus: "unknown" | "ready" | "error";
   assetSubscriptionStatus: "unknown" | "ready" | "error";
   error?: string | null;
+  providerAccountId?: string | null;
 }) {
   const db = await requireDb();
-  const [account] = await db.select().from(channelAccounts).where(and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel))).limit(1);
+  const providerAccountId = compactText(input.providerAccountId, 255) || null;
+  const accountMatch = providerAccountId ? and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel), eq(channelAccounts.providerAccountId, providerAccountId)) : and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel));
+  const [account] = await db.select().from(channelAccounts).where(accountMatch).limit(1);
   if (!account) throw new Error("اختر حساب القناة أولاً قبل فحص الاشتراك.");
   const subscriptionLastCheckedAt = new Date();
   const lastError = input.error?.slice(0, 500) || null;
@@ -233,8 +237,8 @@ export async function ingestExternalInboundMessage(input: NormalizedInboundMessa
           mediaType: attachment.mediaType,
           mimeType: compactText(attachment.mimeType, 120) || null,
           originalFileName: compactText(attachment.originalFileName, 255) || null,
-          downloadStatus: attachment.mediaType === "image" ? "pending" : "unsupported",
-          errorSummary: attachment.mediaType === "image" ? null : "تحليل هذا النوع من المرفقات غير مفعّل في هذه الدفعة.",
+          downloadStatus: ["image", "video", "audio", "document"].includes(attachment.mediaType) ? "pending" : "unsupported",
+          errorSummary: ["image", "video", "audio", "document"].includes(attachment.mediaType) ? null : "هذا النوع من المرفقات غير مدعوم للمعاينة حالياً.",
         });
         mediaIds.push(Number(media[0].insertId));
       }

@@ -65,7 +65,7 @@ describe("WhatsApp Embedded Signup and Coexistence", () => {
     expect(await enqueueWhatsAppCoexistencePayload(payload)).toMatchObject({ queued: 1, duplicates: 0 });
     expect(await enqueueWhatsAppCoexistencePayload(payload)).toMatchObject({ queued: 0, duplicates: 1 });
     expect(await processDueWhatsAppHistoryChunks(2)).toMatchObject({ attempted: 1, processed: 1 });
-    const [conversation] = await db.select().from(inboxConversations).where(and(eq(inboxConversations.storeId, storeId), eq(inboxConversations.externalConversationId, "whatsapp:9647111111111")));
+    const [conversation] = await db.select().from(inboxConversations).where(and(eq(inboxConversations.storeId, storeId), eq(inboxConversations.externalConversationId, "whatsapp:phone-coexist:9647111111111")));
     const messages = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversation.id));
     expect(messages.map(message => [message.direction, message.source])).toEqual(expect.arrayContaining([["inbound", "historical_sync"], ["outbound", "historical_sync"]]));
     expect(await db.select().from(channelWebhookEvents).where(eq(channelWebhookEvents.storeId, storeId))).toHaveLength(0);
@@ -77,6 +77,11 @@ describe("WhatsApp Embedded Signup and Coexistence", () => {
 
   it("يطبع smb_message_echoes كرسالة صادرة حية للعميل الصحيح", () => {
     const events = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ id: "waba", changes: [{ field: "smb_message_echoes", value: { metadata: { phone_number_id: "phone-coexist" }, messages: [{ id: "echo-1", from: "9647000000000", to: "9647111111111", timestamp: "1700000100", type: "text", text: { body: "رد من تطبيق الأعمال" } }] } }] }] });
-    expect(events[0]).toMatchObject({ kind: "message", direction: "outbound", providerAccountId: "phone-coexist", externalConversationId: "whatsapp:9647111111111", source: "live_webhook" });
+    expect(events[0]).toMatchObject({ kind: "message", direction: "outbound", providerAccountId: "phone-coexist", externalConversationId: "whatsapp:phone-coexist:9647111111111", source: "live_webhook" });
+  });
+
+  it("يقبل echo الصادر بصيغة recipient_id أو echoes حتى لا تختفي رسائل تطبيق WhatsApp", () => {
+    const events = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ id: "waba", changes: [{ field: "smb_message_echoes", value: { metadata: { phone_number_id: "phone-coexist" }, echoes: [{ id: "echo-2", from: "9647000000000", recipient_id: "9647222222222", timestamp: "1700000200", type: "text", text: { body: "رد بصيغة بديلة" } }] } }] }] });
+    expect(events[0]).toMatchObject({ kind: "message", direction: "outbound", providerAccountId: "phone-coexist", externalConversationId: "whatsapp:phone-coexist:9647222222222", externalMessageId: "echo-2" });
   });
 });

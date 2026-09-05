@@ -1,5 +1,5 @@
-import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
-import { channelAccounts, channelWebhookEvents, customerBotSettings, inboxConversations, inboxMessages, metaAssets, metaWebhookRetrySettings } from "../../drizzle/schema";
+import { and, asc, desc, eq, inArray, isNull, like, lte, or } from "drizzle-orm";
+import { channelAccounts, channelWebhookEvents, customerBotSettings, inboxConversations, inboxMessageReactions, inboxMessages, metaAssets, metaWebhookRetrySettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 import { ingestMetaLeadCapture } from "../crm/db";
@@ -10,16 +10,27 @@ import { applyExternalDeliveryStatus, ingestExternalInboundMessage, type Externa
 import { storeInboundImageFromProvider } from "./media";
 
 type DeliveryEvent = { kind: "delivery_status"; channel: ExternalChannel; providerAccountId: string; externalEventId: string; externalMessageId: string; status: "sent" | "delivered" | "read" | "failed"; occurredAt: Date; errorSummary?: string | null };
+type ReactionEvent = { kind: "reaction"; channel: ExternalChannel; providerAccountId: string; externalEventId: string; targetExternalMessageId: string; actorExternalId: string; actorDisplayName?: string | null; emoji?: string | null; action: "added" | "removed"; occurredAt: Date; source?: "live_webhook" | "historical_sync" };
 type BusinessEvent = { kind: "comment" | "mention" | "lead" | "publish_status" | "unsupported" | "account_event"; channel: ExternalChannel; providerAccountId: string; externalEventId: string; occurredAt: Date; summary: string; data: Record<string, string | number | boolean | null> };
-export type NormalizedMetaEvent = ({ kind: "message" } & NormalizedInboundMessage) | DeliveryEvent | BusinessEvent;
+export type NormalizedMetaEvent = ({ kind: "message" } & NormalizedInboundMessage) | DeliveryEvent | ReactionEvent | BusinessEvent;
 
 function compact(value: unknown, max = 255) { return typeof value === "string" ? value.trim().slice(0, max) : ""; }
 function dateFromSeconds(value: unknown) { const number = Number(value); const date = Number.isFinite(number) && number > 0 ? new Date(number * 1000) : new Date(); return Number.isNaN(date.getTime()) ? new Date() : date; }
 function dateFromMilliseconds(value: unknown) { const number = Number(value); const date = Number.isFinite(number) && number > 0 ? new Date(number) : new Date(); return Number.isNaN(date.getTime()) ? new Date() : date; }
 function mediaFromMessage(message: any): ExternalMediaReference[] {
-  if (message?.image?.id) return [{ providerMediaId: compact(message.image.id), mediaType: "image", mimeType: compact(message.image.mime_type, 120) || "image/jpeg", originalFileName: null }];
+  const directTypes = ["image", "video", "audio", "document"] as const;
+  for (const type of directTypes) {
+    const payload = message?.[type];
+    if (payload?.id) return [{ providerMediaId: compact(payload.id), mediaType: type, mimeType: compact(payload.mime_type || payload.mimeType, 120) || null, originalFileName: compact(payload.filename || payload.file_name, 255) || null }];
+  }
   const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
-  return attachments.map((attachment: any) => { const url = compact(attachment?.payload?.url, 2000); const image = compact(attachment?.type, 32) === "image" && url; return { providerMediaId: compact(attachment?.payload?.id) || null, mediaType: image ? "image" : "unsupported", mimeType: image ? "image/jpeg" : null, originalFileName: null, sourceUrl: url || null } as ExternalMediaReference; });
+  return attachments.map((attachment: any) => {
+    const rawType = compact(attachment?.type, 32).toLowerCase();
+    const mediaType = directTypes.includes(rawType as typeof directTypes[number]) ? rawType as typeof directTypes[number] : "unsupported";
+    const url = compact(attachment?.payload?.url, 2000);
+    const mimeType = compact(attachment?.payload?.mime_type || attachment?.mime_type, 120) || null;
+    return { providerMediaId: compact(attachment?.payload?.id) || null, mediaType, mimeType, originalFileName: compact(attachment?.payload?.filename || attachment?.payload?.file_name, 255) || null, sourceUrl: url || null } as ExternalMediaReference;
+  });
 }
 
 function metadataFromMessage(message: any, channel: ExternalChannel): NormalizedMessageMetadata {
@@ -40,13 +51,19 @@ export function normalizeMetaEvents(payload: any): NormalizedMetaEvent[] {
       const value = change?.value; const accountId = compact(value?.metadata?.phone_number_id); const field = compact(change?.field, 80);
       const contacts = new Map<string, string>((Array.isArray(value?.contacts) ? value.contacts : []).map((item: any): [string, string] => [compact(item?.wa_id), compact(item?.profile?.name, 160)]));
       for (const message of field === "smb_message_echoes" ? [] : Array.isArray(value?.messages) ? value.messages : []) {
-        const id = compact(message?.id); const sender = compact(message?.from); if (!accountId || !id || !sender) continue;
-        events.push({ kind: "message", channel: "whatsapp", providerAccountId: accountId, externalEventId: id, externalConversationId: `whatsapp:${sender}`, externalMessageId: id, senderName: contacts.get(sender) || null, senderPhone: sender, body: compact(message?.text?.body, 20_000) || compact(message?.image?.caption, 20_000) || null, occurredAt: dateFromSeconds(message?.timestamp), attachments: mediaFromMessage(message), metadata: metadataFromMessage(message, "whatsapp") });
+        const id = compact(message?.id); const sender = compact(message?.from); const recipient = compact(message?.to || message?.recipient_id || message?.recipient?.id || message?.recipient?.wa_id); if (!accountId || !id || !sender) continue;
+        if (message?.type === "reaction" && message?.reaction?.message_id) {
+          const emoji = compact(message.reaction.emoji, 32) || null;
+          events.push({ kind: "reaction", channel: "whatsapp", providerAccountId: accountId, externalEventId: `reaction:${id}`, targetExternalMessageId: compact(message.reaction.message_id, 255), actorExternalId: sender, actorDisplayName: contacts.get(sender) || null, emoji, action: emoji ? "added" : "removed", occurredAt: dateFromSeconds(message?.timestamp) });
+          continue;
+        }
+        const isEcho = Boolean(message?.is_echo || message?.echo || message?.direction === "outbound") && Boolean(recipient);
+        events.push({ kind: "message", channel: "whatsapp", providerAccountId: accountId, externalEventId: isEcho ? `echo:${id}` : id, externalConversationId: `whatsapp:${accountId}:${isEcho ? recipient : sender}`, externalMessageId: id, senderName: isEcho ? null : contacts.get(sender) || null, senderPhone: isEcho ? recipient : sender, body: compact(message?.text?.body, 20_000) || compact(message?.image?.caption, 20_000) || null, occurredAt: dateFromSeconds(message?.timestamp), attachments: mediaFromMessage(message), metadata: metadataFromMessage(message, "whatsapp"), direction: isEcho ? "outbound" : undefined, source: isEcho ? "live_webhook" : undefined });
       }
-      const echoes = Array.isArray(value?.smb_message_echoes) ? value.smb_message_echoes : field === "smb_message_echoes" && Array.isArray(value?.messages) ? value.messages : [];
+      const echoes = Array.isArray(value?.smb_message_echoes) ? value.smb_message_echoes : Array.isArray(value?.echoes) ? value.echoes : field === "smb_message_echoes" && Array.isArray(value?.messages) ? value.messages : [];
       for (const message of echoes) {
-        const id = compact(message?.id); const recipient = compact(message?.to); if (!accountId || !id || !recipient) continue;
-        events.push({ kind: "message", channel: "whatsapp", providerAccountId: accountId, externalEventId: `echo:${id}`, externalConversationId: `whatsapp:${recipient}`, externalMessageId: id, senderName: null, senderPhone: recipient, body: compact(message?.text?.body, 20_000) || compact(message?.image?.caption, 20_000) || null, occurredAt: dateFromSeconds(message?.timestamp), attachments: mediaFromMessage(message), metadata: metadataFromMessage(message, "whatsapp"), direction: "outbound", source: "live_webhook" });
+        const id = compact(message?.id); const recipient = compact(message?.to || message?.recipient_id || message?.recipient?.id || message?.recipient?.wa_id); if (!accountId || !id || !recipient) continue;
+        events.push({ kind: "message", channel: "whatsapp", providerAccountId: accountId, externalEventId: `echo:${id}`, externalConversationId: `whatsapp:${accountId}:${recipient}`, externalMessageId: id, senderName: null, senderPhone: recipient, body: compact(message?.text?.body, 20_000) || compact(message?.image?.caption, 20_000) || null, occurredAt: dateFromSeconds(message?.timestamp), attachments: mediaFromMessage(message), metadata: metadataFromMessage(message, "whatsapp"), direction: "outbound", source: "live_webhook" });
       }
       for (const status of Array.isArray(value?.statuses) ? value.statuses : []) {
         const id = compact(status?.id); const raw = compact(status?.status, 32); const mapped = raw === "delivered" ? "delivered" : raw === "read" ? "read" : raw === "failed" ? "failed" : "sent"; if (!accountId || !id) continue;
@@ -60,7 +77,13 @@ export function normalizeMetaEvents(payload: any): NormalizedMetaEvent[] {
       const accountId = compact(entry?.id);
       for (const envelope of Array.isArray(entry?.messaging) ? entry.messaging : []) {
         const message = envelope?.message; const messageId = compact(message?.mid); const sender = compact(envelope?.sender?.id);
-        if (accountId && messageId && sender && !message?.is_echo) events.push({ kind: "message", channel, providerAccountId: accountId, externalEventId: messageId, externalConversationId: `${channel}:${sender}`, externalMessageId: messageId, senderName: null, senderPhone: null, body: compact(message?.text, 20_000) || null, occurredAt: dateFromMilliseconds(envelope?.timestamp), attachments: mediaFromMessage(message), metadata: metadataFromMessage(message, channel) });
+        if (accountId && messageId && sender && message?.reaction && (message.reaction.mid || message.reaction.message_id)) events.push({ kind: "reaction", channel, providerAccountId: accountId, externalEventId: `reaction:${messageId}`, targetExternalMessageId: compact(message.reaction.mid || message.reaction.message_id, 255), actorExternalId: sender, actorDisplayName: null, emoji: compact(message.reaction.emoji || message.reaction.reaction, 32) || null, action: compact(message.reaction.action, 32) === "unreact" ? "removed" : "added", occurredAt: dateFromMilliseconds(envelope?.timestamp) });
+        else if (accountId && messageId && (sender || message?.is_echo)) {
+          const isEcho = Boolean(message?.is_echo);
+          const conversationParty = compact(isEcho ? envelope?.recipient?.id : sender);
+          if (!conversationParty) continue;
+          events.push({ kind: "message", channel, providerAccountId: accountId, externalEventId: `message:${isEcho ? "echo:" : ""}${messageId}`, externalConversationId: `${channel}:${accountId}:${conversationParty}`, externalMessageId: messageId, senderName: null, senderPhone: null, body: compact(message?.text, 20_000) || null, occurredAt: dateFromMilliseconds(envelope?.timestamp), attachments: mediaFromMessage(message), metadata: metadataFromMessage(message, channel), direction: isEcho ? "outbound" : undefined, source: isEcho ? "live_webhook" : undefined });
+        }
         for (const deliveredId of Array.isArray(envelope?.delivery?.mids) ? envelope.delivery.mids : []) { const id = compact(deliveredId); if (accountId && id) events.push({ kind: "delivery_status", channel, providerAccountId: accountId, externalEventId: `delivery:${id}:${compact(envelope?.delivery?.watermark)}`, externalMessageId: id, status: "delivered", occurredAt: dateFromMilliseconds(envelope?.delivery?.watermark) }); }
       }
       for (const change of Array.isArray(entry?.changes) ? entry.changes : []) {
@@ -80,6 +103,23 @@ async function requireDb() { const db = await getDb(); if (!db) throw new Error(
 function isDuplicate(error: unknown) { const values = [error, error && typeof error === "object" && "cause" in error ? (error as any).cause : null]; return values.some(value => String((value as any)?.code || "") === "ER_DUP_ENTRY" || String((value as any)?.message || value).includes("Duplicate")); }
 function safeEventJson(event: NormalizedMetaEvent) { return JSON.stringify(event, (key, value) => key === "sourceUrl" ? undefined : value).slice(0, 60_000); }
 function reviveEvent(json: string): NormalizedMetaEvent { const event = JSON.parse(json); event.occurredAt = new Date(event.occurredAt); return event; }
+
+async function ingestMetaReaction(db: any, storeId: number, event: ReactionEvent) {
+  const target = await db.select({ id: inboxMessages.id, conversationId: inboxMessages.conversationId }).from(inboxMessages).innerJoin(inboxConversations, eq(inboxMessages.conversationId, inboxConversations.id)).where(and(eq(inboxConversations.storeId, storeId), eq(inboxConversations.channel, event.channel), like(inboxConversations.externalConversationId, `${event.channel}:${event.providerAccountId}:%`), eq(inboxMessages.externalMessageId, event.targetExternalMessageId))).limit(1);
+  let message = target[0];
+  if (!message) {
+    const [fallback] = await db.select({ id: inboxMessages.id, conversationId: inboxMessages.conversationId }).from(inboxMessages).innerJoin(inboxConversations, eq(inboxMessages.conversationId, inboxConversations.id)).where(and(eq(inboxConversations.storeId, storeId), eq(inboxConversations.channel, event.channel), eq(inboxConversations.externalConversationId, `${event.channel}:${event.providerAccountId}:${event.actorExternalId}`))).orderBy(desc(inboxMessages.occurredAt), desc(inboxMessages.id)).limit(1);
+    message = fallback;
+  }
+  if (!message) throw new Error("تعذر ربط التفاعل برسالة محفوظة؛ ستُعاد المحاولة بعد وصول الرسالة المستهدفة.");
+  try {
+    await db.insert(inboxMessageReactions).values({ storeId, messageId: message.id, externalEventId: event.externalEventId, targetExternalMessageId: event.targetExternalMessageId, actorExternalId: event.actorExternalId, actorDisplayName: event.actorDisplayName || null, emoji: event.emoji || null, action: event.action, source: event.source || "live_webhook", occurredAt: event.occurredAt });
+    return { duplicate: false, messageId: message.id, conversationId: message.conversationId };
+  } catch (error) {
+    if (!isDuplicate(error)) throw error;
+    return { duplicate: true, messageId: message.id, conversationId: message.conversationId };
+  }
+}
 
 async function ingestMetaBusinessEvent(db: any, storeId: number, event: BusinessEvent & { kind: "comment" | "mention" }) {
   const objectId = compact(event.data.objectId, 255);
@@ -142,13 +182,15 @@ async function processReservedEvent(row: { id: number; storeId: number; metaAsse
     if (event.kind === "message") {
       const ingested = await ingestExternalInboundMessage({ ...event, payloadHash: row.payloadHash, reservedWebhookEventId: row.id });
       if (ingested.accepted && !ingested.duplicate && ingested.storeId) for (let index = 0; index < event.attachments.length; index += 1) {
-        const mediaId = ingested.mediaIds[index]; const media = event.attachments[index]; if (!mediaId || media.mediaType !== "image") continue;
+        const mediaId = ingested.mediaIds[index]; const media = event.attachments[index]; if (!mediaId) continue;
         const stored = await storeInboundImageFromProvider({ storeId: ingested.storeId, mediaId, sourceUrl: media.sourceUrl });
-        if (stored.status === "stored") await analyzeCustomerMessageImage({ storeId: ingested.storeId, mediaId });
+        if (stored.status === "stored" && media.mediaType === "image") await analyzeCustomerMessageImage({ storeId: ingested.storeId, mediaId });
       }
       if (event.source === "live_webhook" && event.direction !== "outbound" && ingested.accepted && !ingested.duplicate && ingested.storeId && ingested.conversationId && ingested.messageId) {
         void generateCustomerBotDraft({ storeId: ingested.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد الرسالة الواردة:", error));
       }
+    } else if (event.kind === "reaction") {
+      await ingestMetaReaction(db, row.storeId, event);
     } else if (event.kind === "comment" || event.kind === "mention") {
       const ingested = await ingestMetaBusinessEvent(db, row.storeId, event as BusinessEvent & { kind: "comment" | "mention" });
       if (!ingested.duplicate && ingested.conversationId && ingested.messageId) {

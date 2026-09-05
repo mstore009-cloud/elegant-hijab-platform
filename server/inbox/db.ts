@@ -6,6 +6,7 @@ import {
   inboxConversationEvents,
   inboxConversations,
   inboxMessageMedia,
+  inboxMessageReactions,
   inboxMessages,
   orders,
   customerBotImageAnalyses,
@@ -117,7 +118,7 @@ async function appendInboxCustomerActivity(db: any, input: { storeId: number; cu
   await appendCustomerActivity(db, { storeId: input.storeId, customerId: input.customerId, type: "inbox_message", title: input.title, body: input.body, actorUserId: input.actorUserId });
 }
 
-export async function listInboxConversations(storeId: number, userId: number, input: { search?: string; status?: InboxStatus; channel?: InboxChannel; assignment?: "all" | "mine" | "unassigned"; limit?: number }) {
+export async function listInboxConversations(storeId: number, userId: number, input: { search?: string; status?: InboxStatus; channel?: InboxChannel; assignment?: "all" | "mine" | "unassigned"; hasAttachments?: boolean; readState?: "all" | "unread" | "read"; limit?: number }) {
   const db = await requireDb();
   const filters = [eq(inboxConversations.storeId, storeId)];
   if (input.status) filters.push(eq(inboxConversations.status, input.status));
@@ -143,13 +144,29 @@ export async function listInboxConversations(storeId: number, userId: number, in
     db.select().from(inboxMessages).where(inArray(inboxMessages.conversationId, ids)).orderBy(desc(inboxMessages.occurredAt), desc(inboxMessages.id)),
   ]);
   const latestMessage = new Map<number, any>();
-  for (const message of messages) if (!latestMessage.has(message.conversationId)) latestMessage.set(message.conversationId, message);
-  return conversations.map(conversation => ({
+  const unreadCounts = new Map<number, number>();
+  for (const message of messages) {
+    if (!latestMessage.has(message.conversationId)) latestMessage.set(message.conversationId, message);
+    if (message.direction === "inbound" && !message.readAt) unreadCounts.set(message.conversationId, (unreadCounts.get(message.conversationId) ?? 0) + 1);
+  }
+  const messageIds = messages.map(message => message.id);
+  const mediaRows = messageIds.length ? await db.select({ messageId: inboxMessageMedia.messageId }).from(inboxMessageMedia).where(and(eq(inboxMessageMedia.storeId, storeId), inArray(inboxMessageMedia.messageId, messageIds))) : [];
+  const mediaConversationIds = new Set(messages.filter(message => mediaRows.some(media => media.messageId === message.id)).map(message => message.conversationId));
+  const filteredConversations = conversations.filter(conversation => {
+    if (input.hasAttachments && !mediaConversationIds.has(conversation.id)) return false;
+    const unread = unreadCounts.get(conversation.id) ?? 0;
+    if (input.readState === "unread" && unread === 0) return false;
+    if (input.readState === "read" && unread > 0) return false;
+    return true;
+  });
+  return filteredConversations.map(conversation => ({
     ...conversation,
     customer: customers.find(customer => customer.id === conversation.customerId) ?? null,
     assignee: employees.find(employee => employee.id === conversation.assignedEmployeeId) ?? null,
     order: linkedOrders.find(order => order.id === conversation.orderId) ?? null,
     latestMessage: latestMessage.get(conversation.id) ?? null,
+    unreadCount: unreadCounts.get(conversation.id) ?? 0,
+    hasAttachments: mediaConversationIds.has(conversation.id),
   }));
 }
 
@@ -164,14 +181,16 @@ export async function getInboxConversationDetail(storeId: number, conversationId
     conversation.assignedEmployeeId ? requireActiveAssignee(db, storeId, conversation.assignedEmployeeId) : null,
   ]);
   const customerOrders = customer ? await db.select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, total: orders.total, createdAt: orders.createdAt }).from(orders).where(and(eq(orders.storeId, storeId), eq(orders.customerId, customer.id))).orderBy(desc(orders.createdAt)).limit(6) : [];
-  const media = await listInboxMessageMediaForConversation(storeId, conversation.id, messages.map(message => message.id));
+  const messageIds = messages.map(message => message.id);
+  const media = await listInboxMessageMediaForConversation(storeId, conversation.id, messageIds);
+  const reactions = messageIds.length ? await db.select().from(inboxMessageReactions).where(and(eq(inboxMessageReactions.storeId, storeId), inArray(inboxMessageReactions.messageId, messageIds))).orderBy(asc(inboxMessageReactions.occurredAt), asc(inboxMessageReactions.id)) : [];
   const [channelAccount] = conversation.channel === "manual" ? [] : await db.select().from(channelAccounts).where(and(eq(channelAccounts.storeId, storeId), eq(channelAccounts.channel, conversation.channel))).limit(1);
   const metaOverview = channelAccount && conversation.channel !== "manual" ? await listMetaConnectionOverview(storeId) : null;
   const channelHealth = channelAccount && metaOverview && conversation.channel !== "manual"
     ? deriveChannelHealth({ channel: conversation.channel as "whatsapp" | "instagram" | "messenger", account: channelAccount, connections: metaOverview.connections, assets: metaOverview.assets, capabilities: metaOverview.capabilities })
     : null;
   const normalizedMessages = messages.map(message => ({ ...message, metadata: parseMessageMetadata(message.metadataJson) }));
-  return { conversation, messages: normalizedMessages, events, customer, linkedOrder, assignee, customerOrders, media, channelAccount: channelAccount ?? null, channelHealth };
+  return { conversation, messages: normalizedMessages, events, customer, linkedOrder, assignee, customerOrders, media, reactions, channelAccount: channelAccount ?? null, channelHealth };
 }
 
 async function listInboxMessageMediaForConversation(storeId: number, conversationId: number, messageIds: number[]) {

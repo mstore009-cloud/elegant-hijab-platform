@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { channelAccounts, channelWebhookEvents, customerActivities, customerProfiles, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessages, metaAssets, metaConnections, metaLeadCaptures, stores, users } from "../../drizzle/schema";
+import { channelAccounts, channelWebhookEvents, customerActivities, customerProfiles, inboxConversationEvents, inboxConversations, inboxMessageMedia, inboxMessageReactions, inboxMessages, metaAssets, metaConnections, metaLeadCaptures, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { configureChannelAccount } from "./db";
 import { enqueueAndProcessMetaEvent, getMetaEventHealth, normalizeMetaEvents, requeueMetaDeadLetters, retryDueMetaEvents } from "./metaEvents";
@@ -11,14 +11,17 @@ const cleanups: Array<{ storeId: number; conversationIds: number[] }> = [];
 afterEach(async () => {
   const db = await getDb(); if (!db) return;
   for (const cleanup of cleanups.splice(0)) {
-    const messages = cleanup.conversationIds.length ? await db.select({ id: inboxMessages.id }).from(inboxMessages).where(inArray(inboxMessages.conversationId, cleanup.conversationIds)) : [];
+    const allConversations = await db.select({ id: inboxConversations.id }).from(inboxConversations).where(eq(inboxConversations.storeId, cleanup.storeId));
+    const conversationIds = allConversations.map(row => row.id);
+    const messages = conversationIds.length ? await db.select({ id: inboxMessages.id }).from(inboxMessages).where(inArray(inboxMessages.conversationId, conversationIds)) : [];
     const messageIds = messages.map(row => row.id);
-    if (messageIds.length) await db.delete(inboxMessageMedia).where(inArray(inboxMessageMedia.messageId, messageIds));
-    for (const conversationId of cleanup.conversationIds) {
-      await db.delete(inboxConversationEvents).where(eq(inboxConversationEvents.conversationId, conversationId));
-      await db.delete(inboxMessages).where(eq(inboxMessages.conversationId, conversationId));
-      await db.delete(inboxConversations).where(eq(inboxConversations.id, conversationId));
+    if (messageIds.length) {
+      await db.delete(inboxMessageReactions).where(inArray(inboxMessageReactions.messageId, messageIds));
+      await db.delete(inboxMessageMedia).where(inArray(inboxMessageMedia.messageId, messageIds));
+      await db.delete(inboxMessages).where(inArray(inboxMessages.id, messageIds));
     }
+    for (const conversationId of conversationIds) await db.delete(inboxConversationEvents).where(eq(inboxConversationEvents.conversationId, conversationId));
+    if (conversationIds.length) await db.delete(inboxConversations).where(inArray(inboxConversations.id, conversationIds));
     await db.delete(customerActivities).where(eq(customerActivities.storeId, cleanup.storeId));
     await db.delete(metaLeadCaptures).where(eq(metaLeadCaptures.storeId, cleanup.storeId));
     await db.delete(customerProfiles).where(eq(customerProfiles.storeId, cleanup.storeId));
@@ -42,10 +45,19 @@ describe("Unified Meta Webhook Gateway", () => {
   it("يطبع Messenger ورسائل Instagram وحالات WhatsApp والتعليقات إلى أنواع أحداث موحدة", () => {
     const richMessenger = normalizeMetaEvents({ object: "page", entry: [{ id: "page-rich", messaging: [{ sender: { id: "customer-rich" }, timestamp: 1760000000000, message: { mid: "mid-rich", text: "هل هذا رد على القصة؟", reply_to: { mid: "mid-root", text: "الصورة الأصلية" }, story_id: "story-1", mentions: [{ id: "staff-1", name: "موظفة" }] } }] }] });
     expect(richMessenger[0]).toMatchObject({ kind: "message", metadata: { messageType: "text", replyToExternalMessageId: "mid-root", replyToBodyPreview: "الصورة الأصلية", storyId: "story-1", mentions: [{ id: "staff-1", name: "موظفة" }] } });
+    const messengerEcho = normalizeMetaEvents({ object: "page", entry: [{ id: "page-rich", messaging: [{ sender: { id: "page-rich" }, recipient: { id: "customer-rich" }, timestamp: 1760000001000, message: { mid: "mid-echo", text: "رد من تطبيق Messenger", is_echo: true } }] }] });
+    expect(messengerEcho).toEqual([expect.objectContaining({ kind: "message", channel: "messenger", direction: "outbound", externalConversationId: "messenger:page-rich:customer-rich", externalMessageId: "mid-echo", body: "رد من تطبيق Messenger" })]);
+    const instagramEcho = normalizeMetaEvents({ object: "instagram", entry: [{ id: "ig-rich", messaging: [{ sender: { id: "ig-rich" }, recipient: { id: "ig-customer" }, timestamp: 1760000002000, message: { mid: "ig-echo", text: "رد من تطبيق Instagram", is_echo: true } }] }] });
+    expect(instagramEcho).toEqual([expect.objectContaining({ kind: "message", channel: "instagram", direction: "outbound", externalConversationId: "instagram:ig-rich:ig-customer", externalMessageId: "ig-echo", body: "رد من تطبيق Instagram" })]);
     const messenger = normalizeMetaEvents({ object: "page", entry: [{ id: "page-1", messaging: [{ sender: { id: "customer-1" }, timestamp: 1760000000000, message: { mid: "mid-page-1", text: "هل المنتج متوفر؟" } }], changes: [{ field: "feed", value: { comment_id: "comment-1", post_id: "post-1", message: "أريد هذا اللون" } }] }] });
     expect(messenger).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "message", channel: "messenger", providerAccountId: "page-1", externalMessageId: "mid-page-1" }), expect.objectContaining({ kind: "comment", externalEventId: "comment:comment-1" })]));
     const whatsapp = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: "phone-1" }, statuses: [{ id: "wamid-out-1", status: "read", timestamp: "1760000000" }] } }] }] });
     expect(whatsapp).toEqual([expect.objectContaining({ kind: "delivery_status", providerAccountId: "phone-1", externalMessageId: "wamid-out-1", status: "read" })]);
+    const richWhatsApp = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: "phone-rich" }, contacts: [{ wa_id: "customer-rich", profile: { name: "عميلة" } }], messages: [{ id: "wamid-image", from: "customer-rich", timestamp: "1760000000", type: "image", image: { id: "media-image", mime_type: "image/jpeg", caption: "الصورة" } }, { id: "wamid-audio", from: "customer-rich", timestamp: "1760000001", type: "audio", audio: { id: "media-audio", mime_type: "audio/ogg" } }, { id: "wamid-document", from: "customer-rich", timestamp: "1760000002", type: "document", document: { id: "media-document", mime_type: "application/pdf", filename: "فاتورة.pdf" } }, { id: "wamid-reaction", from: "customer-rich", timestamp: "1760000003", type: "reaction", reaction: { message_id: "wamid-image", emoji: "👍" } }] } }] }] });
+    expect(richWhatsApp.filter(event => event.kind === "message").map(event => event.attachments?.[0])).toEqual(expect.arrayContaining([expect.objectContaining({ providerMediaId: "media-image", mediaType: "image" }), expect.objectContaining({ providerMediaId: "media-audio", mediaType: "audio" }), expect.objectContaining({ providerMediaId: "media-document", mediaType: "document", originalFileName: "فاتورة.pdf" })]));
+    expect(richWhatsApp).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "reaction", targetExternalMessageId: "wamid-image", emoji: "👍", action: "added" })]));
+    const instagramReaction = normalizeMetaEvents({ object: "instagram", entry: [{ id: "ig-rich", messaging: [{ sender: { id: "ig-customer" }, recipient: { id: "ig-page" }, timestamp: 1760000000000, message: { mid: "ig-reaction", reaction: { mid: "ig-message", emoji: "❤️", action: "react" } } }] }] });
+    expect(instagramReaction).toEqual([expect.objectContaining({ kind: "reaction", channel: "instagram", targetExternalMessageId: "ig-message", emoji: "❤️" })]);
   });
 
   it("يحجز حدث Messenger مرة واحدة وينشئ رسالة واردة داخل متجر الحساب فقط", async () => {
@@ -57,7 +69,7 @@ describe("Unified Meta Webhook Gateway", () => {
     expect(first).toMatchObject({ accepted: true, duplicate: false, processed: true });
     const duplicate = await enqueueAndProcessMetaEvent(event, "hash-gateway");
     expect(duplicate).toMatchObject({ accepted: true, duplicate: true });
-    const [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.externalConversationId, "messenger:customer-gateway"));
+    const [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.externalConversationId, "messenger:page-gateway:customer-gateway"));
     cleanup.conversationIds.push(conversation.id);
     const messages = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversation.id));
     expect(messages).toHaveLength(1);
@@ -67,12 +79,13 @@ describe("Unified Meta Webhook Gateway", () => {
 
   it("يربط رسالة WhatsApp الواردة بملف CRM حسب الهاتف ويسجل نشاط الرسالة", async () => {
     const { db, owner, storeId, cleanup } = await setup();
-    await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: "phone-crm-link", providerDisplayName: "واتساب CRM", connectionStatus: "testing" });
-    const [event] = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: "phone-crm-link" }, contacts: [{ wa_id: "07861162113", profile: { name: "عميلة واتساب" } }], messages: [{ id: "wamid-crm-link", from: "07861162113", timestamp: "1760000000", text: { body: "أريد معرفة السعر" } }] } }] }] });
+    const phoneAccountId = `phone-crm-link-${randomUUID()}`;
+    await configureChannelAccount({ storeId, actorUserId: owner.id, channel: "whatsapp", providerAccountId: phoneAccountId, providerDisplayName: "واتساب CRM", connectionStatus: "testing" });
+    const [event] = normalizeMetaEvents({ object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: phoneAccountId }, contacts: [{ wa_id: "07861162113", profile: { name: "عميلة واتساب" } }], messages: [{ id: "wamid-crm-link", from: "07861162113", timestamp: "1760000000", text: { body: "أريد معرفة السعر" } }] } }] }] });
     expect(await enqueueAndProcessMetaEvent(event, "hash-crm-link")).toMatchObject({ processed: true });
     const [customer] = await db.select().from(customerProfiles).where(eq(customerProfiles.storeId, storeId));
     expect(customer).toMatchObject({ displayName: "عميلة واتساب", phoneNormalized: "07861162113", lastChannel: "whatsapp" });
-    const [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.externalConversationId, "whatsapp:07861162113"));
+    const [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.externalConversationId, `whatsapp:${phoneAccountId}:07861162113`));
     expect(conversation).toMatchObject({ customerId: customer.id });
     cleanup.conversationIds.push(conversation.id);
     const activities = await db.select().from(customerActivities).where(eq(customerActivities.customerId, customer.id));

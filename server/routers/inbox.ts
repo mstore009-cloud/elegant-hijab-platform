@@ -34,7 +34,7 @@ async function requireInboxStore(ctx: { user: NonNullable<any>; operationalStore
 }
 
 export const inboxRouter = router({
-  list: protectedProcedure.input(z.object({ search: z.string().trim().max(240).optional(), status: inboxStatusSchema.optional(), channel: inboxChannelSchema.optional(), assignment: z.enum(["all", "mine", "unassigned"]).optional(), limit: z.number().int().min(1).max(200).optional() }).optional()).query(async ({ ctx, input }) => {
+  list: protectedProcedure.input(z.object({ search: z.string().trim().max(240).optional(), status: inboxStatusSchema.optional(), channel: inboxChannelSchema.optional(), assignment: z.enum(["all", "mine", "unassigned"]).optional(), hasAttachments: z.boolean().optional(), readState: z.enum(["all", "unread", "read"]).optional(), limit: z.number().int().min(1).max(200).optional() }).optional()).query(async ({ ctx, input }) => {
     const store = await requireInboxStore(ctx, "inbox.read");
     return listInboxConversations(store.id, ctx.user.id, input ?? {});
   }),

@@ -516,7 +516,7 @@ export const channelAccounts = mysqlTable(
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   table => [
-    uniqueIndex("channel_store_channel_unique").on(table.storeId, table.channel),
+    index("channel_store_channel_idx").on(table.storeId, table.channel),
     uniqueIndex("channel_provider_unique").on(table.channel, table.providerAccountId),
     index("channel_store_status_idx").on(table.storeId, table.connectionStatus),
   ],
@@ -532,7 +532,7 @@ export const channelWebhookEvents = mysqlTable(
     metaAssetId: int("metaAssetId").references(() => metaAssets.id),
     externalEventId: varchar("externalEventId", { length: 255 }).notNull(),
     payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
-    eventType: mysqlEnum("eventType", ["message", "delivery_status", "comment", "mention", "lead", "publish_status", "unsupported", "account_event"]).notNull(),
+    eventType: mysqlEnum("eventType", ["message", "delivery_status", "comment", "mention", "lead", "publish_status", "unsupported", "account_event", "reaction"]).notNull(),
     processingStatus: mysqlEnum("processingStatus", ["received", "processed", "ignored", "failed", "retry_pending", "dead_letter"]).default("received").notNull(),
     normalizedPayloadJson: text("normalizedPayloadJson"),
     attemptCount: int("attemptCount").default(0).notNull(),
@@ -747,6 +747,30 @@ export const inboxMessageMedia = mysqlTable(
     index("message_media_channel_account_idx").on(table.channelAccountId),
     index("message_media_store_message_idx").on(table.storeId, table.messageId),
     index("message_media_store_status_idx").on(table.storeId, table.downloadStatus),
+  ],
+);
+
+/** Reactions received from Meta, kept separate from message text so a thread can render add/remove events safely. */
+export const inboxMessageReactions = mysqlTable(
+  "inbox_message_reactions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    messageId: int("messageId").notNull().references(() => inboxMessages.id),
+    externalEventId: varchar("externalEventId", { length: 255 }).notNull(),
+    targetExternalMessageId: varchar("targetExternalMessageId", { length: 255 }),
+    actorExternalId: varchar("actorExternalId", { length: 255 }),
+    actorDisplayName: varchar("actorDisplayName", { length: 160 }),
+    emoji: varchar("emoji", { length: 32 }),
+    action: mysqlEnum("action", ["added", "removed"]).notNull(),
+    source: mysqlEnum("source", ["live_webhook", "historical_sync"]).default("live_webhook").notNull(),
+    occurredAt: timestamp("occurredAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("inbox_reaction_event_unique").on(table.storeId, table.externalEventId),
+    index("inbox_reaction_message_idx").on(table.storeId, table.messageId, table.occurredAt),
+    index("inbox_reaction_target_idx").on(table.storeId, table.targetExternalMessageId),
   ],
 );
 

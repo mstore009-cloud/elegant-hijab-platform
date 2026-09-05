@@ -105,7 +105,7 @@ describe("Meta history sync", () => {
     expect(jobs).toHaveLength(1);
     expect(await processMetaHistorySyncJob(jobs[0].id)).toMatchObject({ processed: true, messages: 1 });
     const [conversation] = await db.select().from(inboxConversations).where(eq(inboxConversations.storeId, storeId));
-    expect(conversation).toMatchObject({ channel: "instagram", externalConversationId: `instagram:ig-customer-${suffix}` });
+    expect(conversation).toMatchObject({ channel: "instagram", externalConversationId: `instagram:${instagramId}:ig-customer-${suffix}` });
     const [message] = await db.select().from(inboxMessages).where(eq(inboxMessages.conversationId, conversation.id));
     expect(message).toMatchObject({ direction: "inbound", source: "historical_sync", body: "هل اللون متوفر؟" });
   });
