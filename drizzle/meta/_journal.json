@@ -498,6 +498,13 @@
       "when": 1788721565078,
       "tag": "0070_safe_the_stranger",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "5",
+      "when": 1788724650796,
+      "tag": "0071_wild_norrin_radd",
+      "breakpoints": true
     }
   ]
 }

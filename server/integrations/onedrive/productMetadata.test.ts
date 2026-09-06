@@ -39,6 +39,23 @@ SIZES: Medium, Large
 PRODUCT_STATUS: draft`).sizes).toEqual(["Medium", "Large"]);
   });
 
+  it("يستخرج الخامة من المفتاح القياسي أو من كلمة الخامة العربية", () => {
+    const standard = parseCatalogProductMetadata(`PRODUCT_NAME_AR: حجاب
+SELLING_PRICE_IQD: 12000
+DESCRIPTION_AR: وصف
+SIZES:
+MATERIAL: قطن تركي
+PRODUCT_STATUS: draft`);
+    const arabic = parseCatalogProductMetadata(`اسم المنتج: ربطة
+السعر: 8000
+الوصف: وصف
+القياسات:
+الخامة: حرير
+PRODUCT_STATUS: draft`);
+    expect(standard.material).toBe("قطن تركي");
+    expect(arabic.material).toBe("حرير");
+  });
+
   it("يرفض بقايا المثال وعدم وجود SIZES", () => {
     expect(() => parseCatalogProductMetadata(`PRODUCT_NAME_AR: ...حجاب
 SELLING_PRICE_IQD: 12000

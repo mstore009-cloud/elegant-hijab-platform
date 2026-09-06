@@ -213,6 +213,7 @@ async function createDraftFromFolder(input: {
       name: input.metadata.name ?? `منتج يحتاج بيانات — ${input.folder.name}`,
       category: input.groupName,
       description: input.metadata.description,
+      material: input.metadata.material,
       sizeLabels: JSON.stringify(input.metadata.sizes),
       status: "draft",
       // The placeholder is never a public price: the draft is withheld and the
@@ -248,6 +249,28 @@ async function createDraftFromFolder(input: {
     return { productId, missingFields };
   });
   return result;
+}
+
+async function syncCatalogSourceMaterial(input: {
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>;
+  productId: number;
+  actorUserId: number;
+  material?: string;
+}) {
+  const material = input.material ?? null;
+  const [current] = await input.db.select({ material: products.material }).from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!current || current.material === material) return false;
+  await input.db.transaction(async tx => {
+    await tx.update(products).set({ material }).where(eq(products.id, input.productId));
+    await tx.insert(productOperations).values({
+      productId: input.productId,
+      actorUserId: input.actorUserId,
+      source: "catalog_scan",
+      action: "catalog_material_synced",
+      changes: JSON.stringify({ source: "onedrive_product_metadata", material }),
+    });
+  });
+  return true;
 }
 
 async function syncNewCatalogMediaReferences(input: {
@@ -371,6 +394,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
         if (folderObservation.changed) {
           await notifyPermissionHolders(buildCatalogFolderReviewNotification({ storeId: input.storeId, entityId: folderObservationRecord.id, folderId: folder.id, folderName: folder.name, groupName }));
         }
+        await syncCatalogSourceMaterial({ db, productId: existingProduct.id, actorUserId: input.ownerUserId, material: metadata.material });
         await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
         await report("copying_operational_media", folder.name);
         const imageCopies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: existingProduct.id });

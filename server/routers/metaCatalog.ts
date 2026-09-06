@@ -4,8 +4,9 @@ import { assertPermission } from "../access/authorization";
 import { protectedProcedure, router } from "../_core/trpc";
 import { listMetaConnectionOverview } from "../integrations/meta/db";
 import { buildMetaCatalogExportSnapshot, listMetaCatalogExportJobs, previewMetaCatalogExport, runMetaCatalogExport } from "../integrations/meta/catalogExportDb";
-import { getMetaCatalogEnrichmentSettings, getMetaCatalogProductEnrichment, META_CATALOG_AGE_GROUPS, META_CATALOG_AVAILABILITY, META_CATALOG_CONDITIONS, META_CATALOG_GENDERS, META_CATALOG_MEDIA_POLICIES, saveMetaCatalogEnrichmentSettings, saveMetaCatalogProductEnrichment } from "../integrations/meta/catalogEnrichment";
+import { deleteMetaCatalogGroupEnrichment, getMetaCatalogEnrichmentSettings, getMetaCatalogProductEnrichment, listMetaCatalogGroupEnrichments, listMetaCatalogGroupPaths, META_CATALOG_AGE_GROUPS, META_CATALOG_AVAILABILITY, META_CATALOG_CONDITIONS, META_CATALOG_GENDERS, META_CATALOG_MEDIA_POLICIES, saveMetaCatalogEnrichmentSettings, saveMetaCatalogGroupEnrichment, saveMetaCatalogProductEnrichment } from "../integrations/meta/catalogEnrichment";
 import { prepareMetaCatalogMediaForProduct, prepareMetaCatalogMediaForStore } from "../integrations/meta/catalogMediaPreparation";
+import { describeMetaProductTaxonomy, searchMetaProductTaxonomy } from "../integrations/meta/catalogTaxonomy";
 
 function requireOperationalStoreId(storeId: number | null | undefined) {
   if (!storeId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لا يوجد متجر تشغيلي نشط لحسابك." });
@@ -23,7 +24,6 @@ const settingsInput = z.object({
   defaultGender: z.enum(META_CATALOG_GENDERS).nullable().optional(),
   defaultAgeGroup: z.enum(META_CATALOG_AGE_GROUPS).nullable().optional(),
   productLinkBaseUrl: optionalText(2048),
-  defaultProductType: optionalText(750),
   defaultAvailability: z.enum(META_CATALOG_AVAILABILITY).optional(),
   mediaPolicy: z.enum(META_CATALOG_MEDIA_POLICIES).optional(),
 });
@@ -35,12 +35,29 @@ const productEnrichmentInput = z.object({
   pattern: optionalText(100),
   gender: z.enum(META_CATALOG_GENDERS).nullable().optional(),
   ageGroup: z.enum(META_CATALOG_AGE_GROUPS).nullable().optional(),
-  productType: optionalText(750),
   productLink: optionalText(2048),
   exportEnabled: z.boolean().optional(),
 });
+const groupEnrichmentInput = z.object({
+  groupPath: z.string().trim().min(1).max(1000),
+  fbProductCategory: optionalText(500),
+  pattern: optionalText(100),
+  gender: z.enum(META_CATALOG_GENDERS).nullable().optional(),
+  ageGroup: z.enum(META_CATALOG_AGE_GROUPS).nullable().optional(),
+  productLink: optionalText(2048),
+});
 
 export const metaCatalogRouter = router({
+  taxonomy: protectedProcedure.input(z.object({ query: z.string().trim().max(160).optional(), limit: z.number().int().min(1).max(50).optional() }).optional()).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    return searchMetaProductTaxonomy(input ?? {});
+  }),
+  taxonomyCategory: protectedProcedure.input(z.object({ category: z.string().trim().min(1).max(500) })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const category = describeMetaProductTaxonomy(input.category);
+    if (!category) throw new TRPCError({ code: "NOT_FOUND", message: "فئة Meta غير موجودة في Taxonomy الرسمية." });
+    return category;
+  }),
   settings: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
     return getMetaCatalogEnrichmentSettings(requireOperationalStoreId(ctx.operationalStore?.id));
@@ -51,6 +68,30 @@ export const metaCatalogRouter = router({
       return await saveMetaCatalogEnrichmentSettings({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore?.id), actorUserId: ctx.user.id });
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ إعدادات إثراء Meta Catalog." });
+    }
+  }),
+  groupPaths: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    return listMetaCatalogGroupPaths(requireOperationalStoreId(ctx.operationalStore?.id));
+  }),
+  groupEnrichments: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    return listMetaCatalogGroupEnrichments(requireOperationalStoreId(ctx.operationalStore?.id));
+  }),
+  saveGroupEnrichment: protectedProcedure.input(groupEnrichmentInput).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    try {
+      return await saveMetaCatalogGroupEnrichment({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore?.id), actorUserId: ctx.user.id });
+    } catch (error) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ قاعدة مجموعة المنتجات." });
+    }
+  }),
+  deleteGroupEnrichment: protectedProcedure.input(z.object({ groupPath: z.string().trim().min(1).max(1000) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    try {
+      return await deleteMetaCatalogGroupEnrichment({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), groupPath: input.groupPath });
+    } catch (error) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حذف قاعدة مجموعة المنتجات." });
     }
   }),
   productEnrichment: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {

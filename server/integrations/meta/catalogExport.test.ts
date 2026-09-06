@@ -82,6 +82,18 @@ describe("Meta Catalog export mapping", () => {
     expect(result.items[0]).not.toHaveProperty("sale_price");
   });
 
+  it("does not create a catalog item for a variant without an approved color name", () => {
+    const result = buildMetaCatalogProductItems({
+      product: baseProduct,
+      variants: [{ id: 12, colorName: " ", sizeLabel: "", inventoryQuantity: 1 }],
+      brand: "Brand",
+      currency: "IQD",
+      media: [{ id: 1, variantId: 12, mediaType: "image", catalogUrl: "https://cdn.example/item.jpg" }],
+    });
+    expect(result).toMatchObject({ skipped: true, items: [] });
+    expect(result.issues?.join(" ")).toContain("بلا اسم لون معتمد");
+  });
+
   it("creates a stable idempotency key for the exact export snapshot", () => {
     const input = buildMetaCatalogProductItems({ product: baseProduct, variants, brand: "Brand", currency: "IQD", media: [{ id: 1, variantId: 11, mediaType: "image", catalogUrl: "https://cdn.example/item.jpg" }] });
     const first = buildCatalogExportIdempotencyKey({ storeId: 1, catalogId: "cat-1", productItems: input.items });

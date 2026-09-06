@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getMetaCatalogFieldDescriptors } from "./catalogTaxonomy";
 
 export type MetaCatalogProduct = {
   id: number;
@@ -88,6 +89,7 @@ export function buildMetaCatalogProductItems(input: {
   if (product.status !== "active") return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "يُسمح بتصدير المنتجات النشطة فقط." };
   if (product.exportEnabled === false) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "استُبعد المنتج من تصدير Meta عبر إعداداته الخاصة." };
   if (!variants.length) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "لا توجد متغيرات معتمدة لتصدير المنتج." };
+  if (!product.fbProductCategory?.trim()) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "اختر فئة Meta من Taxonomy الرسمية في إعدادات المتجر أو المجموعة أو المنتج." };
   const productLink = product.productLink;
   if (!productLink || !/^https:\/\//i.test(productLink)) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "أضف رابط صفحة المنتج العامة في إعدادات Meta Catalog أو استثناء المنتج." };
   if (!input.brand.trim()) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "أضف العلامة التجارية في إعدادات Meta Catalog." };
@@ -96,7 +98,15 @@ export function buildMetaCatalogProductItems(input: {
   const salePrice = priorPrice && Number(priorPrice) > Number(currentPrice) ? `${currentPrice} ${input.currency}` : undefined;
   const regularPrice = `${priorPrice && Number(priorPrice) > Number(currentPrice) ? priorPrice : currentPrice} ${input.currency}`;
   const issues: string[] = [];
+  const categoryFields = getMetaCatalogFieldDescriptors(product.fbProductCategory);
+  if (categoryFields.some(field => field.key === "material") && !product.material?.trim()) {
+    issues.push("الخامة غير موجودة في product.txt أو product.docx ولا يوجد استثناء يدوي للمنتج.");
+  }
   const items = variants.flatMap(variant => {
+    if (!variant.colorName?.trim()) {
+      issues.push("يوجد متغير بلا اسم لون معتمد؛ لم يُنشأ له عنصر Meta.");
+      return [];
+    }
     const variantImages = media
       .filter(item => item.variantId === variant.id && item.mediaType === "image" && /^https?:\/\//i.test(item.catalogUrl ?? item.operationalUrl ?? ""))
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));

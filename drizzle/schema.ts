@@ -121,6 +121,8 @@ export const products = mysqlTable(
     category: varchar("category", { length: 120 }),
     categoryId: int("categoryId").references(() => productCategories.id),
     description: text("description"),
+    /** Material extracted from product.txt/docx in OneDrive or entered in the product workspace. */
+    material: varchar("material", { length: 200 }),
     sizeLabels: text("sizeLabels"),
     status: mysqlEnum("status", ["draft", "needs_review", "ready", "active", "archived"]).default("draft").notNull(),
     sellingPrice: decimal("sellingPrice", { precision: 12, scale: 2 }).notNull(),
@@ -579,6 +581,32 @@ export const metaCatalogProductEnrichments = mysqlTable(
   table => [
     uniqueIndex("meta_catalog_product_enrichment_store_product_unq").on(table.storeId, table.productId),
     index("meta_catalog_product_enrichment_store_idx").on(table.storeId),
+  ],
+);
+
+/**
+ * Optional category-path rules for a store's Meta Catalog enrichment.
+ * The path is derived from the approved OneDrive catalog tree. At runtime,
+ * the most specific matching path wins, then product-specific overrides win.
+ */
+export const metaCatalogGroupEnrichments = mysqlTable(
+  "meta_catalog_group_enrichments",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    groupPath: varchar("groupPath", { length: 1000 }).notNull(),
+    fbProductCategory: varchar("fbProductCategory", { length: 500 }),
+    pattern: varchar("pattern", { length: 100 }),
+    gender: mysqlEnum("gender", ["female", "male", "unisex"]),
+    ageGroup: mysqlEnum("ageGroup", ["newborn", "infant", "toddler", "kids", "teen", "adult", "all ages"]),
+    productLink: varchar("productLink", { length: 2048 }),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_catalog_group_enrichment_store_path_unq").on(table.storeId, table.groupPath),
+    index("meta_catalog_group_enrichment_store_idx").on(table.storeId),
   ],
 );
 

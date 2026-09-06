@@ -43,7 +43,7 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
   ]);
   const productRows = await db.select().from(products).where(and(eq(products.storeId, input.storeId), eq(products.status, "active"))).orderBy(desc(products.updatedAt));
   const productIds = productRows.map(product => product.id);
-  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
+  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, productReports: [] as Array<{ productId: number; productCode: string; itemCount: number; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
   const [variantRows, mediaRows] = await Promise.all([
     db.select().from(productVariants).where(inArray(productVariants.productId, productIds)),
     db.select().from(productMedia).where(inArray(productMedia.productId, productIds)),
@@ -51,6 +51,7 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
   const items: MetaCatalogProductItem[] = [];
   let skippedProducts = 0;
   const skipped: Array<{ productId: number; productCode: string; reason: string }> = [];
+  const productReports: Array<{ productId: number; productCode: string; itemCount: number; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }> = [];
   for (const product of productRows) {
     const productVariantsForProduct = variantRows.filter(variant => variant.productId === product.id).map(variant => ({ id: variant.id, colorName: variant.colorName, sizeLabel: variant.sizeLabel, inventoryQuantity: variant.inventoryQuantity }));
     const enrichment = await getMetaCatalogProductEnrichment({ storeId: input.storeId, productId: product.id });
@@ -76,8 +77,8 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
         productLink: enrichment.effective.productLink,
         fbProductCategory: enrichment.effective.fbProductCategory,
         googleProductCategory: enrichment.effective.googleProductCategory,
-        material: enrichment.material,
-        pattern: enrichment.pattern,
+        material: enrichment.effective.material,
+        pattern: enrichment.effective.pattern,
         gender: enrichment.effective.gender,
         ageGroup: enrichment.effective.ageGroup,
         productType: enrichment.effective.productType,
@@ -89,14 +90,25 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
       brand: enrichment.effective.brand || store?.name || "",
       currency: enrichment.effective.currency,
     });
+    const resultIssues = result.issues ?? [];
     if (result.skipped) {
       skippedProducts += 1;
       skipped.push({ productId: product.id, productCode: product.productCode, reason: result.reason ?? "لم يكتمل المنتج للتصدير." });
     }
+    productReports.push({
+      productId: product.id,
+      productCode: product.productCode,
+      itemCount: result.items.length,
+      status: result.skipped || resultIssues.length ? "needs_review" : "ready",
+      category: enrichment.effective.fbProductCategoryDetails,
+      material: enrichment.effective.material,
+      materialSource: enrichment.effective.materialSource,
+      issues: result.skipped ? [result.reason ?? "لم يكتمل المنتج للتصدير."] : resultIssues,
+    });
     items.push(...result.items);
   }
   const requests = toMetaCatalogBatchRequests(items);
-  return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items, requests, idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: items }), skippedProducts, skipped, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
+  return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items, requests, idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: items }), skippedProducts, skipped, productReports, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
 }
 
 export async function previewMetaCatalogExport(input: { storeId: number; catalogAssetId: number }) {
@@ -107,6 +119,7 @@ export async function previewMetaCatalogExport(input: { storeId: number; catalog
     itemCount: snapshot.items.length,
     skippedProducts: snapshot.skippedProducts,
     skipped: snapshot.skipped.slice(0, 20),
+    productReports: snapshot.productReports.slice(0, 50),
     idempotencyKey: snapshot.idempotencyKey,
     sampleItems: snapshot.items.slice(0, 10).map(({ id, retailer_id, title, availability, price, sale_price, color, size, item_group_id, fb_product_category, material, image, video }) => ({ id, retailer_id, title, availability, price, sale_price, color, size, item_group_id, fb_product_category, material, imageCount: image?.length ?? 0, videoCount: video?.length ?? 0 })),
   };
