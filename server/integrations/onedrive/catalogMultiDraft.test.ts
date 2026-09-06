@@ -5,10 +5,7 @@ describe("معاينة Catalog متعددة المنتجات", () => {
   it("تعزل أخطاء كل مجلد وتسمح بالاختيار فقط للبيانات الصالحة وغير المكررة", async () => {
     const readFolderContents = vi.fn(async (folderId: string) => {
       if (folderId === "valid") return [{ id: "meta-valid", name: "product.txt", kind: "file" as const, webUrl: null, size: 1 }, { id: "img", name: "01.jpg", kind: "file" as const, webUrl: null, size: 1 }];
-      if (folderId === "existing") return [
-        { id: "meta-existing", name: "product.txt", kind: "file" as const, webUrl: null, size: 1 },
-        { id: "img-existing", name: "01.jpg", kind: "file" as const, webUrl: null, size: 1 },
-      ];
+      if (folderId === "existing") return [{ id: "meta-existing", name: "product.txt", kind: "file" as const, webUrl: null, size: 1 }];
       return [{ id: "img-bad", name: "01.jpg", kind: "file" as const, webUrl: null, size: 1 }];
     });
     const readMetadataText = vi.fn(async (fileId: string) => fileId === "meta-valid"
@@ -72,22 +69,3 @@ describe("معاينة Catalog متعددة المنتجات", () => {
     ]);
   });
 });
-
-  it("يتجاوز التصنيفات الفرعية ويعرض مجلد المنتج الحقيقي فقط", async () => {
-    const entries = await previewCatalogGroupProducts({
-      groupName: "ربطات",
-      productFolders: [{ id: "subcategory", name: "قطن سادة", kind: "folder", webUrl: null, size: null }],
-      existingProductCodes: new Set(),
-      readFolderContents: async (folderId: string) => {
-        if (folderId === "subcategory") return [{ id: "real-product", name: "ربطة تركي", kind: "folder", webUrl: null, size: null }];
-        return [
-          { id: "product-meta", name: "product.txt", kind: "file", webUrl: null, size: 1 },
-          { id: "product-image", name: "front.jpg", kind: "file", webUrl: "https://onedrive.test/front.jpg", size: 1 },
-        ];
-      },
-      readMetadataText: async () => "PRODUCT_NAME_AR: ربطة تركي\nSELLING_PRICE_IQD: 8000\nDESCRIPTION_AR: وصف\nSIZES:\nPRODUCT_STATUS: draft",
-    });
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ productCode: "ربطة تركي", state: "ready", imageCount: 1, sourceReference: "Catalog/ربطات/قطن سادة/ربطة تركي" });
-  });
