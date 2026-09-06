@@ -746,6 +746,39 @@ export async function saveOperationalMediaCopy(input: {
   });
 }
 
+/** Stores a dedicated Meta Catalog rendition without replacing the staff-facing operational copy. */
+export async function saveMetaCatalogMediaCopy(input: {
+  mediaId: number;
+  storageKey: string;
+  metadata: Record<string, unknown>;
+  createdByUserId: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const media = await db.select().from(productMedia).where(eq(productMedia.id, input.mediaId)).limit(1);
+  if (!media[0]) throw new Error("مرجع وسيط المنتج غير موجود.");
+  let existing: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(media[0].operationalMetadata ?? "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) existing = parsed;
+  } catch {
+    // A malformed legacy metadata field must not prevent a safe new Catalog rendition.
+  }
+  await db.update(productMedia).set({
+    operationalMetadata: JSON.stringify({
+      ...existing,
+      metaCatalog: { storageKey: input.storageKey, ...input.metadata, preparedAt: new Date().toISOString() },
+    }),
+  }).where(eq(productMedia.id, input.mediaId));
+  await db.insert(productMediaLifecycleEvents).values({
+    productId: media[0].productId,
+    mediaId: input.mediaId,
+    action: "operational_copy_created",
+    result: "succeeded",
+    createdByUserId: input.createdByUserId,
+  });
+}
+
 /**
  * Removes the database reference to a OneDrive image and its derived WebP.
  * The configured storage API provides no object-delete primitive, so clearing

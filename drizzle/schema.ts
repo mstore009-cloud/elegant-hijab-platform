@@ -531,6 +531,57 @@ export const metaCatalogExportJobs = mysqlTable(
   ],
 );
 
+/** Store-scoped defaults applied to Meta Catalog items before product-level overrides. */
+export const metaCatalogEnrichmentSettings = mysqlTable(
+  "meta_catalog_enrichment_settings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    brand: varchar("brand", { length: 100 }),
+    currency: varchar("currency", { length: 3 }).default("IQD").notNull(),
+    condition: mysqlEnum("condition", ["new", "refurbished", "used"]).default("new").notNull(),
+    defaultFbProductCategory: varchar("defaultFbProductCategory", { length: 500 }),
+    defaultGoogleProductCategory: varchar("defaultGoogleProductCategory", { length: 250 }),
+    defaultGender: mysqlEnum("defaultGender", ["female", "male", "unisex"]),
+    defaultAgeGroup: mysqlEnum("defaultAgeGroup", ["newborn", "infant", "toddler", "kids", "teen", "adult", "all ages"]),
+    productLinkBaseUrl: varchar("productLinkBaseUrl", { length: 2048 }),
+    defaultProductType: varchar("defaultProductType", { length: 750 }),
+    defaultAvailability: mysqlEnum("defaultAvailability", ["in stock", "out of stock", "available for order", "discontinued"]).default("in stock").notNull(),
+    mediaPolicy: mysqlEnum("mediaPolicy", ["catalog_high_quality", "operational_fallback"]).default("catalog_high_quality").notNull(),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("meta_catalog_enrichment_store_unq").on(table.storeId)],
+);
+
+/** Optional product-specific exceptions to the store Meta Catalog enrichment policy. */
+export const metaCatalogProductEnrichments = mysqlTable(
+  "meta_catalog_product_enrichments",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    productId: int("productId").notNull().references(() => products.id),
+    fbProductCategory: varchar("fbProductCategory", { length: 500 }),
+    googleProductCategory: varchar("googleProductCategory", { length: 250 }),
+    material: varchar("material", { length: 200 }),
+    pattern: varchar("pattern", { length: 100 }),
+    gender: mysqlEnum("gender", ["female", "male", "unisex"]),
+    ageGroup: mysqlEnum("ageGroup", ["newborn", "infant", "toddler", "kids", "teen", "adult", "all ages"]),
+    productType: varchar("productType", { length: 750 }),
+    productLink: varchar("productLink", { length: 2048 }),
+    exportEnabled: boolean("exportEnabled").default(true).notNull(),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_catalog_product_enrichment_store_product_unq").on(table.storeId, table.productId),
+    index("meta_catalog_product_enrichment_store_idx").on(table.storeId),
+  ],
+);
+
 /** A verified external messaging identity, scoped to one operational store and backed by selected Meta assets. */
 export const channelAccounts = mysqlTable(
   "channel_accounts",

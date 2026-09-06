@@ -9,7 +9,7 @@ describe("Products Meta Catalog export contract", () => {
     expect(source).toContain("metaCatalog.readiness.useQuery");
     expect(source).toContain("metaCatalog.preview.useQuery");
     expect(source).toContain("metaCatalog.exportNow.useMutation");
-    expect(source).toContain("لا يُرسل إلا المنتج النشط");
+    expect(source).toContain("لا تُنشر المسودات");
     expect(source).toContain("معاينة بلا بيانات مالية");
   });
 

@@ -4,6 +4,8 @@ import { getDb } from "../../db";
 import { getMetaCatalogAccessToken } from "./db";
 import { buildCatalogExportIdempotencyKey, buildMetaCatalogProductItems, chunkMetaCatalogBatchRequests, submitMetaCatalogBatch, toMetaCatalogBatchRequests, type MetaCatalogProductItem } from "./catalogExport";
 import { getMetaRuntimeSettings } from "./platformSettings";
+import { getMetaCatalogEnrichmentSettings, getMetaCatalogProductEnrichment } from "./catalogEnrichment";
+import { storageGet } from "../../storage";
 
 async function requireDb() {
   const db = await getDb();
@@ -11,15 +13,19 @@ async function requireDb() {
   return db;
 }
 
-function operationalPublicUrl(input: { storageKey: string | null; operationalMetadata: string | null }) {
-  const candidates: unknown[] = [input.storageKey];
+function catalogStorageKey(input: { operationalMetadata: string | null }) {
   try {
     const parsed = JSON.parse(input.operationalMetadata ?? "null") as any;
-    candidates.push(parsed?.publicUrl, parsed?.url, parsed?.operationalUrl);
+    return typeof parsed?.metaCatalog?.storageKey === "string" ? parsed.metaCatalog.storageKey : null;
   } catch {
-    // Ignore malformed legacy metadata; the item remains in review rather than exporting a private URL.
+    // Ignore malformed legacy metadata; the media remains unavailable for export.
   }
-  return candidates.find(value => typeof value === "string" && /^https:\/\//i.test(value)) as string | undefined;
+  return null;
+}
+
+async function absoluteStorageUrl(baseUrl: string | null, storageKey: string | null) {
+  if (!baseUrl || !storageKey) return null;
+  return `${baseUrl}${(await storageGet(storageKey)).url}`;
 }
 
 export async function buildMetaCatalogExportSnapshot(input: { storeId: number; catalogAssetId: number }) {
@@ -31,30 +37,79 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
   if (!connection || connection.status !== "connected") throw new Error("اتصال Meta الموحد غير جاهز لتصدير Catalog.");
   const [capability] = await db.select({ enabled: metaConnectionCapabilities.enabled, status: metaConnectionCapabilities.status, missingScopes: metaConnectionCapabilities.missingScopes }).from(metaConnectionCapabilities).where(and(eq(metaConnectionCapabilities.storeId, input.storeId), eq(metaConnectionCapabilities.connectionId, asset.connectionId), eq(metaConnectionCapabilities.purpose, "catalog"))).limit(1);
   if (!capability?.enabled || capability.status !== "ready") throw new Error(capability?.missingScopes ? `قدرة Catalog غير جاهزة؛ الصلاحيات الناقصة: ${capability.missingScopes}` : "فعّل قدرة Catalog واختر أصلها قبل التصدير.");
-  const [store] = await db.select({ name: stores.name }).from(stores).where(eq(stores.id, input.storeId)).limit(1);
+  const [[store], settings] = await Promise.all([
+    db.select({ name: stores.name }).from(stores).where(eq(stores.id, input.storeId)).limit(1),
+    getMetaCatalogEnrichmentSettings(input.storeId),
+  ]);
   const productRows = await db.select().from(products).where(and(eq(products.storeId, input.storeId), eq(products.status, "active"))).orderBy(desc(products.updatedAt));
   const productIds = productRows.map(product => product.id);
-  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
+  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
   const [variantRows, mediaRows] = await Promise.all([
     db.select().from(productVariants).where(inArray(productVariants.productId, productIds)),
     db.select().from(productMedia).where(inArray(productMedia.productId, productIds)),
   ]);
   const items: MetaCatalogProductItem[] = [];
   let skippedProducts = 0;
+  const skipped: Array<{ productId: number; productCode: string; reason: string }> = [];
   for (const product of productRows) {
     const productVariantsForProduct = variantRows.filter(variant => variant.productId === product.id).map(variant => ({ id: variant.id, colorName: variant.colorName, sizeLabel: variant.sizeLabel, inventoryQuantity: variant.inventoryQuantity }));
-    const productMediaForProduct = mediaRows.filter(media => media.productId === product.id).map(media => ({ id: media.id, variantId: media.variantId, mediaType: media.mediaType, publicUrl: operationalPublicUrl({ storageKey: media.storageKey, operationalMetadata: media.operationalMetadata }), sortOrder: media.sortOrder }));
-    const result = buildMetaCatalogProductItems({ product: { id: product.id, productCode: product.productCode, name: product.name, category: product.category, description: product.description, status: product.status, sellingPrice: product.sellingPrice, previousPrice: product.previousPrice }, variants: productVariantsForProduct, media: productMediaForProduct, brand: store?.name ?? "عالم الحجابات الأنيقة", currency: "IQD" });
-    if (result.skipped) skippedProducts += 1;
+    const enrichment = await getMetaCatalogProductEnrichment({ storeId: input.storeId, productId: product.id });
+    const productMediaForProduct = await Promise.all(mediaRows.filter(media => media.productId === product.id).map(async media => ({
+      id: media.id,
+      variantId: media.variantId,
+      mediaType: media.mediaType,
+      catalogUrl: await absoluteStorageUrl(settings.productLinkBaseUrl, catalogStorageKey({ operationalMetadata: media.operationalMetadata })),
+      operationalUrl: settings.mediaPolicy === "operational_fallback" ? await absoluteStorageUrl(settings.productLinkBaseUrl, media.storageKey) : null,
+      sortOrder: media.sortOrder,
+    })));
+    const result = buildMetaCatalogProductItems({
+      product: {
+        id: product.id,
+        productCode: product.productCode,
+        name: product.name,
+        category: product.category,
+        description: product.description,
+        status: product.status,
+        sellingPrice: product.sellingPrice,
+        previousPrice: product.previousPrice,
+        exportEnabled: enrichment.exportEnabled,
+        productLink: enrichment.effective.productLink,
+        fbProductCategory: enrichment.effective.fbProductCategory,
+        googleProductCategory: enrichment.effective.googleProductCategory,
+        material: enrichment.material,
+        pattern: enrichment.pattern,
+        gender: enrichment.effective.gender,
+        ageGroup: enrichment.effective.ageGroup,
+        productType: enrichment.effective.productType,
+        defaultAvailability: settings.defaultAvailability,
+        condition: settings.condition,
+      },
+      variants: productVariantsForProduct,
+      media: productMediaForProduct,
+      brand: enrichment.effective.brand || store?.name || "",
+      currency: enrichment.effective.currency,
+    });
+    if (result.skipped) {
+      skippedProducts += 1;
+      skipped.push({ productId: product.id, productCode: product.productCode, reason: result.reason ?? "لم يكتمل المنتج للتصدير." });
+    }
     items.push(...result.items);
   }
   const requests = toMetaCatalogBatchRequests(items);
-  return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items, requests, idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: items }), skippedProducts, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
+  return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items, requests, idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: items }), skippedProducts, skipped, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
 }
 
 export async function previewMetaCatalogExport(input: { storeId: number; catalogAssetId: number }) {
   const snapshot = await buildMetaCatalogExportSnapshot(input);
-  return { catalogAssetId: snapshot.catalogAssetId, catalogId: snapshot.catalogId, itemCount: snapshot.items.length, skippedProducts: snapshot.skippedProducts, idempotencyKey: snapshot.idempotencyKey, sampleItems: snapshot.items.slice(0, 10).map(({ id, retailer_id, title, availability, price, sale_price, color, additional_variant_attribute, image }) => ({ id, retailer_id, title, availability, price, sale_price, color, additional_variant_attribute, imageCount: image?.length ?? 0 })) };
+  return {
+    catalogAssetId: snapshot.catalogAssetId,
+    catalogId: snapshot.catalogId,
+    itemCount: snapshot.items.length,
+    skippedProducts: snapshot.skippedProducts,
+    skipped: snapshot.skipped.slice(0, 20),
+    idempotencyKey: snapshot.idempotencyKey,
+    sampleItems: snapshot.items.slice(0, 10).map(({ id, retailer_id, title, availability, price, sale_price, color, size, item_group_id, fb_product_category, material, image, video }) => ({ id, retailer_id, title, availability, price, sale_price, color, size, item_group_id, fb_product_category, material, imageCount: image?.length ?? 0, videoCount: video?.length ?? 0 })),
+  };
 }
 
 export async function runMetaCatalogExport(input: { storeId: number; catalogAssetId: number; createdByUserId: number }) {
