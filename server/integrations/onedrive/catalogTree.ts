@@ -2,6 +2,7 @@ import type { CatalogDriveItem } from "./catalog";
 
 const METADATA_FILE = /^product\.(txt|docx)$/i;
 const PRODUCT_MEDIA = /\.(avif|gif|jpe?g|mov|mp4|png|webp)$/i;
+const PRODUCT_IMAGE = /\.(avif|gif|jpe?g|png|webp)$/i;
 
 export type CatalogTreeNode = {
   folderId: string;
@@ -46,14 +47,15 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
 function classifyFolder(items: CatalogDriveItem[], hasSubfolders: boolean) {
   const metadata = items.find(item => item.kind === "file" && METADATA_FILE.test(item.name))?.name ?? null;
   const mediaFileCount = items.filter(item => item.kind === "file" && PRODUCT_MEDIA.test(item.name)).length;
-  if (metadata && mediaFileCount > 0) return { kind: "product" as const, metadataFileName: metadata, mediaFileCount, warning: null };
+  const imageFileCount = items.filter(item => item.kind === "file" && PRODUCT_IMAGE.test(item.name)).length;
+  if (metadata && imageFileCount > 0) return { kind: "product" as const, metadataFileName: metadata, mediaFileCount, warning: null };
   if (hasSubfolders) return { kind: "category" as const, metadataFileName: metadata, mediaFileCount, warning: null };
   if (metadata || mediaFileCount > 0) {
     return {
       kind: "needs_review" as const,
       metadataFileName: metadata,
       mediaFileCount,
-      warning: metadata ? "يحتاج هذا المجلد صورة أو فيديو صالحًا ليُعامل كمنتج." : "يحتاج هذا المجلد ملف product.txt أو product.docx ليُعامل كمنتج.",
+      warning: metadata ? "يحتاج هذا المجلد صورة صالحة ليُعامل كمنتج." : "يحتاج هذا المجلد ملف product.txt أو product.docx ليُعامل كمنتج.",
     };
   }
   return { kind: "needs_review" as const, metadataFileName: null, mediaFileCount: 0, warning: "المجلد فارغ أو لا يطابق بنية تصنيف أو منتج." };

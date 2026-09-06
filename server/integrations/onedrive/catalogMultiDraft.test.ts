@@ -5,7 +5,10 @@ describe("معاينة Catalog متعددة المنتجات", () => {
   it("تعزل أخطاء كل مجلد وتسمح بالاختيار فقط للبيانات الصالحة وغير المكررة", async () => {
     const readFolderContents = vi.fn(async (folderId: string) => {
       if (folderId === "valid") return [{ id: "meta-valid", name: "product.txt", kind: "file" as const, webUrl: null, size: 1 }, { id: "img", name: "01.jpg", kind: "file" as const, webUrl: null, size: 1 }];
-      if (folderId === "existing") return [{ id: "meta-existing", name: "product.txt", kind: "file" as const, webUrl: null, size: 1 }];
+      if (folderId === "existing") return [
+        { id: "meta-existing", name: "product.txt", kind: "file" as const, webUrl: null, size: 1 },
+        { id: "img-existing", name: "01.jpg", kind: "file" as const, webUrl: null, size: 1 },
+      ];
       return [{ id: "img-bad", name: "01.jpg", kind: "file" as const, webUrl: null, size: 1 }];
     });
     const readMetadataText = vi.fn(async (fileId: string) => fileId === "meta-valid"

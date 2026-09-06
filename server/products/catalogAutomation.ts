@@ -51,8 +51,12 @@ async function discoverCatalogWorkItems(input: { encryptedAccessToken: string; d
     if (visited.has(folder.id)) return;
     visited.add(folder.id);
     const contents = await listCatalogChildren({ encryptedAccessToken: input.encryptedAccessToken, driveId: input.driveId, folderId: folder.id });
-    const hasProductFiles = contents.some(item => item.kind === "file" && (item.name.toLowerCase() === "product.txt" || item.name.toLowerCase() === "product.docx" || isImage(item) || isVideo(item)));
-    if (hasProductFiles) {
+    const hasMetadataFile = contents.some(item => item.kind === "file" && (item.name.toLowerCase() === "product.txt" || item.name.toLowerCase() === "product.docx"));
+    const hasImageFile = contents.some(isImage);
+    // The folder name is the product code. A folder is never importable merely
+    // because it has a document, a video, or a subfolder: it must directly
+    // contain both its own product metadata and at least one product image.
+    if (hasMetadataFile && hasImageFile) {
       workItems.push({ rootGroup, folder, groupName: categoryPath });
       return;
     }

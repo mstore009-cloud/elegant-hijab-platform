@@ -20,7 +20,6 @@ export type CatalogGroupPreviewEntry = {
 };
 
 const isImageFile = (item: CatalogDriveItem) => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name);
-const isVideoFile = (item: CatalogDriveItem) => item.kind === "file" && /\.(mp4|mov|m4v|webm)$/i.test(item.name);
 
 type DiscoveredProductFolder = { folder: CatalogDriveItem; contents: CatalogDriveItem[]; sourceReference: string };
 
@@ -31,12 +30,18 @@ async function discoverProductFolders(input: { groupName: string; folders: Catal
     if (visited.has(folder.id)) return;
     visited.add(folder.id);
     const contents = await input.readFolderContents(folder.id);
-    const hasProductMarker = contents.some(item => item.kind === "file" && (["product.txt", "product.docx"].includes(item.name.toLowerCase()) || isImageFile(item) || isVideoFile(item)));
-    if (hasProductMarker) {
+    const hasMetadataFile = contents.some(item => item.kind === "file" && ["product.txt", "product.docx"].includes(item.name.toLowerCase()));
+    const hasImageFile = contents.some(isImageFile);
+    if (hasMetadataFile && hasImageFile) {
       discovered.push({ folder, contents, sourceReference: `Catalog/${categoryPath}/${folder.name}` });
       return;
     }
-    for (const child of contents.filter(item => item.kind === "folder")) await visit(child, `${categoryPath}/${folder.name}`);
+    const children = contents.filter(item => item.kind === "folder");
+    if (children.length === 0 && (hasMetadataFile || hasImageFile)) {
+      discovered.push({ folder, contents, sourceReference: `Catalog/${categoryPath}/${folder.name}` });
+      return;
+    }
+    for (const child of children) await visit(child, `${categoryPath}/${folder.name}`);
   };
   for (const folder of input.folders.filter(item => item.kind === "folder")) await visit(folder, input.groupName);
   return discovered;
@@ -79,6 +84,19 @@ export async function previewCatalogGroupProducts(input: {
             imageCount: images.length,
             documentCount,
             problems: ["ملف product.txt أو product.docx غير موجود."],
+          };
+        }
+        if (images.length === 0) {
+          return {
+            productFolderId: productFolder.id,
+            productCode: productFolder.name,
+            state: "invalid" as const,
+            selectable: false,
+            sourceReference,
+            metadata: null,
+            imageCount: 0,
+            documentCount,
+            problems: ["لا توجد صورة صالحة داخل مجلد المنتج."],
           };
         }
         const metadata = metadataFile.name.toLowerCase() === "product.docx"
