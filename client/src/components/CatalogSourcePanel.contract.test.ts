@@ -13,10 +13,13 @@ describe("عقد لوحة مصدر OneDrive داخل المنتجات", () => {
     expect(source).toContain("trpc.integrations.previewCatalogGroupProducts.useQuery");
     expect(source).toContain("trpc.integrations.syncCatalogCategoryTree.useMutation");
     expect(source).toContain("trpc.catalogSync.runNow.useMutation");
+    expect(source).toContain("trpc.catalogSync.activate.useMutation");
     expect(source).toContain("trpc.integrations.reauthorizeCatalog.useMutation");
     expect(source).toContain("إعادة تفويض OneDrive");
     expect(source).toContain("استيراد/تحديث من OneDrive");
     expect(source).toContain("معاينة الشجرة والأقسام");
     expect(source).toContain("تغيير الجذر");
+    expect(source).toContain("تعمل كل 10 دقائق");
+    expect(source).toContain('cronExpression: "0 */10 * * * *"');
   });
 });

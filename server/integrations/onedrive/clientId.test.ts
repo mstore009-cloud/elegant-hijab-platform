@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-describe("معرّف تطبيق OneDrive", () => {
+const describeLiveMicrosoft = process.env.RUN_LIVE_ONEDRIVE_TESTS === "true" ? describe : describe.skip;
+
+describeLiveMicrosoft("معرّف تطبيق OneDrive", () => {
   it("يُقبل من نقطة تفويض Microsoft ولا يشير إلى تطبيق غير موجود", async () => {
     const clientId = process.env.MICROSOFT_ONEDRIVE_CLIENT_ID;
     expect(clientId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
