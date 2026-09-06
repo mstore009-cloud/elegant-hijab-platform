@@ -545,6 +545,16 @@ export async function getProductMedia(productId: number) {
   return db.select().from(productMedia).where(eq(productMedia.productId, productId)).orderBy(productMedia.sortOrder);
 }
 
+export async function getCatalogProductFolderId(input: { productId: number; storeId: number }) {
+  const db = await getDb();
+  if (!db) return null;
+  const [folder] = await db.select({ productFolderId: catalogFolderImports.productFolderId })
+    .from(catalogFolderImports)
+    .where(and(eq(catalogFolderImports.linkedProductId, input.productId), eq(catalogFolderImports.storeId, input.storeId)))
+    .limit(1);
+  return folder?.productFolderId ?? null;
+}
+
 export async function createProduct(input: {
   storeId: number;
   productCode: string;

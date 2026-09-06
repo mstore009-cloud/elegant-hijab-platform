@@ -42,6 +42,35 @@ function sourceReference(groupName: string, productCode: string) {
   return `Catalog/${groupName}/${productCode}`;
 }
 
+type CatalogWorkItem = { folder: CatalogDriveItem; groupName: string };
+
+/**
+ * The merchant's folder tree is the category tree. Every leaf folder is a
+ * product candidate, and its own name is the product Code. This deliberately
+ * allows missing metadata or media: those shortcomings become editable draft
+ * fields instead of hiding the product from the platform.
+ */
+async function discoverCatalogWorkItems(input: { encryptedAccessToken: string; driveId: string; groups: CatalogDriveItem[] }) {
+  const workItems: CatalogWorkItem[] = [];
+  const visited = new Set<string>();
+  const visit = async (folder: CatalogDriveItem, categoryPath: string): Promise<void> => {
+    if (visited.has(folder.id)) return;
+    visited.add(folder.id);
+    const contents = await listCatalogChildren({ encryptedAccessToken: input.encryptedAccessToken, driveId: input.driveId, folderId: folder.id });
+    const childFolders = contents.filter(item => item.kind === "folder");
+    if (childFolders.length === 0) {
+      workItems.push({ folder, groupName: categoryPath });
+      return;
+    }
+    await mapWithConcurrency(childFolders, 2, async child => visit(child, `${categoryPath}/${folder.name}`));
+  };
+  for (const group of input.groups) {
+    const children = (await listCatalogChildren({ encryptedAccessToken: input.encryptedAccessToken, driveId: input.driveId, folderId: group.id })).filter(item => item.kind === "folder");
+    await mapWithConcurrency(children, 2, async child => visit(child, group.name));
+  }
+  return workItems;
+}
+
 export function classifyCatalogGroupObservation(existing: { state: "discovered" | "needs_review" | "missing"; groupName: string } | undefined, currentGroupName: string) {
   const renamed = Boolean(existing && existing.groupName !== currentGroupName);
   return {
@@ -289,12 +318,11 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       });
     }
   });
-  const groupedFolders: Array<{ group: CatalogDriveItem; folders: CatalogDriveItem[] }> = [];
-  await mapWithConcurrency(groups, 2, async group => {
-    const folders = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId: group.id })).filter(item => item.kind === "folder");
-    groupedFolders.push({ group, folders });
+  const workItems = await discoverCatalogWorkItems({
+    encryptedAccessToken: connection.encryptedAccessToken,
+    driveId: connection.selectedDriveId,
+    groups,
   });
-  const workItems = groupedFolders.flatMap(({ group, folders }) => folders.map(folder => ({ group, folder })));
   const seenProductFolderIds = new Set<string>();
   let processedFolders = 0;
   const report = async (stage: CatalogScanProgress["stage"], currentProduct: string | null = null) => {
@@ -307,10 +335,10 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
   };
 
   await report("discovering_folders");
-  await mapWithConcurrency(workItems, 2, async ({ group, folder }) => {
+  await mapWithConcurrency(workItems, 2, async ({ groupName, folder }) => {
     seenProductFolderIds.add(folder.id);
     summary.discovered += 1;
-    const source = sourceReference(group.name, folder.name);
+    const source = sourceReference(groupName, folder.name);
     await report("reading_product", folder.name);
     try {
       const contents = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, folderId: folder.id });
@@ -319,9 +347,9 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       const metadata = await readCatalogProductMetadata({ contents, encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId! });
       const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
       const existingProduct = productByCode.get(folder.name) ?? (priorFolder?.linkedProductId ? productById.get(priorFolder.linkedProductId) : undefined);
-      const folderObservation = classifyCatalogFolderObservation(priorFolder, group.name, folder.name);
+      const folderObservation = classifyCatalogFolderObservation(priorFolder, groupName, folder.name);
       if (!existingProduct && priorFolder?.lastError === "deleted_by_user") {
-        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
+        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
         summary.existing += 1;
         return;
       }
@@ -331,7 +359,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
           storeId: input.storeId,
           ownerUserId: input.ownerUserId,
           productFolderId: folder.id,
-          groupName: group.name,
+          groupName,
           productCode: folder.name,
           source,
           state: folderObservation.changed ? "needs_review" : preserveDraftState ? "draft_created" : "already_exists",
@@ -341,7 +369,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
           lastError: folderObservation.lastError,
         });
         if (folderObservation.changed) {
-          await notifyPermissionHolders(buildCatalogFolderReviewNotification({ storeId: input.storeId, entityId: folderObservationRecord.id, folderId: folder.id, folderName: folder.name, groupName: group.name }));
+          await notifyPermissionHolders(buildCatalogFolderReviewNotification({ storeId: input.storeId, entityId: folderObservationRecord.id, folderId: folder.id, folderName: folder.name, groupName }));
         }
         await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
         await report("copying_operational_media", folder.name);
@@ -354,9 +382,9 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
         summary.existing += 1;
         return;
       }
-      const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadata });
+      const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName, folder, images, videos, metadata });
       productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
-      await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
+      await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
       summary.draftsCreated += 1;
       await report("copying_operational_media", folder.name);
       if (images.length > 0) {
@@ -371,7 +399,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       await ensureAutomaticColorSuggestion({ db, productId: created.productId, actorUserId: input.ownerUserId });
     } catch (error) {
       summary.failed += 1;
-      await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source, state: "failed", imageCount: 0, lastError: error instanceof Error ? error.message : "تعذر فحص مجلد المنتج." });
+      await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "failed", imageCount: 0, lastError: error instanceof Error ? error.message : "تعذر فحص مجلد المنتج." });
     } finally {
       processedFolders += 1;
       await report("processing_folders", folder.name);

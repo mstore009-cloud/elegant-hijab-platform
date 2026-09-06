@@ -21,6 +21,26 @@ export type CatalogGroupPreviewEntry = {
 
 const isImageFile = (item: CatalogDriveItem) => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name);
 
+type DiscoveredProductFolder = { folder: CatalogDriveItem; contents: CatalogDriveItem[]; sourceReference: string };
+
+async function discoverProductFolders(input: { groupName: string; folders: CatalogDriveItem[]; readFolderContents: (folderId: string) => Promise<CatalogDriveItem[]> }) {
+  const discovered: DiscoveredProductFolder[] = [];
+  const visited = new Set<string>();
+  const visit = async (folder: CatalogDriveItem, categoryPath: string): Promise<void> => {
+    if (visited.has(folder.id)) return;
+    visited.add(folder.id);
+    const contents = await input.readFolderContents(folder.id);
+    const children = contents.filter(item => item.kind === "folder");
+    if (children.length === 0) {
+      discovered.push({ folder, contents, sourceReference: `Catalog/${categoryPath}/${folder.name}` });
+      return;
+    }
+    for (const child of children) await visit(child, `${categoryPath}/${folder.name}`);
+  };
+  for (const folder of input.folders.filter(item => item.kind === "folder")) await visit(folder, input.groupName);
+  return discovered;
+}
+
 /**
  * Scans product folders without downloading original images or creating any row.
  * Each folder is isolated so one malformed product never hides the rest.
@@ -33,16 +53,17 @@ export async function previewCatalogGroupProducts(input: {
   readMetadataText: (fileId: string) => Promise<string>;
   readMetadataDocx?: (fileId: string) => Promise<CatalogProductMetadata>;
 }): Promise<CatalogGroupPreviewEntry[]> {
-  const folders = input.productFolders.filter(item => item.kind === "folder");
+  const folders = await discoverProductFolders({ groupName: input.groupName, folders: input.productFolders, readFolderContents: input.readFolderContents });
   const results: CatalogGroupPreviewEntry[] = [];
   const concurrency = 3;
 
   for (let index = 0; index < folders.length; index += concurrency) {
     const batch = folders.slice(index, index + concurrency);
-    const inspected = await Promise.all(batch.map(async productFolder => {
-      const sourceReference = `Catalog/${input.groupName}/${productFolder.name}`;
+    const inspected = await Promise.all(batch.map(async discoveredFolder => {
+      const productFolder = discoveredFolder.folder;
+      const sourceReference = discoveredFolder.sourceReference;
       try {
-        const contents = await input.readFolderContents(productFolder.id);
+        const contents = discoveredFolder.contents;
         const metadataFile = contents.find(item => item.kind === "file" && ["product.txt", "product.docx"].includes(item.name.toLowerCase()));
         const images = contents.filter(isImageFile);
         const documentCount = contents.filter(item => item.kind === "file" && item.id !== metadataFile?.id && !isImageFile(item)).length;

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const catalogMocks = vi.hoisted(() => ({
   getConnection: vi.fn(),
   listChildren: vi.fn(),
+  readTextFile: vi.fn(),
   generateOperational: vi.fn(),
   generateOperationalVideos: vi.fn(),
   notifyPermissionHolders: vi.fn(),
@@ -15,7 +16,7 @@ vi.mock("../integrations/onedrive/catalogAuth", () => ({
 }));
 vi.mock("../integrations/onedrive/catalog", () => ({
   listCatalogChildren: catalogMocks.listChildren,
-  readCatalogTextFile: vi.fn(),
+  readCatalogTextFile: catalogMocks.readTextFile,
 }));
 vi.mock("./operationalMediaService", () => ({
   generateOperationalMediaForProduct: catalogMocks.generateOperational,
@@ -25,7 +26,7 @@ vi.mock("../notifications/db", () => ({
   notifyPermissionHolders: catalogMocks.notifyPermissionHolders,
 }));
 
-import { catalogFolderImports, catalogGroupImports, productImportJobs, productOperations, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, catalogGroupImports, productImportJobs, productMedia, productOperations, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
 import { scanCatalogForOwner } from "./catalogAutomation";
@@ -35,6 +36,7 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
   beforeEach(() => {
     catalogMocks.getConnection.mockReset();
     catalogMocks.listChildren.mockReset();
+    catalogMocks.readTextFile.mockReset();
     catalogMocks.generateOperational.mockReset();
     catalogMocks.generateOperationalVideos.mockReset();
     catalogMocks.notifyPermissionHolders.mockReset();
@@ -110,6 +112,87 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
         await db.delete(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId));
         await db.delete(products).where(eq(products.id, productId));
       }
+    }
+  }, 15_000);
+
+  it("ينشئ مسودة Code مع الصورة الموجودة حتى عند غياب product.txt", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار مسودة الصورة.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    const store = await getPublicStore();
+    if (!owner || !store) throw new Error("لا توجد بيانات تشغيلية لاختبار مسودة الصورة.");
+    const productCode = `TST-IMAGE-${randomUUID().slice(0, 10)}`;
+    const groupId = `group-${productCode}`;
+    const folderId = `folder-${productCode}`;
+    let productId: number | null = null;
+    catalogMocks.getConnection.mockResolvedValue({ status: "catalog_selected", selectedDriveId: "drive-test", selectedFolderId: "catalog-root", encryptedAccessToken: "encrypted-test-token" });
+    catalogMocks.listChildren.mockImplementation(async ({ folderId: requestedFolderId }: { folderId: string }) => {
+      if (requestedFolderId === "catalog-root") return [{ id: groupId, name: "ربطات", kind: "folder" }];
+      if (requestedFolderId === groupId) return [{ id: folderId, name: productCode, kind: "folder" }];
+      if (requestedFolderId === folderId) return [{ id: "image-1", name: "front.webp", kind: "file", webUrl: "https://onedrive.test/front.webp" }];
+      return [];
+    });
+    try {
+      const summary = await scanCatalogForOwner({ ownerUserId: owner.id, storeId: store.id });
+      expect(summary).toMatchObject({ discovered: 1, draftsCreated: 1, existing: 0, failed: 0 });
+      const [draft] = await db.select().from(products).where(and(eq(products.storeId, store.id), eq(products.productCode, productCode))).limit(1);
+      expect(draft).toMatchObject({ productCode, status: "draft", category: "ربطات", name: `منتج يحتاج بيانات — ${productCode}` });
+      productId = draft!.id;
+      const media = await db.select().from(productMedia).where(eq(productMedia.productId, productId));
+      expect(media).toEqual(expect.arrayContaining([expect.objectContaining({ source: "onedrive", mediaType: "image", originalFileName: "front.webp", originalUrl: "https://onedrive.test/front.webp" })]));
+      const [folder] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
+      expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual(expect.arrayContaining(["product.txt"]));
+      expect(JSON.parse(folder!.missingFields ?? "[]")).not.toContain("images");
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productMedia).where(eq(productMedia.productId, productId));
+        await db.delete(productImportJobs).where(eq(productImportJobs.linkedProductId, productId));
+        await db.delete(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+      await db.delete(catalogGroupImports).where(eq(catalogGroupImports.groupFolderId, groupId));
+    }
+  }, 15_000);
+
+  it("يستخدم اسم المجلد Code وينشئ مسودة مكتملة البيانات والوسائط", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار مسودة المنتج المكتمل.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    const store = await getPublicStore();
+    if (!owner || !store) throw new Error("لا توجد بيانات تشغيلية لاختبار مسودة المنتج المكتمل.");
+    const productCode = `TST-FULL-${randomUUID().slice(0, 10)}`;
+    const groupId = `group-${productCode}`;
+    const folderId = `folder-${productCode}`;
+    let productId: number | null = null;
+    catalogMocks.getConnection.mockResolvedValue({ status: "catalog_selected", selectedDriveId: "drive-test", selectedFolderId: "catalog-root", encryptedAccessToken: "encrypted-test-token" });
+    catalogMocks.readTextFile.mockResolvedValue("PRODUCT_NAME_AR: حجاب مستورد\nSELLING_PRICE_IQD: 15000\nDESCRIPTION_AR: وصف مستورد\nSIZES:\nPRODUCT_STATUS: draft");
+    catalogMocks.listChildren.mockImplementation(async ({ folderId: requestedFolderId }: { folderId: string }) => {
+      if (requestedFolderId === "catalog-root") return [{ id: groupId, name: "حجابات", kind: "folder" }];
+      if (requestedFolderId === groupId) return [{ id: folderId, name: productCode, kind: "folder" }];
+      if (requestedFolderId === folderId) return [
+        { id: "metadata", name: "product.txt", kind: "file", webUrl: null },
+        { id: "image", name: "front.jpg", kind: "file", webUrl: "https://onedrive.test/front.jpg" },
+      ];
+      return [];
+    });
+    try {
+      const summary = await scanCatalogForOwner({ ownerUserId: owner.id, storeId: store.id });
+      expect(summary).toMatchObject({ discovered: 1, draftsCreated: 1, existing: 0, failed: 0 });
+      const [draft] = await db.select().from(products).where(and(eq(products.storeId, store.id), eq(products.productCode, productCode))).limit(1);
+      expect(draft).toMatchObject({ productCode, name: "حجاب مستورد", category: "حجابات", description: "وصف مستورد", sellingPrice: "15000.00", status: "draft" });
+      productId = draft!.id;
+      const [folder] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
+      expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual([]);
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productMedia).where(eq(productMedia.productId, productId));
+        await db.delete(productImportJobs).where(eq(productImportJobs.linkedProductId, productId));
+        await db.delete(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+      await db.delete(catalogGroupImports).where(eq(catalogGroupImports.groupFolderId, groupId));
     }
   }, 15_000);
 

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getProductWithVariants: vi.fn(),
   getProductMedia: vi.fn(),
+  getCatalogProductFolderId: vi.fn(),
   saveOperationalMediaCopy: vi.fn(),
   getUsableCatalogConnection: vi.fn(),
   listCatalogChildren: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./db", () => ({
   getProductWithVariants: mocks.getProductWithVariants,
   getProductMedia: mocks.getProductMedia,
+  getCatalogProductFolderId: mocks.getCatalogProductFolderId,
   saveOperationalMediaCopy: mocks.saveOperationalMediaCopy,
 }));
 vi.mock("../integrations/onedrive/catalogAuth", () => ({ getUsableCatalogConnection: mocks.getUsableCatalogConnection }));
@@ -42,14 +44,14 @@ describe("خدمة إعادة توليد WebP", () => {
       originalFileName: "wine.jpg",
       storageKey: "products/44/operational/12/91-old.webp",
     }]);
+    mocks.getCatalogProductFolderId.mockResolvedValue("product-1");
     mocks.getUsableCatalogConnection.mockResolvedValue({
       selectedDriveId: "drive-1",
       selectedFolderId: "catalog-1",
       encryptedAccessToken: "encrypted-token",
     });
     mocks.listCatalogChildren.mockImplementation(async ({ folderId }: { folderId: string }) => {
-      if (folderId === "catalog-1") return [{ id: "group-1", kind: "folder", name: "الحجابات" }];
-      if (folderId === "group-1") return [{ id: "product-1", kind: "folder", name: "HJB-REGEN-001" }];
+      if (folderId === "product-1") return [{ id: "file-1", kind: "file", name: "wine.jpg" }];
       return [{ id: "file-1", kind: "file", name: "wine.jpg" }];
     });
     mocks.readCatalogOriginalImageBytes.mockResolvedValue({ bytes: Buffer.from("original"), mimeType: "image/jpeg" });

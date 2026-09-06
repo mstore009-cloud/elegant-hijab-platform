@@ -3,7 +3,7 @@ import { getUsableCatalogConnection } from "../integrations/onedrive/catalogAuth
 import { listCatalogChildren, readCatalogImageDataUrl, readCatalogOriginalImageBytes, readCatalogOriginalVideoBytes } from "../integrations/onedrive/catalog";
 import { createOperationalImageDerivative } from "../integrations/onedrive/operationalMedia";
 import { storagePut } from "../storage";
-import { getProductMedia, getProductWithVariants, saveOperationalMediaCopy } from "./db";
+import { getCatalogProductFolderId, getProductMedia, getProductWithVariants, saveOperationalMediaCopy } from "./db";
 import { selectForcedOperationalRegenerationCandidates, selectOperationalRegenerationCandidates } from "./operationalMediaLifecycle";
 
 export async function generateOperationalMediaForProduct(input: { userId: number; productId: number }) {
@@ -19,13 +19,9 @@ export async function generateOperationalVideosForProduct(input: { userId: numbe
 
   const connection = await getUsableCatalogConnection(item.product.storeId);
   if (!connection?.selectedDriveId || !connection.selectedFolderId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مرجع Catalog غير متاح لإنشاء نسخ الفيديو التشغيلية." });
-  const groups = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId });
-  const group = groups.find(entry => entry.kind === "folder" && entry.name === item.product.category);
-  if (!group) throw new TRPCError({ code: "NOT_FOUND", message: "لم توجد مجموعة المنتج في Catalog." });
-  const folders = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: group.id });
-  const folder = folders.find(entry => entry.kind === "folder" && entry.name === item.product.productCode);
-  if (!folder) throw new TRPCError({ code: "NOT_FOUND", message: "لم يوجد مجلد المنتج في Catalog." });
-  const files = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: folder.id });
+  const productFolderId = await getCatalogProductFolderId({ productId: item.product.id, storeId: item.product.storeId });
+  if (!productFolderId) throw new TRPCError({ code: "NOT_FOUND", message: "لم يوجد مرجع مجلد OneDrive لهذا المنتج." });
+  const files = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: productFolderId });
   const byName = new Map(files.map(file => [file.name, file]));
   const created: Array<{ mediaId: number; storageKey: string; outputBytes: number }> = [];
   for (const entry of candidates) {
@@ -77,13 +73,9 @@ async function materializeOperationalMediaForProduct(input: {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مرجع Catalog غير متاح لإنشاء النسخ التشغيلية." });
   }
   const driveId = connection.selectedDriveId;
-  const groups = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId, folderId: connection.selectedFolderId });
-  const group = groups.find(entry => entry.kind === "folder" && entry.name === item.product.category);
-  if (!group) throw new TRPCError({ code: "NOT_FOUND", message: "لم توجد مجموعة المنتج في Catalog." });
-  const folders = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId, folderId: group.id });
-  const productFolder = folders.find(entry => entry.kind === "folder" && entry.name === item.product.productCode);
-  if (!productFolder) throw new TRPCError({ code: "NOT_FOUND", message: "لم يوجد مجلد المنتج في Catalog." });
-  const sourceFiles = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId, folderId: productFolder.id });
+  const productFolderId = await getCatalogProductFolderId({ productId: item.product.id, storeId: item.product.storeId });
+  if (!productFolderId) throw new TRPCError({ code: "NOT_FOUND", message: "لم يوجد مرجع مجلد OneDrive لهذا المنتج." });
+  const sourceFiles = await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId, folderId: productFolderId });
   const byName = new Map(sourceFiles.map(file => [file.name, file]));
   const created = [] as Array<{ mediaId: number; storageKey: string; outputBytes: number }>;
 
