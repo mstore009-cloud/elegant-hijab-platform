@@ -16,7 +16,7 @@ const catalogAssetInput = z.object({ catalogAssetId: z.number().int().positive()
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
 const settingsInput = z.object({
   brand: optionalText(100),
-  currency: z.string().trim().length(3).optional(),
+  currency: z.enum(["IQD", "USD"]).optional(),
   condition: z.enum(META_CATALOG_CONDITIONS).optional(),
   defaultFbProductCategory: optionalText(500),
   defaultGoogleProductCategory: optionalText(250),

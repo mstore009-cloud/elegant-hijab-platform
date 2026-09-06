@@ -6,6 +6,8 @@ describe("MetaCatalogEnrichmentPanel contract", () => {
 
   it("keeps store defaults, high-quality media preparation, and product exceptions in the Catalog workflow", () => {
     expect(source).toContain("إعدادات إثراء Meta Catalog");
+    expect(source).toContain("الدينار العراقي (IQD)");
+    expect(source).toContain("الدولار الأميركي (USD)");
     expect(source).toContain("Facebook Product Category");
     expect(source).toContain("الخامة Material");
     expect(source).toContain("رابط واجهة المتجر العامة");

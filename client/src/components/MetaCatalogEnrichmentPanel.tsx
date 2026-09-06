@@ -15,7 +15,7 @@ type Props = {
 
 type SettingsForm = {
   brand: string;
-  currency: string;
+  currency: "IQD" | "USD";
   condition: "new" | "refurbished" | "used";
   defaultFbProductCategory: string;
   defaultGoogleProductCategory: string;
@@ -64,7 +64,7 @@ export function MetaCatalogEnrichmentPanel({ selectedProductId, activeProductIds
   useEffect(() => {
     if (!settings.data) return;
     setSettingsForm({
-      brand: settings.data.brand ?? "", currency: settings.data.currency ?? "IQD", condition: settings.data.condition ?? "new", defaultFbProductCategory: settings.data.defaultFbProductCategory ?? "", defaultGoogleProductCategory: settings.data.defaultGoogleProductCategory ?? "", defaultGender: settings.data.defaultGender ?? "female", defaultAgeGroup: settings.data.defaultAgeGroup ?? "adult", productLinkBaseUrl: settings.data.productLinkBaseUrl ?? "", defaultProductType: settings.data.defaultProductType ?? "", defaultAvailability: settings.data.defaultAvailability ?? "in stock",
+      brand: settings.data.brand ?? "", currency: settings.data.currency === "USD" ? "USD" : "IQD", condition: settings.data.condition ?? "new", defaultFbProductCategory: settings.data.defaultFbProductCategory ?? "", defaultGoogleProductCategory: settings.data.defaultGoogleProductCategory ?? "", defaultGender: settings.data.defaultGender ?? "female", defaultAgeGroup: settings.data.defaultAgeGroup ?? "adult", productLinkBaseUrl: settings.data.productLinkBaseUrl ?? "", defaultProductType: settings.data.defaultProductType ?? "", defaultAvailability: settings.data.defaultAvailability ?? "in stock",
     });
   }, [settings.data]);
   useEffect(() => {
@@ -83,7 +83,7 @@ export function MetaCatalogEnrichmentPanel({ selectedProductId, activeProductIds
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="flex items-center gap-2 font-bold text-[#183d35]"><SlidersHorizontal className="h-4 w-4 text-[#a47d40]" />إعدادات إثراء Meta Catalog</p><p className="mt-1 max-w-3xl text-xs leading-5 text-[#68756e]">تُطبّق هذه القيم على المنتجات النشطة في هذا المتجر فقط. يمكن لأي منتج أن يستثني الفئة أو الخامة أو الرابط من قسمه الخاص.</p></div>{settings.data?.updatedAt ? <span className="rounded-full bg-[#f1f8f4] px-2.5 py-1 text-xs text-[#35634f]">إعداد متجر محفوظ</span> : null}</div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="العلامة التجارية"><Input value={settingsForm.brand} onChange={event => setSettingsForm(current => ({ ...current, brand: event.target.value }))} placeholder="مثال: عالم الحجابات الأنيقة" disabled={!canEdit} className={fieldClass} /></Field>
-        <Field label="العملة"><Input value={settingsForm.currency} onChange={event => setSettingsForm(current => ({ ...current, currency: event.target.value.toUpperCase() }))} maxLength={3} disabled={!canEdit} className={fieldClass} /></Field>
+        <Field label="العملة"><select value={settingsForm.currency} onChange={event => setSettingsForm(current => ({ ...current, currency: event.target.value as SettingsForm["currency"] }))} disabled={!canEdit} className={`${fieldClass} w-full px-3`}><option value="IQD">الدينار العراقي (IQD)</option><option value="USD">الدولار الأميركي (USD)</option></select></Field>
         <Field label="حالة المنتج"><select value={settingsForm.condition} onChange={event => setSettingsForm(current => ({ ...current, condition: event.target.value as SettingsForm["condition"] }))} disabled={!canEdit} className={`${fieldClass} w-full px-3`}><option value="new">جديد</option><option value="refurbished">مجدّد</option><option value="used">مستعمل</option></select></Field>
         <Field label="Facebook Product Category"><Input value={settingsForm.defaultFbProductCategory} onChange={event => setSettingsForm(current => ({ ...current, defaultFbProductCategory: event.target.value }))} placeholder="Clothing & Accessories" disabled={!canEdit} className={fieldClass} /></Field>
         <Field label="الفئة العمرية"><select value={settingsForm.defaultAgeGroup} onChange={event => setSettingsForm(current => ({ ...current, defaultAgeGroup: event.target.value as SettingsForm["defaultAgeGroup"] }))} disabled={!canEdit} className={`${fieldClass} w-full px-3`}><option value="adult">بالغون</option><option value="teen">يافعون</option><option value="kids">أطفال</option><option value="all ages">كل الأعمار</option></select></Field>
