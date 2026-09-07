@@ -12,6 +12,7 @@ export type CatalogGroupPreviewEntry = {
     sellingPrice: CatalogProductMetadata["sellingPrice"];
     previousPrice: string | null;
     description: CatalogProductMetadata["description"];
+    material: CatalogProductMetadata["material"] | null;
     sizes: CatalogProductMetadata["sizes"];
   } | null;
   imageCount: number;
@@ -91,7 +92,7 @@ export async function previewCatalogGroupProducts(input: {
             state: "already_exists" as const,
             selectable: false,
             sourceReference,
-            metadata: { name: metadata.name, sellingPrice: metadata.sellingPrice, previousPrice: metadata.previousPrice ?? null, description: metadata.description, sizes: metadata.sizes },
+            metadata: { name: metadata.name, sellingPrice: metadata.sellingPrice, previousPrice: metadata.previousPrice ?? null, description: metadata.description, material: metadata.material ?? null, sizes: metadata.sizes },
             imageCount: images.length,
             documentCount,
             problems: ["يوجد منتج بالرمز نفسه داخل المنصة؛ لن ينشئ النظام تكرارًا."],
@@ -103,7 +104,7 @@ export async function previewCatalogGroupProducts(input: {
           state: "ready" as const,
           selectable: true,
           sourceReference,
-          metadata: { name: metadata.name, sellingPrice: metadata.sellingPrice, previousPrice: metadata.previousPrice ?? null, description: metadata.description, sizes: metadata.sizes },
+          metadata: { name: metadata.name, sellingPrice: metadata.sellingPrice, previousPrice: metadata.previousPrice ?? null, description: metadata.description, material: metadata.material ?? null, sizes: metadata.sizes },
           imageCount: images.length,
           documentCount,
           problems: [],

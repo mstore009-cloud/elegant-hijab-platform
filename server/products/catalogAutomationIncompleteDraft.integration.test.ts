@@ -166,7 +166,8 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
     const folderId = `folder-${productCode}`;
     let productId: number | null = null;
     catalogMocks.getConnection.mockResolvedValue({ status: "catalog_selected", selectedDriveId: "drive-test", selectedFolderId: "catalog-root", encryptedAccessToken: "encrypted-test-token" });
-    catalogMocks.readTextFile.mockResolvedValue("PRODUCT_NAME_AR: حجاب مستورد\nSELLING_PRICE_IQD: 15000\nDESCRIPTION_AR: وصف مستورد\nSIZES:\nPRODUCT_STATUS: draft");
+    let sourceMaterial = "قطن تركي";
+    catalogMocks.readTextFile.mockImplementation(async () => `PRODUCT_NAME_AR: حجاب مستورد\nSELLING_PRICE_IQD: 15000\nDESCRIPTION_AR: وصف مستورد\nMATERIAL: ${sourceMaterial}\nSIZES:\nPRODUCT_STATUS: draft`);
     catalogMocks.listChildren.mockImplementation(async ({ folderId: requestedFolderId }: { folderId: string }) => {
       if (requestedFolderId === "catalog-root") return [{ id: groupId, name: "حجابات", kind: "folder" }];
       if (requestedFolderId === groupId) return [{ id: folderId, name: productCode, kind: "folder" }];
@@ -180,8 +181,15 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
       const summary = await scanCatalogForOwner({ ownerUserId: owner.id, storeId: store.id });
       expect(summary).toMatchObject({ discovered: 1, draftsCreated: 1, existing: 0, failed: 0 });
       const [draft] = await db.select().from(products).where(and(eq(products.storeId, store.id), eq(products.productCode, productCode))).limit(1);
-      expect(draft).toMatchObject({ productCode, name: "حجاب مستورد", category: "حجابات", description: "وصف مستورد", sellingPrice: "15000.00", status: "draft" });
+      expect(draft).toMatchObject({ productCode, name: "حجاب مستورد", category: "حجابات", description: "وصف مستورد", material: "قطن تركي", sellingPrice: "15000.00", status: "draft" });
       productId = draft!.id;
+      sourceMaterial = "حرير";
+      const updateSummary = await scanCatalogForOwner({ ownerUserId: owner.id, storeId: store.id });
+      expect(updateSummary).toMatchObject({ discovered: 1, draftsCreated: 0, existing: 1, failed: 0 });
+      const [updated] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      expect(updated?.material).toBe("حرير");
+      const materialOperations = await db.select().from(productOperations).where(eq(productOperations.productId, productId));
+      expect(materialOperations.some(operation => operation.action === "catalog_material_synced")).toBe(true);
       const [folder] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
       expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual([]);
     } finally {

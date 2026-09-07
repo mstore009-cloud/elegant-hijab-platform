@@ -58,7 +58,7 @@ async function readSelectedCatalogProduct(storeId: number, input: { groupId: str
   } else if (metadataFile?.name.toLowerCase() === "product.docx") {
     metadataDocxBytes = await readCatalogFileBytes({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId!, fileId: metadataFile.id, maxBytes: 5 * 1024 * 1024 });
     const preview = await parseCatalogProductMetadataLenientDocx(metadataDocxBytes);
-    metadataText = JSON.stringify({ name: preview.name, sellingPrice: preview.sellingPrice, previousPrice: preview.previousPrice ?? null, description: preview.description, sizes: preview.sizes, problems: preview.problems });
+    metadataText = JSON.stringify({ name: preview.name, sellingPrice: preview.sellingPrice, previousPrice: preview.previousPrice ?? null, description: preview.description, material: preview.material ?? null, sizes: preview.sizes, problems: preview.problems });
   }
   const images = contents.filter(item => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name));
   const documents = contents.filter(item => item.kind === "file" && !images.some(image => image.id === item.id));
@@ -322,6 +322,7 @@ export const integrationsRouter = router({
       name: metadata.name,
       category: group.name,
       description: metadata.description,
+      material: metadata.material ?? null,
       sellingPrice: metadata.sellingPrice,
       previousPrice: metadata.previousPrice ?? null,
       sourceReference: `Catalog/${group.name}/${productFolder.name}`,
@@ -352,6 +353,7 @@ export const integrationsRouter = router({
           name: entry.metadata.name,
           category: preview.group.name,
           description: entry.metadata.description,
+          material: entry.metadata.material,
           sellingPrice: entry.metadata.sellingPrice,
           previousPrice: entry.metadata.previousPrice ?? null,
           sourceReference: entry.sourceReference,

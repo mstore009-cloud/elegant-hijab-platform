@@ -20,6 +20,10 @@ describe("عقد لوحة مصدر OneDrive داخل المنتجات", () => {
     expect(source).toContain("معاينة الشجرة والأقسام");
     expect(source).toContain("تغيير الجذر");
     expect(source).toContain("تعمل كل 10 دقائق");
+    expect(source).toContain("صيغة ملف");
+    expect(source).toContain("MATERIAL: قطن تركي");
+    expect(source).toContain("الخامة: قطن تركي");
+    expect(source).toContain("الخامة غير مكتوبة في product.txt");
     expect(source).toContain('cronExpression: "0 */10 * * * *"');
   });
 });

@@ -561,6 +561,7 @@ export async function createProduct(input: {
   name: string;
   category?: string;
   description?: string;
+  material?: string | null;
   status: "draft" | "needs_review" | "ready" | "active" | "archived";
   sellingPrice: string;
   previousPrice?: string | null;
@@ -577,6 +578,7 @@ export async function createProduct(input: {
     name: input.name,
     category: input.category ?? null,
     description: input.description ?? null,
+    material: input.material ?? null,
     status: input.status,
     sellingPrice: input.sellingPrice,
     previousPrice: input.previousPrice ?? null,
@@ -604,6 +606,7 @@ export async function createCatalogDraftProduct(input: {
   name: string;
   category: string;
   description: string;
+  material?: string | null;
   sellingPrice: string;
   previousPrice?: string | null;
   sourceReference: string;
@@ -620,6 +623,7 @@ export async function createCatalogDraftProduct(input: {
     name: input.name,
     category: input.category,
     description: input.description,
+    material: input.material ?? null,
     status: "draft",
     sellingPrice: input.sellingPrice,
     previousPrice: input.previousPrice ?? null,
