@@ -1,10 +1,11 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { metaAssets, metaCatalogExportJobs, metaConnectionCapabilities, metaConnections, productMedia, productVariants, products, stores } from "../../../drizzle/schema";
+import { catalogFolderImports, metaAssets, metaCatalogExportJobs, metaCatalogSourceUpdates, metaConnectionCapabilities, metaConnections, productMedia, productVariants, products, stores } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { getMetaCatalogAccessToken } from "./db";
 import { buildCatalogExportIdempotencyKey, buildMetaCatalogProductItems, chunkMetaCatalogBatchRequests, submitMetaCatalogBatch, toMetaCatalogBatchRequests, type MetaCatalogProductItem } from "./catalogExport";
 import { getMetaRuntimeSettings } from "./platformSettings";
 import { getMetaCatalogEnrichmentSettings, getMetaCatalogProductEnrichment } from "./catalogEnrichment";
+import { markMetaCatalogSourceUpdatesExported } from "./catalogSourceUpdates";
 import { storageGet } from "../../storage";
 
 async function requireDb() {
@@ -28,7 +29,7 @@ async function absoluteStorageUrl(baseUrl: string | null, storageKey: string | n
   return `${baseUrl}${(await storageGet(storageKey)).url}`;
 }
 
-export async function buildMetaCatalogExportSnapshot(input: { storeId: number; catalogAssetId: number }) {
+export async function buildMetaCatalogExportSnapshot(input: { storeId: number; catalogAssetId: number; productIds?: number[] }) {
   const db = await requireDb();
   const [asset] = await db.select({ id: metaAssets.id, connectionId: metaAssets.connectionId, externalId: metaAssets.externalId, displayName: metaAssets.displayName, isSelected: metaAssets.isSelected }).from(metaAssets).where(and(eq(metaAssets.id, input.catalogAssetId), eq(metaAssets.storeId, input.storeId), eq(metaAssets.assetType, "catalog"))).limit(1);
   if (!asset) throw new Error("اختر أصل Catalog تابعًا للمتجر قبل التصدير.");
@@ -41,9 +42,14 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
     db.select({ name: stores.name }).from(stores).where(eq(stores.id, input.storeId)).limit(1),
     getMetaCatalogEnrichmentSettings(input.storeId),
   ]);
-  const productRows = await db.select().from(products).where(and(eq(products.storeId, input.storeId), eq(products.status, "active"))).orderBy(desc(products.updatedAt));
+  const selectedProductIds = input.productIds ? Array.from(new Set(input.productIds)) : null;
+  const productRows = await db.select().from(products).where(and(
+    eq(products.storeId, input.storeId),
+    eq(products.status, "active"),
+    ...(selectedProductIds?.length ? [inArray(products.id, selectedProductIds)] : []),
+  )).orderBy(desc(products.updatedAt));
   const productIds = productRows.map(product => product.id);
-  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, productReports: [] as Array<{ productId: number; productCode: string; itemCount: number; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
+  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, productReports: [] as Array<{ productId: number; productCode: string; name: string; groupPath: string | null; itemCount: number; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
   const [variantRows, mediaRows] = await Promise.all([
     db.select().from(productVariants).where(inArray(productVariants.productId, productIds)),
     db.select().from(productMedia).where(inArray(productMedia.productId, productIds)),
@@ -51,7 +57,7 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
   const items: MetaCatalogProductItem[] = [];
   let skippedProducts = 0;
   const skipped: Array<{ productId: number; productCode: string; reason: string }> = [];
-  const productReports: Array<{ productId: number; productCode: string; itemCount: number; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }> = [];
+  const productReports: Array<{ productId: number; productCode: string; name: string; groupPath: string | null; itemCount: number; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }> = [];
   for (const product of productRows) {
     const productVariantsForProduct = variantRows.filter(variant => variant.productId === product.id).map(variant => ({ id: variant.id, colorName: variant.colorName, sizeLabel: variant.sizeLabel, inventoryQuantity: variant.inventoryQuantity }));
     const enrichment = await getMetaCatalogProductEnrichment({ storeId: input.storeId, productId: product.id });
@@ -98,6 +104,8 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
     productReports.push({
       productId: product.id,
       productCode: product.productCode,
+      name: product.name,
+      groupPath: enrichment.groupPath,
       itemCount: result.items.length,
       status: result.skipped || resultIssues.length ? "needs_review" : "ready",
       category: enrichment.effective.fbProductCategoryDetails,
@@ -111,7 +119,7 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
   return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items, requests, idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: items }), skippedProducts, skipped, productReports, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
 }
 
-export async function previewMetaCatalogExport(input: { storeId: number; catalogAssetId: number }) {
+export async function previewMetaCatalogExport(input: { storeId: number; catalogAssetId: number; productIds?: number[] }) {
   const snapshot = await buildMetaCatalogExportSnapshot(input);
   return {
     catalogAssetId: snapshot.catalogAssetId,
@@ -125,14 +133,15 @@ export async function previewMetaCatalogExport(input: { storeId: number; catalog
   };
 }
 
-export async function runMetaCatalogExport(input: { storeId: number; catalogAssetId: number; createdByUserId: number }) {
+export async function runMetaCatalogExport(input: { storeId: number; catalogAssetId: number; productIds: number[]; createdByUserId: number }) {
   const db = await requireDb();
+  if (!input.productIds.length) throw new Error("اختر منتجًا واحدًا على الأقل من مساحة عمل Meta Catalog قبل التصدير.");
   const snapshot = await buildMetaCatalogExportSnapshot(input);
   if (!snapshot.requests.length) throw new Error("لا توجد منتجات نشطة بمتغيرات صالحة للتصدير.");
   const existing = await db.select().from(metaCatalogExportJobs).where(and(eq(metaCatalogExportJobs.storeId, input.storeId), eq(metaCatalogExportJobs.catalogAssetId, input.catalogAssetId), eq(metaCatalogExportJobs.idempotencyKey, snapshot.idempotencyKey))).orderBy(desc(metaCatalogExportJobs.id)).limit(1);
   let job = existing[0];
   if (!job) {
-    await db.insert(metaCatalogExportJobs).values({ storeId: input.storeId, connectionId: snapshot.connectionId, catalogAssetId: snapshot.catalogAssetId, status: "pending", idempotencyKey: snapshot.idempotencyKey, requestCount: snapshot.requests.length, createdByUserId: input.createdByUserId }).onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });
+    await db.insert(metaCatalogExportJobs).values({ storeId: input.storeId, connectionId: snapshot.connectionId, catalogAssetId: snapshot.catalogAssetId, status: "pending", idempotencyKey: snapshot.idempotencyKey, scopeJson: JSON.stringify({ productIds: Array.from(new Set(input.productIds)) }), requestCount: snapshot.requests.length, createdByUserId: input.createdByUserId }).onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });
     [job] = await db.select().from(metaCatalogExportJobs).where(and(eq(metaCatalogExportJobs.storeId, input.storeId), eq(metaCatalogExportJobs.catalogAssetId, input.catalogAssetId), eq(metaCatalogExportJobs.idempotencyKey, snapshot.idempotencyKey))).orderBy(desc(metaCatalogExportJobs.id)).limit(1);
   }
   if (!job) throw new Error("تعذر إنشاء سجل تصدير Meta Catalog.");
@@ -148,7 +157,9 @@ export async function runMetaCatalogExport(input: { storeId: number; catalogAsse
       handles.push(...result.handles);
       validationStatus.push(...result.validationStatus);
     }
-    await db.update(metaCatalogExportJobs).set({ status: validationStatus.some((entry: any) => entry?.status === "ERROR") ? "partial" : "submitted", handle: handles[0] ?? null, validationJson: JSON.stringify(validationStatus).slice(0, 20_000), completedAt: new Date() }).where(eq(metaCatalogExportJobs.id, job.id));
+    const exportStatus = validationStatus.some((entry: any) => entry?.status === "ERROR") ? "partial" : "submitted" as const;
+    await db.update(metaCatalogExportJobs).set({ status: exportStatus, handle: handles[0] ?? null, validationJson: JSON.stringify(validationStatus).slice(0, 20_000), completedAt: new Date() }).where(eq(metaCatalogExportJobs.id, job.id));
+    if (exportStatus === "submitted") await markMetaCatalogSourceUpdatesExported({ storeId: input.storeId, productIds: input.productIds, exportJobId: job.id });
     const [updated] = await db.select().from(metaCatalogExportJobs).where(eq(metaCatalogExportJobs.id, job.id)).limit(1);
     return { job: updated ?? job, reused: false, snapshot: { itemCount: snapshot.items.length, idempotencyKey: snapshot.idempotencyKey } };
   } catch (error) {
@@ -161,4 +172,47 @@ export async function runMetaCatalogExport(input: { storeId: number; catalogAsse
 export async function listMetaCatalogExportJobs(input: { storeId: number }) {
   const db = await requireDb();
   return db.select().from(metaCatalogExportJobs).where(eq(metaCatalogExportJobs.storeId, input.storeId)).orderBy(desc(metaCatalogExportJobs.createdAt)).limit(20);
+}
+
+/** Returns the selectable active products without duplicating full export validation. */
+export async function listMetaCatalogWorkspaceProducts(input: { storeId: number }) {
+  const db = await requireDb();
+  const productRows = await db.select({
+    id: products.id,
+    productCode: products.productCode,
+    name: products.name,
+    category: products.category,
+    material: products.material,
+    status: products.status,
+    updatedAt: products.updatedAt,
+  }).from(products).where(and(eq(products.storeId, input.storeId), eq(products.status, "active"))).orderBy(desc(products.updatedAt));
+  if (!productRows.length) return [] as Array<{
+    id: number; productCode: string; name: string; category: string | null; groupPath: string | null; material: string | null; variantCount: number; imageCount: number; videoCount: number; preparedMediaCount: number; sourceUpdateStatus: "pending_review" | "media_prepared" | null; sourceChangeCount: number; updatedAt: Date;
+  }>;
+  const productIds = productRows.map(product => product.id);
+  const [folders, variants, media, sourceUpdates] = await Promise.all([
+    db.select({ productId: catalogFolderImports.linkedProductId, groupPath: catalogFolderImports.groupName }).from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), inArray(catalogFolderImports.linkedProductId, productIds))),
+    db.select({ productId: productVariants.productId }).from(productVariants).where(inArray(productVariants.productId, productIds)),
+    db.select({ productId: productMedia.productId, mediaType: productMedia.mediaType, operationalMetadata: productMedia.operationalMetadata }).from(productMedia).where(inArray(productMedia.productId, productIds)),
+    db.select({ productId: metaCatalogSourceUpdates.productId, status: metaCatalogSourceUpdates.status, changesJson: metaCatalogSourceUpdates.changesJson }).from(metaCatalogSourceUpdates).where(and(eq(metaCatalogSourceUpdates.storeId, input.storeId), inArray(metaCatalogSourceUpdates.productId, productIds), inArray(metaCatalogSourceUpdates.status, ["pending_review", "media_prepared"]))),
+  ]);
+  const groupByProduct = new Map(folders.filter(folder => folder.productId !== null).map(folder => [folder.productId!, folder.groupPath]));
+  const countByProduct = new Map<number, { variants: number; images: number; videos: number; prepared: number }>();
+  const sourceUpdateByProduct = new Map(sourceUpdates.map(update => [update.productId, update]));
+  for (const product of productRows) countByProduct.set(product.id, { variants: 0, images: 0, videos: 0, prepared: 0 });
+  for (const variant of variants) countByProduct.get(variant.productId)!.variants += 1;
+  for (const entry of media) {
+    const counts = countByProduct.get(entry.productId);
+    if (!counts) continue;
+    if (entry.mediaType === "image") counts.images += 1;
+    if (entry.mediaType === "video") counts.videos += 1;
+    if (catalogStorageKey({ operationalMetadata: entry.operationalMetadata })) counts.prepared += 1;
+  }
+  return productRows.map(product => {
+    const counts = countByProduct.get(product.id)!;
+    const sourceUpdate = sourceUpdateByProduct.get(product.id);
+    let sourceChangeCount = 0;
+    try { sourceChangeCount = Array.isArray(JSON.parse(sourceUpdate?.changesJson ?? "[]")) ? JSON.parse(sourceUpdate?.changesJson ?? "[]").length : 0; } catch { sourceChangeCount = 0; }
+    return { ...product, groupPath: groupByProduct.get(product.id) ?? product.category ?? null, variantCount: counts.variants, imageCount: counts.images, videoCount: counts.videos, preparedMediaCount: counts.prepared, sourceUpdateStatus: sourceUpdate?.status === "pending_review" || sourceUpdate?.status === "media_prepared" ? sourceUpdate.status : null, sourceChangeCount };
+  });
 }

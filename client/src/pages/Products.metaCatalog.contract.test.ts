@@ -5,17 +5,16 @@ import { resolve } from "node:path";
 describe("Products Meta Catalog export contract", () => {
   const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
 
-  it("exposes readiness, asset selection, safe preview, and guarded export", () => {
-    expect(source).toContain("metaCatalog.readiness.useQuery");
-    expect(source).toContain("metaCatalog.preview.useQuery");
-    expect(source).toContain("metaCatalog.exportNow.useMutation");
-    expect(source).toContain("لا تُنشر المسودات");
-    expect(source).toContain("معاينة بلا بيانات مالية");
+  it("embeds the unified Meta workspace instead of a second export flow on the products page", () => {
+    expect(source).toContain("MetaCatalogEnrichmentPanel");
+    expect(source).toContain("مساحة تجهيز وتصدير المنتجات إلى Meta");
+    expect(source).toContain("onOpenProduct={productId");
+    expect(source).toContain("المسودات لا تدخل التصدير");
   });
 
-  it("does not render a Catalog export action without a selected asset and preview items", () => {
-    expect(source).toContain("!selectedMetaCatalogAssetId");
-    expect(source).toContain("!metaCatalogPreview.data?.itemCount");
-    expect(source).toContain("metaCatalogReadiness.data.capability.status !== \"ready\"");
+  it("يحوّل تصدير Meta إلى مساحة عمل مستقلة قابلة للفتح من أدوات المنتجات", () => {
+    expect(source).toContain("setMetaCatalogPanelOpen");
+    expect(source).toContain("تصدير Meta Catalog");
+    expect(source).not.toContain("exportMetaCatalog.mutate");
   });
 });

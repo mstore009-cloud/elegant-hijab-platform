@@ -3,10 +3,11 @@ import { TRPCError } from "@trpc/server";
 import { assertPermission } from "../access/authorization";
 import { protectedProcedure, router } from "../_core/trpc";
 import { listMetaConnectionOverview } from "../integrations/meta/db";
-import { buildMetaCatalogExportSnapshot, listMetaCatalogExportJobs, previewMetaCatalogExport, runMetaCatalogExport } from "../integrations/meta/catalogExportDb";
+import { buildMetaCatalogExportSnapshot, listMetaCatalogExportJobs, listMetaCatalogWorkspaceProducts, previewMetaCatalogExport, runMetaCatalogExport } from "../integrations/meta/catalogExportDb";
 import { deleteMetaCatalogGroupEnrichment, getMetaCatalogEnrichmentSettings, getMetaCatalogProductEnrichment, listMetaCatalogGroupEnrichments, listMetaCatalogGroupPaths, META_CATALOG_AGE_GROUPS, META_CATALOG_AVAILABILITY, META_CATALOG_CONDITIONS, META_CATALOG_GENDERS, META_CATALOG_MEDIA_POLICIES, saveMetaCatalogEnrichmentSettings, saveMetaCatalogGroupEnrichment, saveMetaCatalogProductEnrichment } from "../integrations/meta/catalogEnrichment";
 import { prepareMetaCatalogMediaForProduct, prepareMetaCatalogMediaForStore } from "../integrations/meta/catalogMediaPreparation";
 import { describeMetaProductTaxonomy, searchMetaProductTaxonomy } from "../integrations/meta/catalogTaxonomy";
+import { getMetaCatalogSourceUpdate, listMetaCatalogSourceUpdates, markMetaCatalogSourceUpdateStatus } from "../integrations/meta/catalogSourceUpdates";
 
 function requireOperationalStoreId(storeId: number | null | undefined) {
   if (!storeId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لا يوجد متجر تشغيلي نشط لحسابك." });
@@ -14,6 +15,7 @@ function requireOperationalStoreId(storeId: number | null | undefined) {
 }
 
 const catalogAssetInput = z.object({ catalogAssetId: z.number().int().positive() });
+const catalogScopeInput = catalogAssetInput.extend({ productIds: z.array(z.number().int().positive()).min(1).max(250).optional() });
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
 const settingsInput = z.object({
   brand: optionalText(100),
@@ -114,7 +116,10 @@ export const metaCatalogRouter = router({
   prepareProductMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     try {
-      return await prepareMetaCatalogMediaForProduct({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId: input.productId, actorUserId: ctx.user.id });
+      const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+      const result = await prepareMetaCatalogMediaForProduct({ storeId, productId: input.productId, actorUserId: ctx.user.id });
+      if (result.prepared.length) await markMetaCatalogSourceUpdateStatus({ storeId, productId: input.productId, status: "media_prepared" });
+      return result;
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر تجهيز وسائط Meta Catalog." });
     }
@@ -122,21 +127,48 @@ export const metaCatalogRouter = router({
   prepareProductsMedia: protectedProcedure.input(z.object({ productIds: z.array(z.number().int().positive()).min(1).max(250) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     try {
-      return await prepareMetaCatalogMediaForStore({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productIds: input.productIds, actorUserId: ctx.user.id });
+      const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+      const result = await prepareMetaCatalogMediaForStore({ storeId, productIds: input.productIds, actorUserId: ctx.user.id });
+      await Promise.all(input.productIds.map(productId => markMetaCatalogSourceUpdateStatus({ storeId, productId, status: "media_prepared" })));
+      return result;
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر تجهيز وسائط المنتجات لكتالوج Meta." });
     }
   }),
-  preview: protectedProcedure.input(catalogAssetInput).query(async ({ ctx, input }) => {
+  workspaceProducts: protectedProcedure.query(async ({ ctx }) => {
+    await assertPermission(ctx.user, "products.create");
+    return listMetaCatalogWorkspaceProducts({ storeId: requireOperationalStoreId(ctx.operationalStore?.id) });
+  }),
+  sourceUpdates: protectedProcedure.input(z.object({ productId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
-    return previewMetaCatalogExport({ storeId, catalogAssetId: input.catalogAssetId });
+    return listMetaCatalogSourceUpdates({ storeId, productIds: input?.productId ? [input.productId] : undefined });
   }),
-  exportNow: protectedProcedure.input(catalogAssetInput).mutation(async ({ ctx, input }) => {
+  sourceUpdate: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    return getMetaCatalogSourceUpdate({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId: input.productId });
+  }),
+  dismissSourceUpdate: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    try {
+      return await markMetaCatalogSourceUpdateStatus({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId: input.productId, status: "dismissed" });
+    } catch (error) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ قرار مراجعة تحديث OneDrive." });
+    }
+  }),
+  preview: protectedProcedure.input(catalogScopeInput).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.create");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    return previewMetaCatalogExport({ storeId, catalogAssetId: input.catalogAssetId, productIds: input.productIds });
+  }),
+  exportNow: protectedProcedure.input(catalogScopeInput).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     try {
-      return await runMetaCatalogExport({ storeId, catalogAssetId: input.catalogAssetId, createdByUserId: ctx.user.id });
+      // Existing integrations use the original store-wide action. The new
+      // workspace always supplies productIds, so its scope is explicit.
+      const productIds = input.productIds ?? (await listMetaCatalogWorkspaceProducts({ storeId })).map(product => product.id);
+      return await runMetaCatalogExport({ storeId, catalogAssetId: input.catalogAssetId, productIds, createdByUserId: ctx.user.id });
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر تصدير Catalog إلى Meta." });
     }

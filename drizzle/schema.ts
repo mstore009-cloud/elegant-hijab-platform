@@ -517,6 +517,7 @@ export const metaCatalogExportJobs = mysqlTable(
     catalogAssetId: int("catalogAssetId").notNull().references(() => metaAssets.id),
     status: mysqlEnum("status", ["pending", "submitted", "processing", "completed", "partial", "failed"]).default("pending").notNull(),
     idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
+    scopeJson: text("scopeJson"),
     requestCount: int("requestCount").default(0).notNull(),
     handle: varchar("handle", { length: 255 }),
     validationJson: text("validationJson"),
@@ -581,6 +582,30 @@ export const metaCatalogProductEnrichments = mysqlTable(
   table => [
     uniqueIndex("meta_catalog_product_enrichment_store_product_unq").on(table.storeId, table.productId),
     index("meta_catalog_product_enrichment_store_idx").on(table.storeId),
+  ],
+);
+
+/** Latest OneDrive change per product that must be reviewed before its next Meta update. */
+export const metaCatalogSourceUpdates = mysqlTable(
+  "meta_catalog_source_updates",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    productId: int("productId").notNull().references(() => products.id),
+    catalogFolderId: int("catalogFolderId").references(() => catalogFolderImports.id),
+    status: mysqlEnum("status", ["pending_review", "media_prepared", "exported", "dismissed"]).default("pending_review").notNull(),
+    sourceFingerprint: varchar("sourceFingerprint", { length: 64 }).notNull(),
+    changesJson: text("changesJson").notNull(),
+    exportJobId: int("exportJobId").references(() => metaCatalogExportJobs.id),
+    detectedAt: timestamp("detectedAt").defaultNow().notNull(),
+    reviewedAt: timestamp("reviewedAt"),
+    exportedAt: timestamp("exportedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_catalog_source_update_store_product_unq").on(table.storeId, table.productId),
+    index("meta_catalog_source_update_store_status_idx").on(table.storeId, table.status, table.updatedAt),
   ],
 );
 
@@ -1807,6 +1832,7 @@ export const catalogFolderImports = mysqlTable(
     linkedProductId: int("linkedProductId").references(() => products.id),
     missingFields: text("missingFields"),
     imageCount: int("imageCount").default(0).notNull(),
+    sourceFingerprint: varchar("sourceFingerprint", { length: 64 }),
     lastError: text("lastError"),
     lastScannedAt: timestamp("lastScannedAt").defaultNow().notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),

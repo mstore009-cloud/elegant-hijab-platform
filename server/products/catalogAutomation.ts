@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { catalogFolderImports, catalogGroupImports, productImportJobs, productMedia, productOperations, products } from "../../drizzle/schema";
 import { listCatalogChildren, readCatalogFileBytes, readCatalogTextFile, type CatalogDriveItem } from "../integrations/onedrive/catalog";
@@ -7,6 +8,7 @@ import { getDb } from "../db";
 import { generateOperationalMediaForProduct, generateOperationalVideosForProduct } from "./operationalMediaService";
 import { generateAutomaticColorSuggestion } from "./db";
 import { notifyPermissionHolders } from "../notifications/db";
+import { type CatalogSourceChange, upsertMetaCatalogSourceUpdate } from "../integrations/meta/catalogSourceUpdates";
 
 const isImage = (item: CatalogDriveItem) => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name);
 const isVideo = (item: CatalogDriveItem) => item.kind === "file" && /\.(mp4|mov|m4v|webm)$/i.test(item.name);
@@ -40,6 +42,60 @@ async function mapWithConcurrency<T>(items: T[], limit: number, worker: (item: T
 
 function sourceReference(groupName: string, productCode: string) {
   return `Catalog/${groupName}/${productCode}`;
+}
+
+export function sourceFingerprint(contents: CatalogDriveItem[], metadata: LenientCatalogProductMetadata) {
+  const source = {
+    files: contents.filter(item => item.kind === "file").map(item => ({ id: item.id, name: item.name, size: item.size, version: item.sourceVersion ?? null })).sort((a, b) => a.name.localeCompare(b.name)),
+    metadata: { name: metadata.name ?? null, description: metadata.description ?? null, sellingPrice: metadata.sellingPrice ?? null, previousPrice: metadata.previousPrice ?? null, material: metadata.material ?? null, sizes: metadata.sizes },
+  };
+  return createHash("sha256").update(JSON.stringify(source)).digest("hex");
+}
+
+async function detectCatalogSourceChanges(input: {
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>;
+  storeId: number;
+  productId: number;
+  contents: CatalogDriveItem[];
+  metadata: LenientCatalogProductMetadata;
+}) {
+  const [product] = await input.db.select({ name: products.name, description: products.description, sellingPrice: products.sellingPrice, previousPrice: products.previousPrice, material: products.material, sizeLabels: products.sizeLabels }).from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) return [] as CatalogSourceChange[];
+  const existingMedia = await input.db.select({ mediaType: productMedia.mediaType, originalFileName: productMedia.originalFileName, source: productMedia.source }).from(productMedia).where(eq(productMedia.productId, input.productId));
+  const sourceMediaNames = new Set(input.contents.filter(item => isImage(item) || isVideo(item)).map(item => `${isImage(item) ? "image" : "video"}:${item.name}`));
+  const linkedMediaNames = new Set(existingMedia.filter(item => item.source === "onedrive" && (item.mediaType === "image" || item.mediaType === "video")).map(item => `${item.mediaType}:${item.originalFileName ?? ""}`));
+  const added = Array.from(sourceMediaNames).filter(name => !linkedMediaNames.has(name)).map(name => name.split(":")[1]);
+  const removed = Array.from(linkedMediaNames).filter(name => !sourceMediaNames.has(name)).map(name => name.split(":")[1]);
+  const changes: CatalogSourceChange[] = [];
+  if (added.length) changes.push({ kind: "media_added", label: `أُضيف ${added.length} وسيط من OneDrive: ${added.join("، ")}`, names: added });
+  if (removed.length) changes.push({ kind: "media_removed", label: `${removed.length} وسيط لم يعد موجودًا في OneDrive: ${removed.join("، ")}`, names: removed });
+  const fields: Array<[string, string | null, string | null]> = [
+    ["الاسم", product.name, input.metadata.name ?? null],
+    ["الوصف", product.description, input.metadata.description ?? null],
+    ["السعر", product.sellingPrice, input.metadata.sellingPrice ?? null],
+    ["السعر السابق", product.previousPrice, input.metadata.previousPrice ?? null],
+    ["الخامة", product.material, input.metadata.material ?? null],
+    ["القياسات", product.sizeLabels, input.metadata.sizes.length ? JSON.stringify(input.metadata.sizes) : null],
+  ];
+  for (const [label, before, after] of fields) {
+    if (after !== null && before !== after) changes.push({ kind: "metadata_changed", label: `تغير ${label}: ${before ?? "غير محدد"} ← ${after}`, before, after });
+  }
+  if (!changes.length) changes.push({ kind: "media_changed", label: "تغيرت ملفات في OneDrive بالاسم نفسه؛ ستحتاج وسائط Meta إلى إعادة تجهيز" });
+  return changes;
+}
+
+async function clearMetaCatalogMediaCopies(input: { db: NonNullable<Awaited<ReturnType<typeof getDb>>>; productId: number }) {
+  const media = await input.db.select({ id: productMedia.id, source: productMedia.source, operationalMetadata: productMedia.operationalMetadata }).from(productMedia).where(eq(productMedia.productId, input.productId));
+  await Promise.all(media.filter(entry => entry.source === "onedrive" && entry.operationalMetadata).map(async entry => {
+    try {
+      const parsed = JSON.parse(entry.operationalMetadata ?? "{}") as Record<string, unknown>;
+      if (!parsed.metaCatalog) return;
+      delete parsed.metaCatalog;
+      await input.db.update(productMedia).set({ operationalMetadata: JSON.stringify(parsed) }).where(eq(productMedia.id, entry.id));
+    } catch {
+      // An unreadable legacy metadata record is left untouched rather than risking its operational copy.
+    }
+  }));
 }
 
 type CatalogWorkItem = { folder: CatalogDriveItem; groupName: string };
@@ -169,6 +225,7 @@ async function upsertFolderObservation(input: {
   linkedProductId?: number | null;
   missingFields?: string[];
   imageCount: number;
+  sourceFingerprint?: string | null;
   lastError?: string | null;
 }) {
   const db = await getDb();
@@ -182,6 +239,7 @@ async function upsertFolderObservation(input: {
     linkedProductId: input.linkedProductId ?? null,
     missingFields: JSON.stringify(input.missingFields ?? []),
     imageCount: input.imageCount,
+    sourceFingerprint: input.sourceFingerprint ?? null,
     lastError: input.lastError ?? null,
     lastScannedAt: new Date(),
   };
@@ -271,6 +329,37 @@ async function syncCatalogSourceMaterial(input: {
     });
   });
   return true;
+}
+
+async function syncCatalogSourceProductMetadata(input: {
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>;
+  productId: number;
+  actorUserId: number;
+  metadata: LenientCatalogProductMetadata;
+}) {
+  const [current] = await input.db.select({ name: products.name, description: products.description, sellingPrice: products.sellingPrice, previousPrice: products.previousPrice, material: products.material, sizeLabels: products.sizeLabels }).from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!current) return [] as string[];
+  const updates: Record<string, string | null> = {};
+  const changed: string[] = [];
+  const setIfPresent = (key: keyof LenientCatalogProductMetadata, column: string, label: string, currentValue: string | null) => {
+    const next = input.metadata[key];
+    if (typeof next === "string" && next !== currentValue) { updates[column] = next; changed.push(label); }
+  };
+  setIfPresent("name", "name", "الاسم", current.name);
+  setIfPresent("description", "description", "الوصف", current.description);
+  setIfPresent("sellingPrice", "sellingPrice", "السعر", current.sellingPrice);
+  setIfPresent("previousPrice", "previousPrice", "السعر السابق", current.previousPrice);
+  setIfPresent("material", "material", "الخامة", current.material);
+  if (input.metadata.sizes.length) {
+    const nextSizes = JSON.stringify(input.metadata.sizes);
+    if (nextSizes !== (current.sizeLabels ?? "[]")) { updates.sizeLabels = nextSizes; changed.push("القياسات"); }
+  }
+  if (!changed.length) return changed;
+  await input.db.transaction(async tx => {
+    await tx.update(products).set(updates).where(eq(products.id, input.productId));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "catalog_scan", action: "catalog_product_metadata_synced", changes: JSON.stringify({ source: "onedrive_product_metadata", fields: changed }) });
+  });
+  return changed;
 }
 
 async function syncNewCatalogMediaReferences(input: {
@@ -368,11 +457,12 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       const images = contents.filter(isImage);
       const videos = contents.filter(isVideo);
       const metadata = await readCatalogProductMetadata({ contents, encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId! });
+      const fingerprint = sourceFingerprint(contents, metadata);
       const [priorFolder] = await db.select().from(catalogFolderImports).where(and(eq(catalogFolderImports.storeId, input.storeId), eq(catalogFolderImports.productFolderId, folder.id))).limit(1);
       const existingProduct = productByCode.get(folder.name) ?? (priorFolder?.linkedProductId ? productById.get(priorFolder.linkedProductId) : undefined);
       const folderObservation = classifyCatalogFolderObservation(priorFolder, groupName, folder.name);
       if (!existingProduct && priorFolder?.lastError === "deleted_by_user") {
-        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, lastError: "deleted_by_user" });
+        await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "needs_review", linkedProductId: null, missingFields: [], imageCount: images.length, sourceFingerprint: fingerprint, lastError: "deleted_by_user" });
         summary.existing += 1;
         return;
       }
@@ -388,13 +478,20 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
           state: folderObservation.changed ? "needs_review" : preserveDraftState ? "draft_created" : "already_exists",
           linkedProductId: existingProduct.id,
           imageCount: images.length,
+          sourceFingerprint: fingerprint,
           missingFields: preserveDraftState ? JSON.parse(priorFolder?.missingFields ?? "[]") : [],
           lastError: folderObservation.lastError,
         });
         if (folderObservation.changed) {
           await notifyPermissionHolders(buildCatalogFolderReviewNotification({ storeId: input.storeId, entityId: folderObservationRecord.id, folderId: folder.id, folderName: folder.name, groupName }));
         }
-        await syncCatalogSourceMaterial({ db, productId: existingProduct.id, actorUserId: input.ownerUserId, material: metadata.material });
+        if (priorFolder?.sourceFingerprint && priorFolder.sourceFingerprint !== fingerprint) {
+          const changes = await detectCatalogSourceChanges({ db, storeId: input.storeId, productId: existingProduct.id, contents, metadata });
+          if (changes.some(change => change.kind === "media_changed")) await clearMetaCatalogMediaCopies({ db, productId: existingProduct.id });
+          await upsertMetaCatalogSourceUpdate({ storeId: input.storeId, productId: existingProduct.id, catalogFolderId: folderObservationRecord.id, sourceFingerprint: fingerprint, changes });
+          if (changes.length) await db.insert(productOperations).values({ productId: existingProduct.id, actorUserId: input.ownerUserId, source: "catalog_scan", action: "onedrive_update_pending_meta_review", changes: JSON.stringify({ source, changes }) });
+        }
+        await syncCatalogSourceProductMetadata({ db, productId: existingProduct.id, actorUserId: input.ownerUserId, metadata });
         await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
         await report("copying_operational_media", folder.name);
         const imageCopies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: existingProduct.id });
@@ -408,7 +505,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       }
       const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName, folder, images, videos, metadata });
       productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
-      await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length });
+      await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, sourceFingerprint: fingerprint });
       summary.draftsCreated += 1;
       await report("copying_operational_media", folder.name);
       if (images.length > 0) {

@@ -26,7 +26,7 @@ vi.mock("../notifications/db", () => ({
   notifyPermissionHolders: catalogMocks.notifyPermissionHolders,
 }));
 
-import { catalogFolderImports, catalogGroupImports, productImportJobs, productMedia, productOperations, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, catalogGroupImports, metaCatalogSourceUpdates, productImportJobs, productMedia, productOperations, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
 import { scanCatalogForOwner } from "./catalogAutomation";
@@ -189,11 +189,12 @@ describe("Catalog التلقائي للمجلد الناقص", () => {
       const [updated] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
       expect(updated?.material).toBe("حرير");
       const materialOperations = await db.select().from(productOperations).where(eq(productOperations.productId, productId));
-      expect(materialOperations.some(operation => operation.action === "catalog_material_synced")).toBe(true);
+      expect(materialOperations.some(operation => operation.action === "catalog_product_metadata_synced")).toBe(true);
       const [folder] = await db.select().from(catalogFolderImports).where(eq(catalogFolderImports.linkedProductId, productId)).limit(1);
       expect(JSON.parse(folder!.missingFields ?? "[]")).toEqual([]);
     } finally {
       if (productId) {
+        await db.delete(metaCatalogSourceUpdates).where(eq(metaCatalogSourceUpdates.productId, productId));
         await db.delete(productOperations).where(eq(productOperations.productId, productId));
         await db.delete(productMedia).where(eq(productMedia.productId, productId));
         await db.delete(productImportJobs).where(eq(productImportJobs.linkedProductId, productId));

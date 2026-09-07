@@ -14,6 +14,7 @@ export type CatalogDriveItem = {
   kind: "folder" | "file";
   webUrl: string | null;
   size: number | null;
+  sourceVersion?: string | null;
 };
 
 type GraphChildrenPayload = {
@@ -22,6 +23,8 @@ type GraphChildrenPayload = {
     name?: string;
     webUrl?: string;
     size?: number;
+    eTag?: string;
+    lastModifiedDateTime?: string;
     folder?: Record<string, unknown>;
     file?: { mimeType?: string };
     parentReference?: { driveId?: string };
@@ -104,19 +107,20 @@ export async function listCatalogChildren(input: {
 }): Promise<CatalogDriveItem[]> {
   const accessToken = decryptOneDriveToken(input.encryptedAccessToken);
   const response = await graphFetch(
-    `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.folderId)}/children?$select=id,name,webUrl,size,folder,file`,
+    `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.folderId)}/children?$select=id,name,webUrl,size,eTag,lastModifiedDateTime,folder,file`,
     accessToken,
   );
   const payload = await response.json() as GraphChildrenPayload;
   if (!response.ok || !payload.value) throw graphError(response, payload, "تعذر قراءة محتوى مجلد Catalog.");
   return payload.value
-    .filter((item): item is Required<Pick<CatalogDriveItem, "id" | "name">> & { folder?: Record<string, unknown>; webUrl?: string; size?: number } => Boolean(item.id && item.name))
+    .filter((item): item is Required<Pick<CatalogDriveItem, "id" | "name">> & { folder?: Record<string, unknown>; webUrl?: string; size?: number; eTag?: string; lastModifiedDateTime?: string } => Boolean(item.id && item.name))
     .map(item => ({
       id: item.id,
       name: item.name,
       kind: item.folder ? "folder" : "file",
       webUrl: item.webUrl ?? null,
       size: typeof item.size === "number" ? item.size : null,
+      sourceVersion: item.eTag ?? item.lastModifiedDateTime ?? null,
     }));
 }
 

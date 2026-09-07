@@ -108,7 +108,7 @@ export async function prepareMetaCatalogMediaForStore(input: { storeId: number; 
   for (const productId of Array.from(new Set(input.productIds))) results.push(await prepareMetaCatalogMediaForProduct({ ...input, productId }));
   return {
     products: results.length,
-    prepared: results.flatMap(result => result.prepared),
+    prepared: results.flatMap(result => result.prepared.map(entry => ({ productId: result.productId, ...entry }))),
     skipped: results.flatMap(result => result.skipped.map(entry => ({ productId: result.productId, ...entry }))),
   };
 }

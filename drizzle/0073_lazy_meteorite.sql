@@ -1,0 +1,1 @@
+ALTER TABLE `meta_catalog_export_jobs` ADD `scopeJson` text;

@@ -505,6 +505,20 @@
       "when": 1788724650796,
       "tag": "0071_wild_norrin_radd",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "5",
+      "when": 1788803512903,
+      "tag": "0072_large_black_tom",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "5",
+      "when": 1788804231996,
+      "tag": "0073_lazy_meteorite",
+      "breakpoints": true
     }
   ]
 }
