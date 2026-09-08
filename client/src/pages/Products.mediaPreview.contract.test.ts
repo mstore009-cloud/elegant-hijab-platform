@@ -38,7 +38,7 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).not.toContain("اكتب اسم اللون نفسه");
     expect(source).toContain("trpc.catalogSync.deletedProducts.useQuery");
     expect(source).toContain("trpc.catalogSync.restoreDeletedProduct.useMutation");
-    expect(source).toContain("استعادة من Catalog");
+    expect(source).toContain("استعادة {deletedCatalogProducts.data.length} منتج من OneDrive");
     expect(source).toContain("استعادة كمسودة");
     expect(source).toContain("نعم، استعده كمسودة");
     expect(source).toContain('mediaType === "video"');
@@ -58,7 +58,7 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("أعد المحاولة");
     expect(source).toContain("trpc.integrations.oneDriveStatus.useQuery");
     expect(source).toContain("trpc.integrations.catalogSelectionStatus.useQuery");
-    expect(source).toContain("OneDrive اختياري وغير موصل");
+    expect(source).not.toContain("OneDrive اختياري وغير موصل");
     expect(source).toContain("مسودات العمل");
     expect(source).toContain("{oneDrivePanelOpen &&");
     expect(source).toContain("trpc.integrations.beginCatalogSelection.useMutation");
