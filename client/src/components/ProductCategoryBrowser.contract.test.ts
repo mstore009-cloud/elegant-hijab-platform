@@ -6,8 +6,8 @@ const managerSource = readFileSync(new URL("./ProductCategoryManager.tsx", impor
 
 describe("متصفح أقسام المنتجات", () => {
   it("يبقي كل الأقسام بداية واضحة ويكشف التصنيفات الفرعية فقط عند اختيار قسم", () => {
-    expect(browserSource).toContain("كل الأقسام");
-    expect(browserSource).toContain("تصنيفات {displayName(selectedPrimaryCategory)}");
+    expect(browserSource).toContain("كل المنتجات");
+    expect(browserSource).toContain("كل {displayName(selectedPrimaryCategory)}");
     expect(browserSource).toContain("matchingTotal");
     expect(browserSource).toContain("onSelectPrimary");
   });

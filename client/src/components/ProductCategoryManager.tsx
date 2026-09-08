@@ -31,7 +31,7 @@ export function ProductCategoryManager({ canCreate, canEdit, selectedProductId, 
   useEffect(() => { setAssignedCategoryId(currentCategoryId ? String(currentCategoryId) : "none"); }, [currentCategoryId, selectedProductId]);
 
   return <>
-    <Button size="sm" variant="outline" onClick={() => setOpen(true)} className="h-10 rounded-xl border-[#d8c69f] bg-white text-[#765b2c] hover:bg-[#fffaf0]"><FolderPlus className="ml-1.5 h-4 w-4" />إدارة الأقسام</Button>
+    <Button size="sm" variant="outline" onClick={() => setOpen(true)} className="h-8 shrink-0 rounded-lg border-[#d8c69f] bg-white px-2.5 text-xs text-[#765b2c] hover:bg-[#fffaf0]"><FolderPlus className="ml-1 h-3.5 w-3.5" />إدارة الأقسام</Button>
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent dir="rtl" className="max-h-[86vh] max-w-2xl overflow-y-auto">
         <DialogHeader>

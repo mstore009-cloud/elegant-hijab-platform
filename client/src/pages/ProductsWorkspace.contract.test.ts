@@ -16,8 +16,8 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("const [oneDrivePanelOpen, setOneDrivePanelOpen] = useState(false)");
     expect(source).toContain("const [metaCatalogPanelOpen, setMetaCatalogPanelOpen] = useState(false)");
-    expect(source).toContain("مصدر المنتجات OneDrive");
-    expect(source).toContain("تصدير Meta Catalog");
+    expect(source).toContain(">OneDrive<");
+    expect(source).toContain(">Meta Catalog<");
     expect(source).toContain("{oneDrivePanelOpen &&");
     expect(source).toContain("{metaCatalogPanelOpen &&");
   });
