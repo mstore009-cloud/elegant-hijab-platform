@@ -300,7 +300,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: DashboardLayoutCo
               <SidebarTrigger className="h-10 w-10 rounded-xl border bg-card text-foreground shadow-sm" />
               <div className="flex flex-col">
                 <span className="font-bold tracking-tight text-foreground">{activeMenuItem?.label ?? "المنصة"}</span>
-                <span className="mt-0.5 max-w-[190px] truncate text-[10px] text-muted-foreground">{pageDescriptions[location] ?? "منصة التشغيل الداخلية"}</span>
+                {location !== "/products" && <span className="mt-0.5 max-w-[190px] truncate text-[10px] text-muted-foreground">{pageDescriptions[location] ?? "منصة التشغيل الداخلية"}</span>}
               </div>
             </div>
             <NotificationButton unread={unreadNotifications} onClick={() => setLocation("/notifications")} mobile />
@@ -309,7 +309,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: DashboardLayoutCo
           <div className="flex min-h-16 items-center justify-between border-b border-border/70 bg-background/78 px-5 backdrop-blur-xl" dir="rtl">
             <div>
               <p className="text-sm font-bold text-foreground">{activeMenuItem?.label ?? "منصة التشغيل"}</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{pageDescriptions[location] ?? "إدارة المتجر من مساحة موحّدة"}</p>
+              {location !== "/products" && <p className="mt-0.5 text-[11px] text-muted-foreground">{pageDescriptions[location] ?? "إدارة المتجر من مساحة موحّدة"}</p>}
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setLocation("/store")} className="inline-flex h-9 items-center gap-2 rounded-full border bg-card px-3 text-xs font-bold text-foreground shadow-sm transition-colors hover:border-primary/45 hover:bg-secondary" aria-label="فتح واجهة المتجر">
