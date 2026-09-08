@@ -120,6 +120,8 @@ export const products = mysqlTable(
     name: varchar("name", { length: 220 }).notNull(),
     category: varchar("category", { length: 120 }),
     categoryId: int("categoryId").references(() => productCategories.id),
+    /** A manual assignment remains authoritative when the matching OneDrive folder is scanned again. */
+    categoryAssignmentSource: mysqlEnum("categoryAssignmentSource", ["onedrive", "manual"]).default("onedrive").notNull(),
     description: text("description"),
     /** Material extracted from product.txt/docx in OneDrive or entered in the product workspace. */
     material: varchar("material", { length: 200 }),
@@ -149,6 +151,8 @@ export const productCategories = mysqlTable(
     storeId: int("storeId").notNull().references(() => stores.id),
     parentId: int("parentId").references((): AnyMySqlColumn => productCategories.id),
     name: varchar("name", { length: 180 }).notNull(),
+    /** Merchant-facing name. Preserves a local rename while the OneDrive source name remains traceable. */
+    displayName: varchar("displayName", { length: 180 }),
     source: mysqlEnum("source", ["onedrive", "manual"]).default("manual").notNull(),
     sourceFolderId: varchar("sourceFolderId", { length: 255 }),
     sourcePath: varchar("sourcePath", { length: 1000 }).notNull(),

@@ -519,6 +519,13 @@
       "when": 1788804231996,
       "tag": "0073_lazy_meteorite",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "5",
+      "when": 1788878100831,
+      "tag": "0074_glorious_sentry",
+      "breakpoints": true
     }
   ]
 }

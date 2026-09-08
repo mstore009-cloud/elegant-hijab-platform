@@ -3,6 +3,8 @@ export type ProductWithFinancials = {
   productCode: string;
   name: string;
   category: string | null;
+  categoryId: number | null;
+  categoryAssignmentSource: "onedrive" | "manual";
   description: string | null;
   sizeLabels: string | null;
   status: string;

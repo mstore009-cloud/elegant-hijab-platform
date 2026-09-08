@@ -5,8 +5,8 @@ const source = readFileSync(new URL("../routers/products.ts", import.meta.url), 
 
 describe("طبقة حجب المالية في Router المنتجات", () => {
   it("يمرر list وbyId عبر presentProductForViewer", () => {
-    expect(source).toContain("...presentProductForViewer(product, canViewFinancials)");
-    expect(source).toContain("product: presentProductForViewer(item.product, canViewFinancials)");
+    expect(source).toContain("...presentProductForViewer({ ...product, category:");
+    expect(source).toContain("product: presentProductForViewer({ ...item.product, category:");
   });
 
   it("يحافظ على أن publicList وpublicByCode يعيدان حقول العرض العامة فقط", () => {

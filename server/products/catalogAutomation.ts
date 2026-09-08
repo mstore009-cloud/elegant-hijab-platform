@@ -7,6 +7,7 @@ import { parseCatalogProductMetadataLenient, parseCatalogProductMetadataLenientD
 import { getDb } from "../db";
 import { generateOperationalMediaForProduct, generateOperationalVideosForProduct } from "./operationalMediaService";
 import { generateAutomaticColorSuggestion } from "./db";
+import { assignOneDriveCategoryToProduct } from "./categories";
 import { notifyPermissionHolders } from "../notifications/db";
 import { type CatalogSourceChange, upsertMetaCatalogSourceUpdate } from "../integrations/meta/catalogSourceUpdates";
 
@@ -492,6 +493,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
           if (changes.length) await db.insert(productOperations).values({ productId: existingProduct.id, actorUserId: input.ownerUserId, source: "catalog_scan", action: "onedrive_update_pending_meta_review", changes: JSON.stringify({ source, changes }) });
         }
         await syncCatalogSourceProductMetadata({ db, productId: existingProduct.id, actorUserId: input.ownerUserId, metadata });
+        await assignOneDriveCategoryToProduct({ storeId: input.storeId, productId: existingProduct.id, sourceCategoryPath: groupName });
         await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
         await report("copying_operational_media", folder.name);
         const imageCopies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: existingProduct.id });
@@ -506,6 +508,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
       const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName, folder, images, videos, metadata });
       productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
       await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, sourceFingerprint: fingerprint });
+      await assignOneDriveCategoryToProduct({ storeId: input.storeId, productId: created.productId, sourceCategoryPath: groupName });
       summary.draftsCreated += 1;
       await report("copying_operational_media", folder.name);
       if (images.length > 0) {
@@ -599,6 +602,7 @@ export async function restoreDeletedCatalogProduct(input: { ownerUserId: number;
   const videos = contents.filter(isVideo);
   const metadata = await readCatalogProductMetadata({ contents, encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId });
   const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName: group.name, folder, images, videos, metadata });
+  await assignOneDriveCategoryToProduct({ storeId: input.storeId, productId: created.productId, sourceCategoryPath: group.name });
   await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName: group.name, productCode: folder.name, source: sourceReference(group.name, folder.name), state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, lastError: null });
   let operationalCopiesCreated = 0;
   if (images.length > 0) {

@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { ProductListThumbnail } from "@/components/ProductListThumbnail";
+import { ProductCategoryBrowser } from "@/components/ProductCategoryBrowser";
 import { CatalogSourcePanel } from "@/components/CatalogSourcePanel";
 import { MetaCatalogEnrichmentPanel } from "@/components/MetaCatalogEnrichmentPanel";
 import { trpc } from "@/lib/trpc";
@@ -24,6 +25,9 @@ function statusLabel(status: string) { return ({ draft: "مسودة", needs_revi
 function statusClass(status: string) { return ({ draft: "bg-[#f1eee7] text-[#635d53]", needs_review: "bg-[#fff1de] text-[#a35d1c]", ready: "bg-[#e9f4ef] text-[#21624d]", active: "bg-[#e4f3ea] text-[#17633b]", archived: "bg-[#f0f0f0] text-[#747474]" } as Record<string, string>)[status] ?? "bg-slate-100 text-slate-700"; }
 function catalogStageLabel(stage: string | null | undefined) { return ({ discovering_catalog: "جارٍ التحقق من مرجع Catalog", discovering_folders: "جارٍ اكتشاف مجلدات المنتجات", reading_product: "جارٍ قراءة ملفات المنتج", copying_operational_media: "جارٍ ضغط وتجهيز نسخ التشغيل", analyzing_colors: "جارٍ تحليل الألوان للمراجعة", processing_folders: "جارٍ تثبيت نتيجة المنتج", completed: "اكتمل آخر فحص", failed: "تعذر آخر فحص" } as Record<string, string>)[stage ?? ""] ?? "الفحص جاهز"; }
 function formatElapsed(milliseconds: number) { const seconds = Math.max(0, Math.floor(milliseconds / 1000)); return seconds < 60 ? `${seconds} ثانية` : `${Math.floor(seconds / 60)} دقيقة${seconds % 60 ? ` و${seconds % 60} ثانية` : ""}`; }
+const UNCATEGORIZED = "__uncategorized__";
+function categorySegments(value: string | null | undefined) { return value?.split(/\s*\/\s*/).map(item => item.trim()).filter(Boolean) ?? []; }
+function primaryCategoryOf(value: string | null | undefined) { return categorySegments(value)[0] ?? UNCATEGORIZED; }
 
 function SectionTitle({ number, title, subtitle }: { number: string; title: string; subtitle: string }) { return <div className="flex gap-3"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#183d35] text-xs font-bold text-white">{number}</span><div><h3 className="font-bold text-[#183d35]">{title}</h3><p className="mt-0.5 text-xs leading-5 text-[#74817a]">{subtitle}</p></div></div>; }
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) { return <label className="block text-sm font-medium text-[#4d6158]"><span>{label}</span>{hint && <span className="mr-1 text-xs font-normal text-[#8b968f]">{hint}</span>}<div className="mt-1.5">{children}</div></label>; }
@@ -36,6 +40,7 @@ function ColorCard({ colorName, quantity, media, onOpen }: { colorName: string; 
 export default function Products() {
   const profile = trpc.access.myProfile.useQuery();
   const products = trpc.products.list.useQuery(undefined, { enabled: profile.isSuccess });
+  const categories = trpc.products.categories.list.useQuery(undefined, { enabled: profile.isSuccess });
   const syncStatus = trpc.catalogSync.status.useQuery(undefined, { enabled: profile.isSuccess });
   const oneDriveStatus = trpc.integrations.oneDriveStatus.useQuery(undefined, { enabled: profile.isSuccess });
   const catalogSelectionStatus = trpc.integrations.catalogSelectionStatus.useQuery(undefined, { enabled: profile.isSuccess });
@@ -52,6 +57,8 @@ export default function Products() {
   const [oneDrivePanelOpen, setOneDrivePanelOpen] = useState(false);
   const [metaCatalogPanelOpen, setMetaCatalogPanelOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [selectedPrimaryCategory, setSelectedPrimaryCategory] = useState<string | null>(null);
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [openColor, setOpenColor] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -68,6 +75,7 @@ export default function Products() {
   const [draftPrice, setDraftPrice] = useState("");
   const [draftPreviousPrice, setDraftPreviousPrice] = useState("");
   const [draftSizes, setDraftSizes] = useState("");
+  const [draftCategoryId, setDraftCategoryId] = useState("none");
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
   const [newColorName, setNewColorName] = useState("");
@@ -76,7 +84,7 @@ export default function Products() {
   const selectedProduct = trpc.products.byId.useQuery(detailInput, { enabled: detailInput !== skipToken && profile.isSuccess });
   const selectedProductMedia = trpc.products.mediaPreviews.useQuery(detailInput, { enabled: detailInput !== skipToken && profile.isSuccess, staleTime: 5 * 60_000 });
 
-  const invalidateProducts = async () => { await Promise.all([utils.products.list.invalidate(), utils.products.byId.invalidate(), utils.products.mediaPreviews.invalidate(), syncStatus.refetch()]); };
+  const invalidateProducts = async () => { await Promise.all([utils.products.list.invalidate(), utils.products.byId.invalidate(), utils.products.mediaPreviews.invalidate(), utils.products.categories.list.invalidate(), syncStatus.refetch()]); };
   const updateDetails = trpc.products.updateDetails.useMutation({ onSuccess: invalidateProducts });
   const uploadImage = trpc.products.uploadManualImage.useMutation({ onSuccess: invalidateProducts });
   const generateAutomaticSuggestion = trpc.products.generateAutomaticColorSuggestion.useMutation({ onSuccess: invalidateProducts });
@@ -129,21 +137,38 @@ export default function Products() {
 
   useEffect(() => {
     if (!detail) return;
-    setDraftName(detail.product.name); setDraftDescription(detail.product.description ?? ""); setDraftPrice(detail.missingFields.includes("sellingPrice") ? "" : detail.product.sellingPrice); setDraftPreviousPrice(detail.product.previousPrice ?? ""); setDraftSizes(safeSizes(detail.product.sizeLabels).join("، "));
+    setDraftName(detail.product.name); setDraftDescription(detail.product.description ?? ""); setDraftPrice(detail.missingFields.includes("sellingPrice") ? "" : detail.product.sellingPrice); setDraftPreviousPrice(detail.product.previousPrice ?? ""); setDraftSizes(safeSizes(detail.product.sizeLabels).join("، ")); setDraftCategoryId(detail.product.categoryId ? String(detail.product.categoryId) : "none");
     setQuantityDrafts(colorNames.reduce((result, colorName) => ({ ...result, [colorName]: String(detail.variants.find(variant => variant.colorName === colorName)?.inventoryQuantity ?? 0) }), {}));
     setRenameDrafts(colorNames.reduce((result, colorName) => ({ ...result, [colorName]: colorName }), {}));
     setSuggestions(detail.pendingColorSuggestion?.suggestion.colorGroups ?? []); setAnalysisNote(detail.pendingColorSuggestion?.suggestion.overallReviewNote ?? ""); setSelectedReviewMedia([]); setManualColorName("");
   }, [detail?.product.id, detail?.pendingColorSuggestion?.operationId]);
 
   const workCounts = useMemo(() => ({ needs_work: products.data?.filter(product => product.status !== "active" && product.status !== "archived" && product.missingFields.length > 0).length ?? 0, draft: products.data?.filter(product => product.status === "draft").length ?? 0, ready: products.data?.filter(product => ["ready", "needs_review"].includes(product.status)).length ?? 0, active: products.data?.filter(product => product.status === "active").length ?? 0, workspace: products.data?.filter(product => !["active", "archived"].includes(product.status)).length ?? 0 }), [products.data]);
-  const filteredProducts = useMemo(() => (products.data ?? []).filter(product => {
+  const productsInSurface = useMemo(() => (products.data ?? []).filter(product => {
     const isInSurface = surface === "active" ? product.status === "active" : !["active", "archived"].includes(product.status);
     const matchesFilter = surface === "active" || filter === "all" || (filter === "needs_work" ? product.missingFields.length > 0 : filter === "draft" ? product.status === "draft" : filter === "ready" ? ["ready", "needs_review"].includes(product.status) : false);
+    return isInSurface && matchesFilter;
+  }), [products.data, surface, filter]);
+  const primaryCategories = useMemo(() => Array.from(new Map(productsInSurface.map(product => {
+    const primary = primaryCategoryOf(product.category);
+    return [primary, { name: primary, count: productsInSurface.filter(item => primaryCategoryOf(item.category) === primary).length }];
+  })).values()).sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, "ar")), [productsInSurface]);
+  const subcategories = useMemo(() => {
+    if (!selectedPrimaryCategory || selectedPrimaryCategory === UNCATEGORIZED) return [];
+    return Array.from(new Map(productsInSurface.filter(product => primaryCategoryOf(product.category) === selectedPrimaryCategory).flatMap(product => {
+      const secondary = categorySegments(product.category)[1];
+      return secondary ? [[secondary, { name: secondary, count: 0 }] as const] : [];
+    })).values()).map(entry => ({ ...entry, count: productsInSurface.filter(product => primaryCategoryOf(product.category) === selectedPrimaryCategory && categorySegments(product.category)[1] === entry.name).length })).sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, "ar"));
+  }, [productsInSurface, selectedPrimaryCategory]);
+  const filteredProducts = useMemo(() => productsInSurface.filter(product => {
     const keyword = search.trim().toLocaleLowerCase("ar");
-    return isInSurface && matchesFilter && (!keyword || [product.name, product.productCode, product.category ?? "", ...product.missingFields.map(fieldLabel)].join(" ").toLocaleLowerCase("ar").includes(keyword));
-  }), [products.data, surface, filter, search]);
+    const matchesPrimary = !selectedPrimaryCategory || primaryCategoryOf(product.category) === selectedPrimaryCategory;
+    const matchesSubcategory = !selectedSubcategory || categorySegments(product.category)[1] === selectedSubcategory;
+    return matchesPrimary && matchesSubcategory && (!keyword || [product.name, product.productCode, product.category ?? "", ...product.missingFields.map(fieldLabel)].join(" ").toLocaleLowerCase("ar").includes(keyword));
+  }), [productsInSurface, search, selectedPrimaryCategory, selectedSubcategory]);
+  const productRows = useMemo(() => filteredProducts.map((product, index) => ({ product, showPrimaryHeading: surface === "active" && !selectedPrimaryCategory && (index === 0 || primaryCategoryOf(filteredProducts[index - 1]?.category) !== primaryCategoryOf(product.category)) })), [filteredProducts, selectedPrimaryCategory, surface]);
 
-  const saveDetails = () => { if (selectedProductId && draftName.trim()) updateDetails.mutate({ productId: selectedProductId, name: draftName.trim(), description: draftDescription.trim() || null, sellingPrice: draftPrice.trim() || undefined, sizeLabels: draftSizes.split(/[،,]/).map(size => size.trim()).filter(Boolean), previousPrice: draftPreviousPrice.trim() || null }); };
+  const saveDetails = () => { if (selectedProductId && draftName.trim()) updateDetails.mutate({ productId: selectedProductId, name: draftName.trim(), description: draftDescription.trim() || null, sellingPrice: draftPrice.trim() || undefined, sizeLabels: draftSizes.split(/[،,]/).map(size => size.trim()).filter(Boolean), previousPrice: draftPreviousPrice.trim() || null, categoryId: draftCategoryId === (detail?.product.categoryId ? String(detail.product.categoryId) : "none") ? undefined : draftCategoryId === "none" ? null : Number(draftCategoryId) }); };
   const acceptAnalysis = (result: { colorGroups: ColorSuggestion[]; overallReviewNote: string }) => { setSuggestions(result.colorGroups); setAnalysisNote(result.overallReviewNote); };
   const analyzeSelected = async () => { if (!selectedProductId || !selectedReviewMedia.length) return; try { acceptAnalysis(await analyzeColors.mutateAsync({ productId: selectedProductId, mediaIds: selectedReviewMedia })); } catch { /* تعرض الواجهة رسالة الخطأ */ } };
   const approveColor = async (colorName: string, mediaIds: number[]) => { if (!selectedProductId || !colorName.trim() || !mediaIds.length) return; try { await addColor.mutateAsync({ productId: selectedProductId, colorName: colorName.trim() }); for (const mediaId of mediaIds) await assignMediaColor.mutateAsync({ productId: selectedProductId, mediaId, colorName: colorName.trim() }); setSuggestions(current => current.map(item => ({ ...item, mediaIds: item.mediaIds.filter(id => !mediaIds.includes(id)) })).filter(item => item.mediaIds.length > 0)); setSelectedReviewMedia(current => current.filter(id => !mediaIds.includes(id))); } catch { /* تعرض الواجهة رسالة الخطأ */ } };
@@ -161,7 +186,7 @@ export default function Products() {
   const removeProduct = async () => { if (!detail) return; await deleteProduct.mutateAsync({ productId: detail.product.id, confirmProductCode: detail.product.productCode }); setProductDeleteOpen(false); setEditOpen(false); setSelectedProductId(null); };
   const confirmRestoreProduct = async () => { if (!restoreTarget) return; await restoreDeletedProduct.mutateAsync({ productFolderId: restoreTarget.productFolderId }); };
 
-  return <div dir="rtl" className="mx-auto w-full max-w-[1440px] space-y-5 pb-10">
+  return <div dir="rtl" className="mx-auto w-full max-w-[1440px] space-y-5 pb-10"><ProductCategoryBrowser total={productsInSurface.length} matchingTotal={filteredProducts.length} primaryCategories={primaryCategories} subcategories={subcategories} selectedPrimaryCategory={selectedPrimaryCategory} selectedSubcategory={selectedSubcategory} onSelectPrimary={category => { setSelectedPrimaryCategory(category); setSelectedSubcategory(null); setSelectedProductId(null); }} onSelectSubcategory={category => { setSelectedSubcategory(category); setSelectedProductId(null); }} canCreate={canCreate} canEdit={canEdit} selectedProductId={selectedProductId} currentCategoryId={detail?.product.categoryId ?? null} onUpdated={invalidateProducts} />
     <header className="flex flex-col gap-4 border-b border-[#e6ded0] pb-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-medium text-[#98713f]">إدارة الكتالوج</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-[#183d35]">المنتجات</h1><p className="mt-1 text-sm text-[#68756e]">يحلل النظام الصور تلقائيًا، ثم تؤكد ألوانها قبل ظهورها في صفحة المنتج.</p></div><div className="flex flex-wrap gap-2"><span className={`rounded-full border px-3 py-2 text-xs ${catalogSelectionStatus.data?.status === "catalog_selected" ? "border-[#cce0d7] bg-[#f1f8f4] text-[#506b61]" : catalogSelectionStatus.data?.status === "failed" ? "border-[#f0d6bc] bg-[#fff7ef] text-[#9c4b25]" : "border-[#eadcbf] bg-[#fffaf0] text-[#7a5a25]"}`}><CloudCog className="ml-1 inline h-3.5 w-3.5" />{catalogSelectionStatus.data?.status === "catalog_selected" ? `Catalog مرتبط: ${catalogSelectionStatus.data.selectedFolderName ?? "محدد"}` : catalogSelectionStatus.data?.status === "failed" ? "OneDrive يحتاج إصلاحًا" : "OneDrive اختياري وغير موصل"}</span><Button size="sm" variant="outline" onClick={() => setRestoreOpen(true)} disabled={!canCreate || deletedCatalogProducts.isLoading || !deletedCatalogProducts.data?.length} className="border-[#d5c29e] text-[#7a5a25]"><RefreshCw className="ml-1.5 h-3.5 w-3.5" />استعادة من Catalog{deletedCatalogProducts.data?.length ? ` (${deletedCatalogProducts.data.length})` : ""}</Button></div></header>
     <section className="grid gap-3 lg:grid-cols-[1.3fr_0.7fr]"><div className="rounded-3xl border border-[#d8e5de] bg-white p-3 shadow-[0_12px_28px_rgba(43,58,49,0.04)]"><div className="grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => { setSurface("active"); setFilter("all"); setSelectedProductId(null); }} aria-pressed={surface === "active"} className={`rounded-2xl border p-4 text-right transition ${surface === "active" ? "border-[#183d35] bg-[#183d35] text-white shadow-md" : "border-transparent bg-[#f7fbf8] text-[#28463b] hover:border-[#cce0d7]"}`}><p className="text-xs font-bold opacity-80">عرض المتجر</p><div className="mt-2 flex items-end justify-between gap-3"><div><p className="text-lg font-black">المنتجات النشطة</p><p className="mt-1 text-xs leading-5 opacity-80">المنتجات المنشورة والجاهزة للعرض فقط.</p></div><span className={`rounded-full px-3 py-1 text-lg font-black ${surface === "active" ? "bg-white/15" : "bg-white text-[#183d35]"}`}>{workCounts.active}</span></div></button><button type="button" onClick={() => { setSurface("workspace"); setFilter("all"); setSelectedProductId(null); }} aria-pressed={surface === "workspace"} className={`rounded-2xl border p-4 text-right transition ${surface === "workspace" ? "border-[#8a6a35] bg-[#fff8eb] text-[#634822] shadow-sm" : "border-transparent bg-[#f8f6f0] text-[#4c554e] hover:border-[#e6d7b8]"}`}><p className="text-xs font-bold opacity-80">إدارة وتجهيز</p><div className="mt-2 flex items-end justify-between gap-3"><div><p className="text-lg font-black">مسودات العمل</p><p className="mt-1 text-xs leading-5 opacity-80">المسودات وما يحتاج إلى استكمال أو مراجعة.</p></div><span className={`rounded-full px-3 py-1 text-lg font-black ${surface === "workspace" ? "bg-[#f4e4bd]" : "bg-white text-[#72542a]"}`}>{workCounts.workspace}</span></div></button></div></div><div className="rounded-3xl border border-[#e6ded0] bg-[#fcfbf8] p-3 shadow-[0_12px_28px_rgba(43,58,49,0.04)]"><p className="px-2 pt-1 text-xs font-bold text-[#8a6a35]">أدوات عند الحاجة</p><div className="mt-2 grid gap-2"><button type="button" onClick={() => setOneDrivePanelOpen(value => !value)} aria-expanded={oneDrivePanelOpen} className="flex items-center justify-between rounded-2xl bg-white px-3 py-3 text-right text-sm font-bold text-[#28463b] transition hover:bg-[#f2f8f4]"><span className="flex items-center gap-2"><CloudCog className="h-4 w-4 text-[#28604e]" />مصدر المنتجات OneDrive</span><ChevronDown className={`h-4 w-4 transition-transform ${oneDrivePanelOpen ? "rotate-180" : ""}`} /></button><button type="button" onClick={() => setMetaCatalogPanelOpen(value => !value)} aria-expanded={metaCatalogPanelOpen} className="flex items-center justify-between rounded-2xl bg-white px-3 py-3 text-right text-sm font-bold text-[#28463b] transition hover:bg-[#fffaf0]"><span className="flex items-center gap-2"><Layers3 className="h-4 w-4 text-[#a47d40]" />تصدير Meta Catalog</span><ChevronDown className={`h-4 w-4 transition-transform ${metaCatalogPanelOpen ? "rotate-180" : ""}`} /></button></div></div></section>
     {oneDrivePanelOpen && <><CatalogSourcePanel canConfigure={canCreate} />{(isCatalogRunning || syncStatus.data?.lastRunStage === "failed") && <section className={`rounded-2xl border p-4 ${syncStatus.data?.lastRunStage === "failed" ? "border-[#f0d6bc] bg-[#fff7ef]" : "border-[#cce0d7] bg-[#f3faf5]"}`} aria-live="polite"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className={`text-sm font-bold ${syncStatus.data?.lastRunStage === "failed" ? "text-[#9c4b25]" : "text-[#245b4d]"}`}>{catalogStageLabel(syncStatus.data?.lastRunStage)}</p><p className="mt-1 text-xs text-[#64786e]">{isCatalogRunning ? (syncStatus.data?.lastRunCurrentProduct ? `المنتج الجاري: ${syncStatus.data.lastRunCurrentProduct}` : "قد يأخذ تجهيز الصور والفيديو وقتاً بحسب حجم الأصل.") : (syncStatus.data?.lastError ?? "راجع الخطأ أعلاه ثم أعد المحاولة عندما يصبح المرجع جاهزاً.")}</p></div><span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-[#536a60]">{isCatalogRunning ? `منذ ${formatElapsed(catalogElapsedMs)}` : "توقف الفحص"}</span></div>{isCatalogRunning && <><div className="mt-3 flex items-center justify-between text-xs text-[#64786e]"><span>{syncStatus.data?.lastRunTotalFolders ? `${syncStatus.data.lastRunProcessedFolders} من ${syncStatus.data.lastRunTotalFolders} مجلد` : "جارٍ حساب مجلدات العمل..."}</span><span>{catalogProgress}%</span></div><Progress value={catalogProgress} dir="rtl" className="mt-2 h-2.5 scale-x-[-1] bg-[#dcece1] [&_[data-slot=progress-indicator]]:bg-[#2c725a]" /></>}</section>}</>}

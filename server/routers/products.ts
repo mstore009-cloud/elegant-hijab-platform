@@ -13,6 +13,7 @@ import { storageGet } from "../storage";
 import { generateOperationalMediaForProduct, regenerateOperationalMediaForProduct } from "../products/operationalMediaService";
 import { analyzeStoredProductColors } from "../products/colorAnalysis";
 import { getPublicStore } from "../stores/db";
+import { assignProductCategory, createManualProductCategory, listProductCategoryTree, renameProductCategory } from "../products/categories";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
 const productStatus = z.enum(["draft", "needs_review", "ready", "active", "archived"]);
@@ -72,13 +73,33 @@ export const productsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
-    const productList = await listProductsWithPrimaryOperationalMedia(requireOperationalStoreId(ctx.operationalStore?.id));
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    const [productList, categoryTree] = await Promise.all([listProductsWithPrimaryOperationalMedia(storeId), listProductCategoryTree(storeId)]);
+    const categoryPathById = new Map(categoryTree.map(category => [category.id, category.displayPath]));
     return Promise.all(productList.map(async ({ product, primaryMedia, missingFields }) => ({
-      ...presentProductForViewer(product, canViewFinancials),
+      ...presentProductForViewer({ ...product, category: product.categoryId ? categoryPathById.get(product.categoryId) ?? product.category : product.category }, canViewFinancials),
       primaryImageUrl: primaryMedia?.storageKey ? (await storageGet(primaryMedia.storageKey)).url : null,
       primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
       missingFields,
     })));
+  }),
+  categories: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      await assertPermission(ctx.user, "products.inventory.update");
+      return listProductCategoryTree(requireOperationalStoreId(ctx.operationalStore?.id));
+    }),
+    create: protectedProcedure.input(z.object({ name: z.string().trim().min(1).max(180), parentId: z.number().int().positive().nullable().optional() })).mutation(async ({ ctx, input }) => {
+      await assertPermission(ctx.user, "products.create");
+      return createManualProductCategory({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), name: input.name, parentId: input.parentId ?? null });
+    }),
+    rename: protectedProcedure.input(z.object({ categoryId: z.number().int().positive(), name: z.string().trim().min(1).max(180) })).mutation(async ({ ctx, input }) => {
+      await assertPermission(ctx.user, "products.edit");
+      return renameProductCategory({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), ...input });
+    }),
+    assign: protectedProcedure.input(z.object({ productId: z.number().int().positive(), categoryId: z.number().int().positive().nullable() })).mutation(async ({ ctx, input }) => {
+      await assertPermission(ctx.user, "products.edit");
+      return assignProductCategory({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), actorUserId: ctx.user.id, ...input });
+    }),
   }),
   byId: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
@@ -86,8 +107,10 @@ export const productsRouter = router({
     await refreshProductReviewStatus({ productId: input.productId, actorUserId: ctx.user.id });
     const canViewFinancials = await viewerFinancialAccess(ctx.user);
     const media = await getProductMedia(input.productId);
+    const categoryTree = await listProductCategoryTree(item.product.storeId);
+    const selectedCategory = item.product.categoryId ? categoryTree.find(category => category.id === item.product.categoryId) : null;
     return {
-      product: presentProductForViewer(item.product, canViewFinancials),
+      product: presentProductForViewer({ ...item.product, category: selectedCategory?.displayPath ?? item.product.category }, canViewFinancials),
       variants: item.variants,
       media,
       missingFields: item.missingFields,
@@ -180,6 +203,7 @@ export const productsRouter = router({
     productCode: z.string().trim().min(2).max(80),
     name: z.string().trim().min(2).max(220),
     category: z.string().trim().max(120).optional(),
+    categoryId: z.number().int().positive().optional(),
     description: z.string().trim().max(4000).optional(),
     status: productStatus.default("draft"),
     sellingPrice: moneyString,
@@ -204,7 +228,9 @@ export const productsRouter = router({
     if (input.previousPrice !== undefined && Number(input.previousPrice) <= Number(input.sellingPrice)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "السعر السابق يجب أن يكون أعلى من السعر الحالي لعرض خصم حقيقي." });
     }
-    const productId = await createProduct({ ...input, storeId, createdByUserId: ctx.user.id });
+    const { categoryId, ...productInput } = input;
+    const productId = await createProduct({ ...productInput, storeId, createdByUserId: ctx.user.id });
+    if (categoryId) await assignProductCategory({ storeId, productId, categoryId, actorUserId: ctx.user.id });
     await recordInitialProductFinancialValues({ ...input, storeId, productId, actorUserId: ctx.user.id });
     return { productId };
   }),
@@ -222,6 +248,7 @@ export const productsRouter = router({
     sellingPrice: moneyString.optional(),
     previousPrice: moneyString.nullable().optional(),
     sizeLabels: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+    categoryId: z.number().int().positive().nullable().optional(),
     status: z.enum(["draft", "needs_review", "ready", "archived"]).optional(),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
@@ -229,8 +256,10 @@ export const productsRouter = router({
     if (input.previousPrice !== undefined && input.previousPrice !== null && Number(input.previousPrice) <= Number(input.sellingPrice ?? currentProduct.product.sellingPrice)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "السعر السابق يجب أن يكون أعلى من السعر الحالي لعرض خصم حقيقي." });
     }
-    const { productId, ...patch } = input;
-    return updateProductDetails({ productId, ...patch, actorUserId: ctx.user.id, source: "products_ui" });
+    const { productId, categoryId, ...patch } = input;
+    const updated = await updateProductDetails({ productId, ...patch, actorUserId: ctx.user.id, source: "products_ui" });
+    const categoryAssignment = categoryId !== undefined ? await assignProductCategory({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId, categoryId, actorUserId: ctx.user.id }) : null;
+    return { ...updated, categoryAssignment };
   }),
   activate: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
