@@ -15,9 +15,9 @@
 
 ## ملاحظات طلب التحديث الدفعي
 
-وفق مرجع `Product Item` الرسمي، يجب أن يكون مُعرّف العنصر `retailer_id` على مستوى كل طلب داخل مصفوفة `requests` في `items_batch`، بينما تنتقل الحقول القابلة للعرض داخل `data`. تُستخدم أسماء الحقول البرمجية الرسمية مثل `name` و`description` و`url` و`image_url` و`additional_image_urls` و`fb_product_category` و`retailer_product_group_id`. كذلك يوضح المرجع أن الفيديوهات تظهر في حقل `videos` ككائنات تحتوي رابطًا، وتوضح وثائق فيديو الكتالوج أن إدخال الفيديو يتم من حقل `video` في طلب `items_batch`.
+وفق مرجع `items_batch` الرسمي، يحتوي كل سجل في `requests` على `method` و`data` فقط. وتُرسل هوية المنتج داخل `data.id`، مع حقول نوع `PRODUCT_ITEM` كما تسميها Meta: `title` و`description` و`link` و`image` و`item_group_id` و`fb_product_category`، إضافة إلى `video` للفيديو. يعرض كائن Product Item لاحقًا هذه البيانات بحقول قراءة مثل `name` و`image_url` و`videos`.
 
-لا يجب وضع `retailer_id` داخل `data`؛ إذ أظهرت استجابة Meta الحية تحذير `Unrecognised field` عند إرساله هناك. كما يجب تحويل أي رابط تخزين نسبي مثل `/manus-storage/...` إلى رابط HTTPS عام قبل أن يقرأ الخادم الوسيط أو تطلبه Meta.
+لا يجب وضع `retailer_id` داخل `data` أو كحقل إضافي للسجل عند استدعاء `items_batch`؛ إذ أظهرت استجابة Meta الحية تحذير `Unrecognised field` عند وضعه داخل `data` وخطأ `Duplicate retailer_id` عند وضعه خارجها. كما يجب تحويل أي رابط تخزين نسبي مثل `/manus-storage/...` إلى رابط HTTPS عام قبل أن يقرأ الخادم الوسيط أو تطلبه Meta.
 
 3. [Meta for Developers — Product Item](https://developers.facebook.com/docs/marketing-api/reference/product-item/)
 4. [Meta for Developers — Catalog Batch API](https://developers.facebook.com/docs/marketing-api/catalog-batch/)

@@ -114,19 +114,19 @@ describe("Meta Catalog export mapping", () => {
     const first = buildCatalogExportIdempotencyKey({ storeId: 1, catalogId: "cat-1", productItems: input.items });
     const second = buildCatalogExportIdempotencyKey({ storeId: 1, catalogId: "cat-1", productItems: input.items });
     expect(first).toBe(second);
-    expect(toMetaCatalogBatchRequests(input.items)[0]).toMatchObject({ method: "UPDATE", retailer_id: "HJ-001-11" });
+    expect(toMetaCatalogBatchRequests(input.items)[0]).toMatchObject({ method: "UPDATE" });
     expect(toMetaCatalogBatchRequests(input.items)[0]?.data).toMatchObject({
-      name: "حجاب حريري",
+      id: "HJ-001-11",
+      title: "حجاب حريري",
       description: "وصف المنتج",
-      url: "https://shop.example/store/HJ-001",
-      image_url: "https://cdn.example/item.jpg",
+      link: "https://shop.example/store/HJ-001",
+      image: [{ url: "https://cdn.example/item.jpg" }],
       video: [{ url: "https://cdn.example/item.mp4" }],
       fb_product_category: "Clothing & Accessories",
-      retailer_product_group_id: "HJ-001",
+      item_group_id: "HJ-001",
     });
+    expect(toMetaCatalogBatchRequests(input.items)[0]).not.toHaveProperty("retailer_id");
     expect(toMetaCatalogBatchRequests(input.items)[0]?.data).not.toHaveProperty("retailer_id");
-    expect(toMetaCatalogBatchRequests(input.items)[0]?.data).not.toHaveProperty("title");
-    expect(toMetaCatalogBatchRequests(input.items)[0]?.data).not.toHaveProperty("link");
   });
 
   it("chunks requests safely and submits only the official items_batch payload", async () => {

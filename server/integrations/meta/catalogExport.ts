@@ -156,27 +156,18 @@ export function buildCatalogExportIdempotencyKey(input: { storeId: number; catal
   // Bump this contract version whenever the outgoing Meta API envelope changes.
   // It prevents an already-submitted legacy envelope from suppressing a corrected
   // product update for the same data snapshot.
-  const payload = JSON.stringify({ schemaVersion: "items_batch_v2", storeId: input.storeId, catalogId: input.catalogId, productItems: input.productItems });
+  const payload = JSON.stringify({ schemaVersion: "items_batch_v3", storeId: input.storeId, catalogId: input.catalogId, productItems: input.productItems });
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
 export function toMetaCatalogBatchRequests(items: MetaCatalogProductItem[]) {
-  return items.map(item => {
-    const { id: _id, retailer_id, title, link, item_group_id, image, ...rest } = item;
-    return {
-      retailer_id,
-      method: "UPDATE" as const,
-      data: Object.fromEntries(Object.entries({
-        ...rest,
-        name: title,
-        url: link,
-        retailer_product_group_id: item_group_id,
-        image_url: image?.[0]?.url,
-        additional_image_urls: image && image.length > 1 ? image.slice(1).map(entry => entry.url) : undefined,
-        video: item.video?.length ? item.video : undefined,
-      }).filter(([, value]) => value !== undefined)),
-    };
-  });
+  return items.map(({ retailer_id: _retailerId, ...item }) => ({
+    method: "UPDATE" as const,
+    data: Object.fromEntries(Object.entries({
+      ...item,
+      video: item.video?.length ? item.video : undefined,
+    }).filter(([, value]) => value !== undefined)),
+  }));
 }
 
 export type MetaCatalogBatchRequest = ReturnType<typeof toMetaCatalogBatchRequests>[number];
