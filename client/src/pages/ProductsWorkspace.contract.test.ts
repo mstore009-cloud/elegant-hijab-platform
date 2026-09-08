@@ -8,8 +8,8 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain('useState<ProductSurface>("active")');
     expect(source).toContain('surface === "active" ? product.status === "active"');
     expect(source).toContain('!["active", "archived"].includes(product.status)');
-    expect(source).toContain("المنتجات النشطة");
-    expect(source).toContain("مسودات العمل");
+    expect(source).toContain(">النشطة ");
+    expect(source).toContain(">المسودات ");
   });
 
   it("يبقي أدوات OneDrive وMeta Catalog مطوية إلى أن يفتحها المستخدم", () => {
