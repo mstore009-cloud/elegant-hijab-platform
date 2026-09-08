@@ -58,7 +58,7 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
     ...(selectedProductIds?.length ? [inArray(products.id, selectedProductIds)] : []),
   )).orderBy(desc(products.updatedAt));
   const productIds = productRows.map(product => product.id);
-  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, productReports: [] as Array<{ productId: number; productCode: string; name: string; metaTitle: string; groupPath: string | null; itemCount: number; imageCount: number; videoCount: number; primaryImageUrl: string | null; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
+  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, productReports: [] as Array<{ productId: number; productCode: string; name: string; metaTitle: string; metaDescription: string; groupPath: string | null; itemCount: number; imageCount: number; videoCount: number; primaryImageUrl: string | null; imageUrls: string[]; videoUrls: string[]; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
   const [variantRows, mediaRows] = await Promise.all([
     db.select().from(productVariants).where(inArray(productVariants.productId, productIds)),
     db.select().from(productMedia).where(inArray(productMedia.productId, productIds)),
@@ -66,7 +66,7 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
   const items: MetaCatalogProductItem[] = [];
   let skippedProducts = 0;
   const skipped: Array<{ productId: number; productCode: string; reason: string }> = [];
-  const productReports: Array<{ productId: number; productCode: string; name: string; metaTitle: string; groupPath: string | null; itemCount: number; imageCount: number; videoCount: number; primaryImageUrl: string | null; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }> = [];
+  const productReports: Array<{ productId: number; productCode: string; name: string; metaTitle: string; metaDescription: string; groupPath: string | null; itemCount: number; imageCount: number; videoCount: number; primaryImageUrl: string | null; imageUrls: string[]; videoUrls: string[]; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }> = [];
   for (const product of productRows) {
     const productVariantsForProduct = variantRows.filter(variant => variant.productId === product.id).map(variant => ({ id: variant.id, colorName: variant.colorName, sizeLabel: variant.sizeLabel, inventoryQuantity: variant.inventoryQuantity }));
     const enrichment = await getMetaCatalogProductEnrichment({ storeId: input.storeId, productId: product.id });
@@ -115,11 +115,14 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
       productCode: product.productCode,
       name: product.name,
       metaTitle: result.items[0]?.title ?? product.name,
+      metaDescription: result.items[0]?.description ?? product.description ?? "",
       groupPath: enrichment.groupPath,
       itemCount: result.items.length,
       imageCount: result.items.reduce((count, item) => count + (item.image?.length ?? 0), 0),
       videoCount: result.items.reduce((count, item) => count + (item.video?.length ?? 0), 0),
       primaryImageUrl: result.items.find(item => item.image?.[0])?.image?.[0]?.url ?? null,
+      imageUrls: Array.from(new Set(result.items.flatMap(item => item.image?.map(entry => entry.url) ?? []))),
+      videoUrls: Array.from(new Set(result.items.flatMap(item => item.video?.map(entry => entry.url) ?? []))),
       status: result.skipped || resultIssues.length ? "needs_review" : "ready",
       category: enrichment.effective.fbProductCategoryDetails,
       material: enrichment.effective.material,
@@ -142,7 +145,7 @@ export async function previewMetaCatalogExport(input: { storeId: number; catalog
     skipped: snapshot.skipped.slice(0, 20),
     productReports: snapshot.productReports.slice(0, 50),
     idempotencyKey: snapshot.idempotencyKey,
-    sampleItems: snapshot.items.slice(0, 10).map(({ id, retailer_id, title, availability, price, sale_price, color, size, item_group_id, fb_product_category, material, image, video }) => ({ id, retailer_id, title, availability, price, sale_price, color, size, item_group_id, fb_product_category, material, imageCount: image?.length ?? 0, videoCount: video?.length ?? 0 })),
+    sampleItems: snapshot.items.slice(0, 10).map(({ id, retailer_id, title, description, availability, price, sale_price, color, size, item_group_id, fb_product_category, material, image, video }) => ({ id, retailer_id, title, description, availability, price, sale_price, color, size, item_group_id, fb_product_category, material, imageUrls: image?.map(entry => entry.url) ?? [], videoUrls: video?.map(entry => entry.url) ?? [] })),
   };
 }
 

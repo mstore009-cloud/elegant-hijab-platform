@@ -66,6 +66,18 @@ describe("Meta Catalog export mapping", () => {
     expect(result).toMatchObject({ skipped: true, items: [] });
   });
 
+  it("requires a real description and never substitutes the product name", () => {
+    const result = buildMetaCatalogProductItems({
+      product: { ...baseProduct, description: null },
+      variants,
+      brand: "Brand",
+      currency: "IQD",
+      media: [{ id: 1, variantId: 11, mediaType: "image", catalogUrl: "https://cdn.example/item.jpg" }],
+    });
+    expect(result).toMatchObject({ skipped: true, items: [] });
+    expect(result.reason).toContain("لا يُستخدم الاسم بديلًا عن الوصف");
+  });
+
   it("requires a public product link and prefers the prepared Catalog image over the operational preview", () => {
     const missingLink = buildMetaCatalogProductItems({ product: { ...baseProduct, productLink: null }, variants, brand: "Brand", currency: "IQD", media: [{ id: 1, variantId: 11, mediaType: "image", catalogUrl: "https://cdn.example/original.jpg" }] });
     expect(missingLink).toMatchObject({ skipped: true, items: [] });
@@ -98,11 +110,23 @@ describe("Meta Catalog export mapping", () => {
   });
 
   it("creates a stable idempotency key for the exact export snapshot", () => {
-    const input = buildMetaCatalogProductItems({ product: baseProduct, variants, brand: "Brand", currency: "IQD", media: [{ id: 1, variantId: 11, mediaType: "image", catalogUrl: "https://cdn.example/item.jpg" }] });
+    const input = buildMetaCatalogProductItems({ product: baseProduct, variants, brand: "Brand", currency: "IQD", media: [{ id: 1, variantId: 11, mediaType: "image", catalogUrl: "https://cdn.example/item.jpg" }, { id: 2, variantId: 11, mediaType: "video", catalogUrl: "https://cdn.example/item.mp4" }] });
     const first = buildCatalogExportIdempotencyKey({ storeId: 1, catalogId: "cat-1", productItems: input.items });
     const second = buildCatalogExportIdempotencyKey({ storeId: 1, catalogId: "cat-1", productItems: input.items });
     expect(first).toBe(second);
-    expect(toMetaCatalogBatchRequests(input.items)[0]).toMatchObject({ method: "UPDATE" });
+    expect(toMetaCatalogBatchRequests(input.items)[0]).toMatchObject({ method: "UPDATE", retailer_id: "HJ-001-11" });
+    expect(toMetaCatalogBatchRequests(input.items)[0]?.data).toMatchObject({
+      name: "حجاب حريري",
+      description: "وصف المنتج",
+      url: "https://shop.example/store/HJ-001",
+      image_url: "https://cdn.example/item.jpg",
+      video: [{ url: "https://cdn.example/item.mp4" }],
+      fb_product_category: "Clothing & Accessories",
+      retailer_product_group_id: "HJ-001",
+    });
+    expect(toMetaCatalogBatchRequests(input.items)[0]?.data).not.toHaveProperty("retailer_id");
+    expect(toMetaCatalogBatchRequests(input.items)[0]?.data).not.toHaveProperty("title");
+    expect(toMetaCatalogBatchRequests(input.items)[0]?.data).not.toHaveProperty("link");
   });
 
   it("chunks requests safely and submits only the official items_batch payload", async () => {

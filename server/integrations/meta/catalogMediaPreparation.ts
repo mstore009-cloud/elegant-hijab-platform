@@ -3,6 +3,7 @@ import { listCatalogChildren, readCatalogOriginalImageBytes, readCatalogOriginal
 import { getUsableCatalogConnection } from "../onedrive/catalogAuth";
 import { getCatalogProductFolderId, getProductMedia, getProductWithVariants, saveMetaCatalogMediaCopy } from "../../products/db";
 import { storageGet, storagePut } from "../../storage";
+import { ENV } from "../../_core/env";
 
 const MAX_META_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_META_VIDEO_BYTES = 200 * 1024 * 1024;
@@ -33,11 +34,21 @@ async function catalogImageBytes(input: { bytes: Buffer; mimeType: string }) {
   return { bytes: converted.data, mimeType: "image/jpeg", extension: "jpg", sourceRendition: "catalog_high_quality_jpeg" as const, width: converted.info.width, height: converted.info.height };
 }
 
-async function readManualCatalogImage(storageKey: string) {
-  const url = (await storageGet(storageKey)).url;
+export function absoluteMetaCatalogSourceUrl(url: string) {
+  try {
+    return new URL(url, new URL(ENV.metaRedirectUri).origin).toString();
+  } catch {
+    throw new Error("تعذر إنشاء رابط عام صالح لوسيط Meta Catalog.");
+  }
+}
+
+async function readManualCatalogSource(storageKey: string) {
+  const url = absoluteMetaCatalogSourceUrl((await storageGet(storageKey)).url);
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-  if (!response.ok) throw new Error("تعذر قراءة الصورة اليدوية الأصلية لإعداد Catalog.");
-  return { bytes: Buffer.from(await response.arrayBuffer()), mimeType: response.headers.get("content-type")?.split(";")[0] || "image/webp" };
+  if (!response.ok) throw new Error("تعذر قراءة الوسيط اليدوي الأصلي لإعداد Catalog.");
+  const declaredBytes = Number(response.headers.get("content-length") ?? 0);
+  if (declaredBytes > MAX_META_VIDEO_BYTES) throw new Error("حجم فيديو Catalog أكبر من الحد المسموح 200 ميغابايت.");
+  return { bytes: Buffer.from(await response.arrayBuffer()), mimeType: response.headers.get("content-type")?.split(";")[0] || "application/octet-stream" };
 }
 
 export async function prepareMetaCatalogMediaForProduct(input: { storeId: number; productId: number; actorUserId: number }) {
@@ -75,7 +86,7 @@ export async function prepareMetaCatalogMediaForProduct(input: { storeId: number
               if (!sourceFile || sourceFile.kind !== "file" || !connection?.selectedDriveId) throw new Error(`لم توجد الصورة ${entry.originalFileName ?? ""} في OneDrive.`);
               return readCatalogOriginalImageBytes({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, fileId: sourceFile.id });
             })()
-          : entry.storageKey ? await readManualCatalogImage(entry.storageKey) : null;
+          : entry.storageKey ? await readManualCatalogSource(entry.storageKey) : null;
         if (!original) throw new Error("لا توجد نسخة مصدر قابلة لتهيئة صورة Catalog.");
         const converted = await catalogImageBytes({ bytes: original.bytes, mimeType: original.mimeType });
         const uploaded = await storagePut(`products/${item.product.id}/meta-catalog/image/${entry.id}.${converted.extension}`, converted.bytes, converted.mimeType);
@@ -84,8 +95,12 @@ export async function prepareMetaCatalogMediaForProduct(input: { storeId: number
       } else {
         if (entry.source !== "onedrive") {
           if (!entry.storageKey) throw new Error("لا توجد نسخة فيديو قابلة لتهيئة Catalog.");
-          await saveMetaCatalogMediaCopy({ mediaId: entry.id, storageKey: entry.storageKey, metadata: { mimeType: "video/*", sourceRendition: "manual_fallback" }, createdByUserId: input.actorUserId });
-          prepared.push({ mediaId: entry.id, storageKey: entry.storageKey, mediaType: "video", source: "manual_fallback" });
+          const original = await readManualCatalogSource(entry.storageKey);
+          if (original.bytes.length > MAX_META_VIDEO_BYTES) throw new Error("حجم فيديو Catalog أكبر من الحد المسموح 200 ميغابايت.");
+          const extension = extensionFromMime(original.mimeType, entry.originalFileName?.split(".").pop()?.toLowerCase() || "mp4");
+          const uploaded = await storagePut(`products/${item.product.id}/meta-catalog/video/${entry.id}.${extension}`, original.bytes, original.mimeType);
+          await saveMetaCatalogMediaCopy({ mediaId: entry.id, storageKey: uploaded.key, metadata: { mimeType: original.mimeType, sourceRendition: "manual_fallback", outputBytes: original.bytes.length }, createdByUserId: input.actorUserId });
+          prepared.push({ mediaId: entry.id, storageKey: uploaded.key, mediaType: "video", source: "manual_fallback" });
           continue;
         }
         const sourceFile = byName.get(entry.originalFileName ?? "");

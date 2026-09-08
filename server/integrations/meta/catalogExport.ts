@@ -93,6 +93,8 @@ export function buildMetaCatalogProductItems(input: {
   if (product.status !== "active") return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "يُسمح بتصدير المنتجات النشطة فقط." };
   if (product.exportEnabled === false) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "استُبعد المنتج من تصدير Meta عبر إعداداته الخاصة." };
   if (!variants.length) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "لا توجد متغيرات معتمدة لتصدير المنتج." };
+  const description = product.description?.trim() ?? "";
+  if (!description) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "أضف وصف المنتج قبل تصديره إلى Meta؛ لا يُستخدم الاسم بديلًا عن الوصف." };
   if (!product.fbProductCategory?.trim()) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "اختر فئة Meta من Taxonomy الرسمية في إعدادات المتجر أو المجموعة أو المنتج." };
   const productLink = product.productLink;
   if (!productLink || !/^https:\/\//i.test(productLink)) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "أضف رابط صفحة المنتج العامة في إعدادات Meta Catalog أو استثناء المنتج." };
@@ -125,7 +127,7 @@ export function buildMetaCatalogProductItems(input: {
       id: stableRetailerId(product, variant),
       retailer_id: stableRetailerId(product, variant),
       title: titleFor(product, variant),
-      description: (product.description ?? product.name).trim().slice(0, 5000),
+      description: description.slice(0, 5000),
       availability: variant.inventoryQuantity > 0 ? (product.defaultAvailability ?? "in stock") : "out of stock",
       condition: product.condition ?? "new",
       brand: input.brand.trim().slice(0, 100),
@@ -151,12 +153,30 @@ export function buildMetaCatalogProductItems(input: {
 }
 
 export function buildCatalogExportIdempotencyKey(input: { storeId: number; catalogId: string; productItems: MetaCatalogProductItem[] }) {
-  const payload = JSON.stringify({ storeId: input.storeId, catalogId: input.catalogId, productItems: input.productItems });
+  // Bump this contract version whenever the outgoing Meta API envelope changes.
+  // It prevents an already-submitted legacy envelope from suppressing a corrected
+  // product update for the same data snapshot.
+  const payload = JSON.stringify({ schemaVersion: "items_batch_v2", storeId: input.storeId, catalogId: input.catalogId, productItems: input.productItems });
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
 export function toMetaCatalogBatchRequests(items: MetaCatalogProductItem[]) {
-  return items.map(item => ({ method: "UPDATE" as const, data: item }));
+  return items.map(item => {
+    const { id: _id, retailer_id, title, link, item_group_id, image, ...rest } = item;
+    return {
+      retailer_id,
+      method: "UPDATE" as const,
+      data: Object.fromEntries(Object.entries({
+        ...rest,
+        name: title,
+        url: link,
+        retailer_product_group_id: item_group_id,
+        image_url: image?.[0]?.url,
+        additional_image_urls: image && image.length > 1 ? image.slice(1).map(entry => entry.url) : undefined,
+        video: item.video?.length ? item.video : undefined,
+      }).filter(([, value]) => value !== undefined)),
+    };
+  });
 }
 
 export type MetaCatalogBatchRequest = ReturnType<typeof toMetaCatalogBatchRequests>[number];
