@@ -43,6 +43,7 @@ async function readManualCatalogImage(storageKey: string) {
 export async function prepareMetaCatalogMediaForProduct(input: { storeId: number; productId: number; actorUserId: number }) {
   const item = await getProductWithVariants(input.productId, input.storeId);
   if (!item) throw new Error("المنتج غير موجود في متجرك التشغيلي.");
+  if (item.product.status !== "active") throw new Error("لا يمكن تجهيز وسائط Meta إلا للمنتجات النشطة.");
   const media = await getProductMedia(input.productId);
   const prepared: Prepared[] = [];
   const skipped: Skipped[] = [];

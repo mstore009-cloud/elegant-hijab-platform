@@ -71,7 +71,11 @@ function money(value: string | number) {
 }
 
 function titleFor(product: MetaCatalogProduct, variant: MetaCatalogVariant) {
-  return [product.name.trim(), variant.colorName.trim(), variant.sizeLabel?.trim()].filter(Boolean).join(" - ").slice(0, 100);
+  // Meta receives one item per approved variant. Keep the shared product name
+  // stable and let `color`/`size` identify the card, rather than polluting the
+  // main title with a card label.
+  void variant;
+  return product.name.trim().slice(0, 100);
 }
 
 function stableRetailerId(product: MetaCatalogProduct, variant: MetaCatalogVariant) {

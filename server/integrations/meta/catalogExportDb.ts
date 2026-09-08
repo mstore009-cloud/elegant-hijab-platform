@@ -7,6 +7,7 @@ import { getMetaRuntimeSettings } from "./platformSettings";
 import { getMetaCatalogEnrichmentSettings, getMetaCatalogProductEnrichment } from "./catalogEnrichment";
 import { markMetaCatalogSourceUpdatesExported } from "./catalogSourceUpdates";
 import { storageGet } from "../../storage";
+import { ENV } from "../../_core/env";
 
 async function requireDb() {
   const db = await getDb();
@@ -24,9 +25,17 @@ function catalogStorageKey(input: { operationalMetadata: string | null }) {
   return null;
 }
 
-async function absoluteStorageUrl(baseUrl: string | null, storageKey: string | null) {
-  if (!baseUrl || !storageKey) return null;
-  return `${baseUrl}${(await storageGet(storageKey)).url}`;
+function metaCatalogPublicOrigin() {
+  try {
+    return new URL(ENV.metaRedirectUri).origin;
+  } catch {
+    throw new Error("لا يتوفر عنوان عام صالح للمنصة لإتاحة وسائط Meta Catalog.");
+  }
+}
+
+export async function absoluteMetaCatalogStorageUrl(storageKey: string | null) {
+  if (!storageKey) return null;
+  return new URL((await storageGet(storageKey)).url, metaCatalogPublicOrigin()).toString();
 }
 
 export async function buildMetaCatalogExportSnapshot(input: { storeId: number; catalogAssetId: number; productIds?: number[] }) {
@@ -49,7 +58,7 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
     ...(selectedProductIds?.length ? [inArray(products.id, selectedProductIds)] : []),
   )).orderBy(desc(products.updatedAt));
   const productIds = productRows.map(product => product.id);
-  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, productReports: [] as Array<{ productId: number; productCode: string; name: string; groupPath: string | null; itemCount: number; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
+  if (!productIds.length) return { catalogAssetId: asset.id, connectionId: connection.id, catalogId: asset.externalId, items: [] as MetaCatalogProductItem[], requests: [], idempotencyKey: buildCatalogExportIdempotencyKey({ storeId: input.storeId, catalogId: asset.externalId, productItems: [] }), skippedProducts: 0, skipped: [] as Array<{ productId: number; productCode: string; reason: string }>, productReports: [] as Array<{ productId: number; productCode: string; name: string; metaTitle: string; groupPath: string | null; itemCount: number; imageCount: number; videoCount: number; primaryImageUrl: string | null; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }>, storeName: store?.name ?? "عالم الحجابات الأنيقة" };
   const [variantRows, mediaRows] = await Promise.all([
     db.select().from(productVariants).where(inArray(productVariants.productId, productIds)),
     db.select().from(productMedia).where(inArray(productMedia.productId, productIds)),
@@ -57,7 +66,7 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
   const items: MetaCatalogProductItem[] = [];
   let skippedProducts = 0;
   const skipped: Array<{ productId: number; productCode: string; reason: string }> = [];
-  const productReports: Array<{ productId: number; productCode: string; name: string; groupPath: string | null; itemCount: number; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }> = [];
+  const productReports: Array<{ productId: number; productCode: string; name: string; metaTitle: string; groupPath: string | null; itemCount: number; imageCount: number; videoCount: number; primaryImageUrl: string | null; status: "ready" | "needs_review"; category: { id: string; path: string } | null; material: string | null; materialSource: "product_override" | "onedrive_metadata" | "missing"; issues: string[] }> = [];
   for (const product of productRows) {
     const productVariantsForProduct = variantRows.filter(variant => variant.productId === product.id).map(variant => ({ id: variant.id, colorName: variant.colorName, sizeLabel: variant.sizeLabel, inventoryQuantity: variant.inventoryQuantity }));
     const enrichment = await getMetaCatalogProductEnrichment({ storeId: input.storeId, productId: product.id });
@@ -65,8 +74,8 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
       id: media.id,
       variantId: media.variantId,
       mediaType: media.mediaType,
-      catalogUrl: await absoluteStorageUrl(settings.productLinkBaseUrl, catalogStorageKey({ operationalMetadata: media.operationalMetadata })),
-      operationalUrl: settings.mediaPolicy === "operational_fallback" ? await absoluteStorageUrl(settings.productLinkBaseUrl, media.storageKey) : null,
+      catalogUrl: await absoluteMetaCatalogStorageUrl(catalogStorageKey({ operationalMetadata: media.operationalMetadata })),
+      operationalUrl: settings.mediaPolicy === "operational_fallback" ? await absoluteMetaCatalogStorageUrl(media.storageKey) : null,
       sortOrder: media.sortOrder,
     })));
     const result = buildMetaCatalogProductItems({
@@ -105,8 +114,12 @@ export async function buildMetaCatalogExportSnapshot(input: { storeId: number; c
       productId: product.id,
       productCode: product.productCode,
       name: product.name,
+      metaTitle: result.items[0]?.title ?? product.name,
       groupPath: enrichment.groupPath,
       itemCount: result.items.length,
+      imageCount: result.items.reduce((count, item) => count + (item.image?.length ?? 0), 0),
+      videoCount: result.items.reduce((count, item) => count + (item.video?.length ?? 0), 0),
+      primaryImageUrl: result.items.find(item => item.image?.[0])?.image?.[0]?.url ?? null,
       status: result.skipped || resultIssues.length ? "needs_review" : "ready",
       category: enrichment.effective.fbProductCategoryDetails,
       material: enrichment.effective.material,

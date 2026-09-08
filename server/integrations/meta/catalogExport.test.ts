@@ -34,6 +34,7 @@ describe("Meta Catalog export mapping", () => {
     expect(result.items[0]).toMatchObject({
       id: "HJ-001-11",
       retailer_id: "HJ-001-11",
+      title: "حجاب حريري",
       availability: "in stock",
       price: "30000.00 IQD",
       sale_price: "25000.00 IQD",
@@ -50,6 +51,8 @@ describe("Meta Catalog export mapping", () => {
     });
     expect(JSON.stringify(result.items[0])).not.toContain("costPrice");
     expect(JSON.stringify(result.items[0])).not.toContain("targetMarginPercent");
+    expect(result.items[0]?.title).not.toContain("أسود");
+    expect(result.items[0]?.title).not.toContain("مقاس موحد");
   });
 
   it("skips drafts and does not create catalog items without a real active product", () => {

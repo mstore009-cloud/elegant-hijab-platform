@@ -9,12 +9,12 @@ describe("Products Meta Catalog export contract", () => {
     expect(source).toContain("MetaCatalogEnrichmentPanel");
     expect(source).toContain("مساحة تجهيز وتصدير المنتجات إلى Meta");
     expect(source).toContain("onOpenProduct={productId");
-    expect(source).toContain("المسودات لا تدخل التصدير");
+    expect(source).toContain("اختر المنتجات النشطة أولًا");
   });
 
   it("يحوّل تصدير Meta إلى مساحة عمل مستقلة قابلة للفتح من أدوات المنتجات", () => {
     expect(source).toContain("setMetaCatalogPanelOpen");
-    expect(source).toContain("تصدير Meta Catalog");
+    expect(source).toContain("مساحة تجهيز وتصدير المنتجات إلى Meta");
     expect(source).not.toContain("exportMetaCatalog.mutate");
   });
 });
