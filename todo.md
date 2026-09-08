@@ -706,3 +706,4 @@
 - [x] إصلاح تمرير Facebook Product Category المختارة إلى حقل Meta الرسمي والتحقق منها في معاينة المنتج.
 - [x] إظهار قيم العنوان والوصف والفئة والفيديو النهائية في معاينة المنتج قبل تحديث Meta.
 - [x] تصحيح غلاف items_batch ليضع data.id وفق مرجع Meta ويمنع Duplicate retailer_id في تحديث المنتج الواحد.
+- [x] التحقق من سبب غياب Facebook Product Category والخامة من Commerce Manager للمنتج المنشور يدويًا: القيم محفوظة فعليًا في Meta، وتحتاج واجهة Commerce Manager إلى «Show more attributes» لإظهار السمات غير الافتراضية.
