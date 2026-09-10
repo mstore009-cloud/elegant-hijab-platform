@@ -13,6 +13,10 @@ export type ProductWithFinancials = {
   costPrice: string | null;
   targetMarginPercent: string | null;
   lastMetaCatalogSyncAt: Date | null;
+  lastMetaCatalogChangeAt?: Date | null;
+  lastMetaCatalogChangeType?: string | null;
+  lastMetaCatalogChangeInternal?: boolean | null;
+  metaCatalogSyncIgnoredAt?: Date | null;
 };
 
 export function presentProductForViewer(product: ProductWithFinancials, canViewFinancials: boolean) {

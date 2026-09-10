@@ -38,10 +38,16 @@ async function requireProductInOperationalStore(ctx: { operationalStore: { id: n
   return { storeId, product };
 }
 
-async function queueProductMetaSync(ctx: { user: { id: number }; req: { headers: { cookie?: string } }; operationalStore: { id: number } | null | undefined }, productId: number) {
+async function queueProductMetaSync(
+  ctx: { user: { id: number }; req: { headers: { cookie?: string } }; operationalStore: { id: number } | null | undefined },
+  productId: number,
+  options?: { changeType?: "price" | "inventory" | "image" | "details" | "internal" | "system"; isInternalOnly?: boolean },
+) {
   return enqueueMetaCatalogAutoSync({
     storeId: requireOperationalStoreId(ctx.operationalStore?.id),
     productIds: [productId],
+    changeType: options?.changeType,
+    isInternalOnly: options?.isInternalOnly,
     requestedByUserId: ctx.user.id,
     sessionToken: parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "",
   });
@@ -91,6 +97,10 @@ export const productsRouter = router({
     return Promise.all(productList.map(async ({ product, primaryMedia, missingFields }) => ({
       ...presentProductForViewer({ ...product, category: product.categoryId ? categoryPathById.get(product.categoryId) ?? product.category : product.category }, canViewFinancials),
       updatedAt: product.updatedAt,
+      lastMetaCatalogChangeAt: product.lastMetaCatalogChangeAt,
+      lastMetaCatalogChangeType: product.lastMetaCatalogChangeType,
+      lastMetaCatalogChangeInternal: product.lastMetaCatalogChangeInternal,
+      metaCatalogSyncIgnoredAt: product.metaCatalogSyncIgnoredAt,
       primaryImageUrl: primaryMedia?.storageKey ? (await storageGet(primaryMedia.storageKey)).url : null,
       primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
       missingFields,
@@ -254,7 +264,7 @@ export const productsRouter = router({
     if (!await getProductForVariantInStore(input.variantId, storeId)) throw new TRPCError({ code: "NOT_FOUND", message: "متغير المنتج غير موجود في متجرك التشغيلي." });
     await updateVariantInventory({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
     const product = await getProductForVariantInStore(input.variantId, storeId);
-    if (product) await queueProductMetaSync(ctx, product.id);
+    if (product) await queueProductMetaSync(ctx, product.id, { changeType: "inventory", isInternalOnly: false });
     return { success: true };
   }),
   updateDetails: protectedProcedure.input(z.object({
@@ -275,7 +285,11 @@ export const productsRouter = router({
     const { productId, categoryId, ...patch } = input;
     const updated = await updateProductDetails({ productId, ...patch, actorUserId: ctx.user.id, source: "products_ui" });
     const categoryAssignment = categoryId !== undefined ? await assignProductCategory({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId, categoryId, actorUserId: ctx.user.id }) : null;
-    await queueProductMetaSync(ctx, productId);
+    const hasPrice = patch.sellingPrice !== undefined || patch.previousPrice !== undefined;
+    const hasCatalogFields = patch.name !== undefined || patch.description !== undefined || patch.sizeLabels !== undefined || categoryId !== undefined;
+    const isInternalOnly = !hasPrice && !hasCatalogFields;
+    const changeType = hasPrice ? "price" as const : isInternalOnly ? "internal" as const : "details" as const;
+    await queueProductMetaSync(ctx, productId, { changeType, isInternalOnly });
     return { ...updated, categoryAssignment };
   }),
   activate: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
@@ -381,14 +395,14 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.inventory.update");
     await requireProductInOperationalStore(ctx, input.productId);
     const result = await saveProductInventory({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
-    await queueProductMetaSync(ctx, input.productId);
+    await queueProductMetaSync(ctx, input.productId, { changeType: "inventory", isInternalOnly: false });
     return result;
   }),
   saveColorInventory: protectedProcedure.input(z.object({ productId: z.number().int().positive(), colorName: z.string().trim().min(1).max(100), inventoryQuantity: z.number().int().min(0).max(100000) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     await requireProductInOperationalStore(ctx, input.productId);
     const result = await saveProductColorInventory({ ...input, actorUserId: ctx.user.id });
-    await queueProductMetaSync(ctx, input.productId);
+    await queueProductMetaSync(ctx, input.productId, { changeType: "inventory", isInternalOnly: false });
     return result;
   }),
   uploadManualImage: protectedProcedure.input(z.object({
@@ -402,7 +416,7 @@ export const productsRouter = router({
     const bytes = Buffer.from(input.base64Data, "base64");
     if (bytes.length === 0 || bytes.length > 25 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "حجم الصورة يجب أن يكون بين 1 بايت و25 ميغابايت." });
     const uploaded = await addManualProductImage({ productId: input.productId, fileName: input.fileName, bytes, actorUserId: ctx.user.id });
-    await queueProductMetaSync(ctx, input.productId);
+    await queueProductMetaSync(ctx, input.productId, { changeType: "image", isInternalOnly: false });
     let colorAnalysis: Awaited<ReturnType<typeof generateAutomaticColorSuggestion>> = null;
     let colorAnalysisError: string | null = null;
     try {
@@ -426,8 +440,14 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
     const result = await detachProductMediaReference({ productId: input.productId, mediaId: input.mediaId, createdByUserId: ctx.user.id });
-    await queueProductMetaSync(ctx, input.productId);
+    await queueProductMetaSync(ctx, input.productId, { changeType: "image", isInternalOnly: false });
     return result;
+  }),
+  dismissInternalMetaSync: protectedProcedure.input(z.object({ productId: z.number().int().positive(), reason: z.string().trim().max(200).optional() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const { storeId } = await requireProductInOperationalStore(ctx, input.productId);
+    const { dismissInternalMetaCatalogAutoSync } = await import("../integrations/meta/catalogAutoSync");
+    return dismissInternalMetaCatalogAutoSync({ storeId, productId: input.productId, userId: ctx.user.id, reason: input.reason });
   }),
   importJobs: router({
     list: protectedProcedure.query(async ({ ctx }) => {
