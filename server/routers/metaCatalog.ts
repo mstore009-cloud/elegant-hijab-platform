@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { parse as parseCookie } from "cookie";
+import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { protectedProcedure, router } from "../_core/trpc";
 import { listMetaConnectionOverview } from "../integrations/meta/db";
@@ -8,10 +10,15 @@ import { deleteMetaCatalogGroupEnrichment, getMetaCatalogEnrichmentSettings, get
 import { prepareMetaCatalogMediaForProduct, prepareMetaCatalogMediaForStore } from "../integrations/meta/catalogMediaPreparation";
 import { describeMetaProductTaxonomy, searchMetaProductTaxonomy } from "../integrations/meta/catalogTaxonomy";
 import { getMetaCatalogSourceUpdate, listMetaCatalogSourceUpdates, markMetaCatalogSourceUpdateStatus } from "../integrations/meta/catalogSourceUpdates";
+import { enqueueAllActiveProductsForMetaCatalog, enqueueMetaCatalogAutoSync } from "../integrations/meta/catalogAutoSync";
 
 function requireOperationalStoreId(storeId: number | null | undefined) {
   if (!storeId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لا يوجد متجر تشغيلي نشط لحسابك." });
   return storeId;
+}
+
+function sessionToken(ctx: { req: { headers: { cookie?: string } } }) {
+  return parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "";
 }
 
 const catalogAssetInput = z.object({ catalogAssetId: z.number().int().positive() });
@@ -67,7 +74,9 @@ export const metaCatalogRouter = router({
   saveSettings: protectedProcedure.input(settingsInput).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     try {
-      return await saveMetaCatalogEnrichmentSettings({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore?.id), actorUserId: ctx.user.id });
+      const result = await saveMetaCatalogEnrichmentSettings({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore?.id), actorUserId: ctx.user.id });
+      await enqueueAllActiveProductsForMetaCatalog({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), requestedByUserId: ctx.user.id, sessionToken: sessionToken(ctx) });
+      return result;
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ إعدادات إثراء Meta Catalog." });
     }
@@ -83,7 +92,9 @@ export const metaCatalogRouter = router({
   saveGroupEnrichment: protectedProcedure.input(groupEnrichmentInput).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     try {
-      return await saveMetaCatalogGroupEnrichment({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore?.id), actorUserId: ctx.user.id });
+      const result = await saveMetaCatalogGroupEnrichment({ ...input, storeId: requireOperationalStoreId(ctx.operationalStore?.id), actorUserId: ctx.user.id });
+      await enqueueAllActiveProductsForMetaCatalog({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), requestedByUserId: ctx.user.id, sessionToken: sessionToken(ctx) });
+      return result;
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ قاعدة مجموعة المنتجات." });
     }
@@ -91,7 +102,9 @@ export const metaCatalogRouter = router({
   deleteGroupEnrichment: protectedProcedure.input(z.object({ groupPath: z.string().trim().min(1).max(1000) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     try {
-      return await deleteMetaCatalogGroupEnrichment({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), groupPath: input.groupPath });
+      const result = await deleteMetaCatalogGroupEnrichment({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), groupPath: input.groupPath });
+      await enqueueAllActiveProductsForMetaCatalog({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), requestedByUserId: ctx.user.id, sessionToken: sessionToken(ctx) });
+      return result;
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حذف قاعدة مجموعة المنتجات." });
     }
@@ -108,7 +121,9 @@ export const metaCatalogRouter = router({
     await assertPermission(ctx.user, "products.edit");
     const { productId, ...values } = input;
     try {
-      return await saveMetaCatalogProductEnrichment({ ...values, storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId, actorUserId: ctx.user.id });
+      const result = await saveMetaCatalogProductEnrichment({ ...values, storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId, actorUserId: ctx.user.id });
+      await enqueueMetaCatalogAutoSync({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productIds: [productId], requestedByUserId: ctx.user.id, sessionToken: sessionToken(ctx) });
+      return result;
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ حقول Meta Catalog الخاصة بالمنتج." });
     }
@@ -118,7 +133,10 @@ export const metaCatalogRouter = router({
     try {
       const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
       const result = await prepareMetaCatalogMediaForProduct({ storeId, productId: input.productId, actorUserId: ctx.user.id });
-      if (result.prepared.length) await markMetaCatalogSourceUpdateStatus({ storeId, productId: input.productId, status: "media_prepared" });
+      if (result.prepared.length) {
+        await markMetaCatalogSourceUpdateStatus({ storeId, productId: input.productId, status: "media_prepared" });
+        await enqueueMetaCatalogAutoSync({ storeId, productIds: [input.productId], requestedByUserId: ctx.user.id, sessionToken: sessionToken(ctx) });
+      }
       return result;
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر تجهيز وسائط Meta Catalog." });
@@ -130,6 +148,7 @@ export const metaCatalogRouter = router({
       const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
       const result = await prepareMetaCatalogMediaForStore({ storeId, productIds: input.productIds, actorUserId: ctx.user.id });
       await Promise.all(input.productIds.map(productId => markMetaCatalogSourceUpdateStatus({ storeId, productId, status: "media_prepared" })));
+      await enqueueMetaCatalogAutoSync({ storeId, productIds: input.productIds, requestedByUserId: ctx.user.id, sessionToken: sessionToken(ctx) });
       return result;
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر تجهيز وسائط المنتجات لكتالوج Meta." });

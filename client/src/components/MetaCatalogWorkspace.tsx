@@ -18,6 +18,10 @@ function reportMessage(issues: string[]) {
   return issues[0] ?? "تحتاج بيانات المنتج إلى مراجعة.";
 }
 
+function formatMetaSync(value: Date | string | null | undefined) {
+  return value ? new Date(value).toLocaleString("ar-IQ", { dateStyle: "short", timeStyle: "short" }) : "لم تتم بعد";
+}
+
 export function MetaCatalogWorkspace({ canEdit, onOpenProduct, onOpenSettings }: Props) {
   const utils = trpc.useUtils();
   const readiness = trpc.metaCatalog.readiness.useQuery();
@@ -124,7 +128,7 @@ export function MetaCatalogWorkspace({ canEdit, onOpenProduct, onOpenSettings }:
           const mediaReady = product.preparedMediaCount >= product.imageCount + product.videoCount && Boolean(product.imageCount);
           return <div key={product.id} className={`grid grid-cols-[34px_minmax(150px,1.2fr)_minmax(100px,.8fr)_78px_104px] items-center gap-2 border-t border-[#edf0ee] px-3 py-3 text-xs ${selected ? "bg-[#f1f8f4]" : "bg-white"}`}>
             <input aria-label={`تحديد ${product.name}`} type="checkbox" checked={selected} onChange={() => toggle(product.id)} className="h-4 w-4 accent-[#28604e]" />
-            <button type="button" onClick={() => onOpenProduct(product.id)} className="min-w-0 text-right"><b className="block truncate text-[#28463b]">{product.name}</b><span className="block truncate text-[#76837c]">{product.productCode}</span></button>
+            <button type="button" onClick={() => onOpenProduct(product.id)} className="min-w-0 text-right"><b className="block truncate text-[#28463b]">{product.name}</b><span className="block truncate text-[#76837c]">{product.productCode}</span><span className="mt-0.5 block truncate text-[10px] text-[#8a7560]">آخر مزامنة Meta: {formatMetaSync(product.lastMetaCatalogSyncAt)}</span></button>
             <span className="truncate text-[#64786e]">{product.groupPath ?? "غير مصنف"}</span><span className="text-[#64786e]">{product.imageCount} ص · {product.videoCount} ف</span>
             <span className={`rounded-full px-2 py-1 text-center font-bold ${hasSourceUpdate ? "bg-[#fff1de] text-[#a35d1c]" : mediaReady ? "bg-[#e4f3ea] text-[#17633b]" : "bg-[#fff1de] text-[#a35d1c]"}`}>{hasSourceUpdate ? "تحديث OneDrive" : mediaReady ? "وسائط جاهزة" : "تحتاج تجهيز"}</span>
           </div>;

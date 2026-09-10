@@ -12,6 +12,7 @@ import { registerMetaWebhookRoutes } from "../channels/metaWebhook";
 import { registerInboxLiveUpdateRoute } from "../inbox/liveUpdates";
 import { registerMetaOAuthRoutes } from "../integrations/meta/oauthRoutes";
 import { handleScheduledMetaWebhookRetry } from "../channels/metaRetryHandler";
+import { handleScheduledMetaCatalogAutoSync } from "../integrations/meta/catalogAutoSyncScheduledHandler";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -49,6 +50,7 @@ async function startServer() {
   registerMetaOAuthRoutes(app);
   registerCatalogVideoPlaybackRoute(app);
   app.post("/api/scheduled/catalog-scan", handleScheduledCatalogScan);
+  app.post("/api/scheduled/meta-catalog-auto-sync", handleScheduledMetaCatalogAutoSync);
   app.post("/api/scheduled/meta-webhook-retry", handleScheduledMetaWebhookRetry);
   // tRPC API
   app.use(

@@ -1,5 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { parse as parseCookie } from "cookie";
+import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
@@ -14,6 +16,7 @@ import { generateOperationalMediaForProduct, regenerateOperationalMediaForProduc
 import { analyzeStoredProductColors } from "../products/colorAnalysis";
 import { getPublicStore } from "../stores/db";
 import { assignProductCategory, createManualProductCategory, listProductCategoryTree, renameProductCategory } from "../products/categories";
+import { enqueueMetaCatalogAutoSync } from "../integrations/meta/catalogAutoSync";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
 const productStatus = z.enum(["draft", "needs_review", "ready", "active", "archived"]);
@@ -33,6 +36,15 @@ async function requireProductInOperationalStore(ctx: { operationalStore: { id: n
   const product = await getProductWithVariants(productId, storeId);
   if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "المنتج غير موجود في متجرك التشغيلي." });
   return { storeId, product };
+}
+
+async function queueProductMetaSync(ctx: { user: { id: number }; req: { headers: { cookie?: string } }; operationalStore: { id: number } | null | undefined }, productId: number) {
+  return enqueueMetaCatalogAutoSync({
+    storeId: requireOperationalStoreId(ctx.operationalStore?.id),
+    productIds: [productId],
+    requestedByUserId: ctx.user.id,
+    sessionToken: parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "",
+  });
 }
 
 export const productsRouter = router({
@@ -232,6 +244,7 @@ export const productsRouter = router({
     const productId = await createProduct({ ...productInput, storeId, createdByUserId: ctx.user.id });
     if (categoryId) await assignProductCategory({ storeId, productId, categoryId, actorUserId: ctx.user.id });
     await recordInitialProductFinancialValues({ ...input, storeId, productId, actorUserId: ctx.user.id });
+    if (input.status === "active") await queueProductMetaSync(ctx, productId);
     return { productId };
   }),
   updateInventory: protectedProcedure.input(z.object({ variantId: z.number().int().positive(), inventoryQuantity: z.number().int().min(0).max(100000) })).mutation(async ({ ctx, input }) => {
@@ -239,6 +252,8 @@ export const productsRouter = router({
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     if (!await getProductForVariantInStore(input.variantId, storeId)) throw new TRPCError({ code: "NOT_FOUND", message: "متغير المنتج غير موجود في متجرك التشغيلي." });
     await updateVariantInventory({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
+    const product = await getProductForVariantInStore(input.variantId, storeId);
+    if (product) await queueProductMetaSync(ctx, product.id);
     return { success: true };
   }),
   updateDetails: protectedProcedure.input(z.object({
@@ -259,12 +274,15 @@ export const productsRouter = router({
     const { productId, categoryId, ...patch } = input;
     const updated = await updateProductDetails({ productId, ...patch, actorUserId: ctx.user.id, source: "products_ui" });
     const categoryAssignment = categoryId !== undefined ? await assignProductCategory({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId, categoryId, actorUserId: ctx.user.id }) : null;
+    await queueProductMetaSync(ctx, productId);
     return { ...updated, categoryAssignment };
   }),
   activate: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
-    return activateReadyProduct({ productId: input.productId, actorUserId: ctx.user.id });
+    const result = await activateReadyProduct({ productId: input.productId, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   addColor: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
@@ -272,7 +290,9 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
-    return addProductColor({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
+    const result = await addProductColor({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
+    if (result.created) await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   assignMediaColor: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
@@ -281,7 +301,9 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
-    return assignProductMediaColor({ ...input, actorUserId: ctx.user.id });
+    const result = await assignProductMediaColor({ ...input, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   renameColor: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
@@ -290,7 +312,9 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
-    return renameProductColor({ ...input, actorUserId: ctx.user.id });
+    const result = await renameProductColor({ ...input, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   deleteColor: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
@@ -300,7 +324,9 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.delete");
     await requireProductInOperationalStore(ctx, input.productId);
     if (input.colorName !== input.confirmColorName) throw new TRPCError({ code: "BAD_REQUEST", message: "اسم تأكيد الحذف لا يطابق اسم اللون." });
-    return deleteProductColor({ productId: input.productId, colorName: input.colorName, actorUserId: ctx.user.id });
+    const result = await deleteProductColor({ productId: input.productId, colorName: input.colorName, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   excludeMediaFromColorReview: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
@@ -308,7 +334,9 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
-    return excludeProductMediaFromColorReview({ ...input, actorUserId: ctx.user.id });
+    const result = await excludeProductMediaFromColorReview({ ...input, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   analyzeColors: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaIds: z.array(z.number().int().positive()).min(1).max(160).optional() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
@@ -341,7 +369,9 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
-    return applyAutomaticColorSuggestionReview({ ...input, actorUserId: ctx.user.id });
+    const result = await applyAutomaticColorSuggestionReview({ ...input, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   saveInventory: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
@@ -349,12 +379,16 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     await requireProductInOperationalStore(ctx, input.productId);
-    return saveProductInventory({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
+    const result = await saveProductInventory({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   saveColorInventory: protectedProcedure.input(z.object({ productId: z.number().int().positive(), colorName: z.string().trim().min(1).max(100), inventoryQuantity: z.number().int().min(0).max(100000) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
     await requireProductInOperationalStore(ctx, input.productId);
-    return saveProductColorInventory({ ...input, actorUserId: ctx.user.id });
+    const result = await saveProductColorInventory({ ...input, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   uploadManualImage: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
@@ -367,6 +401,7 @@ export const productsRouter = router({
     const bytes = Buffer.from(input.base64Data, "base64");
     if (bytes.length === 0 || bytes.length > 25 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "حجم الصورة يجب أن يكون بين 1 بايت و25 ميغابايت." });
     const uploaded = await addManualProductImage({ productId: input.productId, fileName: input.fileName, bytes, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
     let colorAnalysis: Awaited<ReturnType<typeof generateAutomaticColorSuggestion>> = null;
     let colorAnalysisError: string | null = null;
     try {
@@ -389,7 +424,9 @@ export const productsRouter = router({
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
-    return detachProductMediaReference({ productId: input.productId, mediaId: input.mediaId, createdByUserId: ctx.user.id });
+    const result = await detachProductMediaReference({ productId: input.productId, mediaId: input.mediaId, createdByUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
   }),
   importJobs: router({
     list: protectedProcedure.query(async ({ ctx }) => {

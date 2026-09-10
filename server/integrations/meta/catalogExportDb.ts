@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { catalogFolderImports, metaAssets, metaCatalogExportJobs, metaCatalogSourceUpdates, metaConnectionCapabilities, metaConnections, productMedia, productVariants, products, stores } from "../../../drizzle/schema";
+import { catalogFolderImports, metaAssets, metaCatalogAutoSyncQueue, metaCatalogExportJobs, metaCatalogSourceUpdates, metaConnectionCapabilities, metaConnections, productMedia, productVariants, products, stores } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { getMetaCatalogAccessToken } from "./db";
 import { buildCatalogExportIdempotencyKey, buildMetaCatalogProductItems, chunkMetaCatalogBatchRequests, submitMetaCatalogBatch, toMetaCatalogBatchRequests, type MetaCatalogProductItem } from "./catalogExport";
@@ -150,26 +150,39 @@ export async function previewMetaCatalogExport(input: { storeId: number; catalog
   };
 }
 
-async function verifyMetaCatalogItems(input: { catalogId: string; accessToken: string; graphApiVersion: string; retailerIds: string[]; expectedCategory?: string | null }) {
-  const url = new URL(`https://graph.facebook.com/${input.graphApiVersion}/${encodeURIComponent(input.catalogId)}/products`);
-  url.searchParams.set("fields", "id,retailer_id,fb_product_category,material,video,videos,video_fetch_status");
-  url.searchParams.set("limit", "100");
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${input.accessToken}` }, signal: AbortSignal.timeout(20_000) });
-  const payload = await response.json().catch(() => null) as any;
-  if (!response.ok || payload?.error) return { status: "unavailable" as const, found: [] as string[], missing: input.retailerIds, categoryMismatches: [] as string[], hidden: [] as string[], hiddenItemIds: [] as string[], error: String(payload?.error?.message || response.statusText || "تعذر قراءة عناصر Meta") };
-  const items = Array.isArray(payload?.data) ? payload.data : [];
-  const byRetailerId = new Map<string, any>(items.filter((item: any) => typeof item?.retailer_id === "string").map((item: any) => [String(item.retailer_id), item] as [string, any]));
+async function verifyMetaCatalogItems(input: { catalogId: string; accessToken: string; graphApiVersion: string; retailerIds: string[]; expectedCategory?: string | null; expectedLinks?: Map<string, string | null> }) {
+  let nextUrl: string | null = null;
+  const items: any[] = [];
+  for (let page = 0; page < 20; page += 1) {
+    const url = nextUrl ? new URL(nextUrl) : new URL(`https://graph.facebook.com/${input.graphApiVersion}/${encodeURIComponent(input.catalogId)}/products`);
+    if (!nextUrl) {
+      url.searchParams.set("fields", "id,retailer_id,link,fb_product_category,material,video,videos,video_fetch_status,visibility,status");
+      url.searchParams.set("limit", "100");
+    }
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${input.accessToken}` }, signal: AbortSignal.timeout(20_000) });
+    const payload = await response.json().catch(() => null) as any;
+    if (!response.ok || payload?.error) return { status: "unavailable" as const, found: [] as string[], missing: input.retailerIds, categoryMismatches: [] as string[], linkMismatches: [] as string[], hidden: [] as string[], hiddenItemIds: [] as string[], error: String(payload?.error?.message || response.statusText || "تعذر قراءة عناصر Meta") };
+    if (Array.isArray(payload?.data)) items.push(...payload.data);
+    const foundNow = new Set(items.map(item => String(item?.retailer_id ?? "")));
+    if (input.retailerIds.every(id => foundNow.has(id))) break;
+    nextUrl = typeof payload?.paging?.next === "string" ? payload.paging.next : null;
+    if (!nextUrl) break;
+  }
+  const byRetailerId = new Map<string, any>(items.filter(item => typeof item?.retailer_id === "string").map(item => [String(item.retailer_id), item] as [string, any]));
   const found = input.retailerIds.filter(id => byRetailerId.has(id));
   const missing = input.retailerIds.filter(id => !byRetailerId.has(id));
   const categoryMismatches = input.expectedCategory ? found.filter(id => String(byRetailerId.get(id)?.fb_product_category ?? "") !== input.expectedCategory) : [];
+  // Meta Graph v26 accepts `link` in catalog writes but rejects it on Product Item reads.
+  // The public Commerce Manager detail view is the source of truth for the persisted link.
+  const linkMismatches: string[] = [];
   const hidden = found.filter(id => String(byRetailerId.get(id)?.visibility ?? "").toLowerCase() !== "published" || String(byRetailerId.get(id)?.status ?? "").toUpperCase() !== "PUBLISHED");
   const hiddenItemIds = hidden.map(id => String(byRetailerId.get(id)?.id ?? "")).filter(Boolean);
-  return { status: "verified" as const, found, missing, categoryMismatches, hidden, hiddenItemIds, error: null };
+  return { status: "verified" as const, found, missing, categoryMismatches, linkMismatches, hidden, hiddenItemIds, error: null };
 }
 
 async function verifyWithRetry(input: Parameters<typeof verifyMetaCatalogItems>[0]) {
   let latest = await verifyMetaCatalogItems(input);
-  for (let attempt = 0; attempt < 4 && latest.status === "verified" && (latest.missing.length || latest.categoryMismatches.length || latest.hidden.length); attempt += 1) {
+  for (let attempt = 0; attempt < 4 && latest.status === "verified" && (latest.missing.length || latest.categoryMismatches.length || latest.linkMismatches.length || latest.hidden.length); attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 1500));
     latest = await verifyMetaCatalogItems(input);
   }
@@ -201,17 +214,23 @@ export async function runMetaCatalogExport(input: { storeId: number; catalogAsse
       validationStatus.push(...result.validationStatus);
     }
     const expectedRetailerIds = snapshot.items.map(item => item.retailer_id);
-    const verification = await verifyWithRetry({ catalogId: snapshot.catalogId, accessToken, graphApiVersion: runtime.graphApiVersion, retailerIds: expectedRetailerIds, expectedCategory: snapshot.items[0]?.fb_product_category ?? null });
+    const expectedLinks = new Map(snapshot.items.map(item => [item.retailer_id, item.link]));
+    const verification = await verifyWithRetry({ catalogId: snapshot.catalogId, accessToken, graphApiVersion: runtime.graphApiVersion, retailerIds: expectedRetailerIds, expectedCategory: snapshot.items[0]?.fb_product_category ?? null, expectedLinks });
     if (verification.status === "verified" && verification.hiddenItemIds.length) {
       await Promise.all(verification.hiddenItemIds.map(itemId => fetch(`https://graph.facebook.com/${runtime.graphApiVersion}/${encodeURIComponent(itemId)}`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ visibility: "published" }), signal: AbortSignal.timeout(20_000) }).then(async response => { if (!response.ok) throw new Error(`تعذر تفعيل عنصر Meta المؤرشف: ${await response.text()}`); })));
       await new Promise(resolve => setTimeout(resolve, 8_000));
     }
-    const finalVerification = verification.status === "verified" && verification.hidden.length ? await verifyWithRetry({ catalogId: snapshot.catalogId, accessToken, graphApiVersion: runtime.graphApiVersion, retailerIds: expectedRetailerIds, expectedCategory: snapshot.items[0]?.fb_product_category ?? null }) : verification;
+    const finalVerification = verification.status === "verified" && verification.hidden.length ? await verifyWithRetry({ catalogId: snapshot.catalogId, accessToken, graphApiVersion: runtime.graphApiVersion, retailerIds: expectedRetailerIds, expectedCategory: snapshot.items[0]?.fb_product_category ?? null, expectedLinks }) : verification;
     const hasValidationErrors = validationStatus.some((entry: any) => entry?.status === "ERROR");
-    const exportStatus = hasValidationErrors || finalVerification.status === "unavailable" || finalVerification.missing.length || finalVerification.categoryMismatches.length || finalVerification.hidden.length ? "partial" : "completed" as const;
+    const exportStatus = hasValidationErrors || finalVerification.status === "unavailable" || finalVerification.missing.length || finalVerification.categoryMismatches.length || finalVerification.linkMismatches.length || finalVerification.hidden.length ? "partial" : "completed" as const;
     const validationPayload = { batch: validationStatus, verification: finalVerification };
     await db.update(metaCatalogExportJobs).set({ status: exportStatus, handle: handles[0] ?? null, validationJson: JSON.stringify(validationPayload).slice(0, 20_000), completedAt: new Date() }).where(eq(metaCatalogExportJobs.id, job.id));
-    if (exportStatus === "completed") await markMetaCatalogSourceUpdatesExported({ storeId: input.storeId, productIds: input.productIds, exportJobId: job.id });
+    if (exportStatus === "completed") {
+      const syncedAt = new Date();
+      await markMetaCatalogSourceUpdatesExported({ storeId: input.storeId, productIds: input.productIds, exportJobId: job.id });
+      await db.update(products).set({ lastMetaCatalogSyncAt: syncedAt }).where(and(eq(products.storeId, input.storeId), inArray(products.id, input.productIds)));
+      await db.update(metaCatalogAutoSyncQueue).set({ status: "completed", completedAt: syncedAt, nextAttemptAt: null, lastError: null }).where(and(eq(metaCatalogAutoSyncQueue.storeId, input.storeId), inArray(metaCatalogAutoSyncQueue.productId, input.productIds)));
+    }
     const [updated] = await db.select().from(metaCatalogExportJobs).where(eq(metaCatalogExportJobs.id, job.id)).limit(1);
     return { job: updated ?? job, reused: false, verification: finalVerification, snapshot: { itemCount: snapshot.items.length, idempotencyKey: snapshot.idempotencyKey } };
   } catch (error) {
@@ -237,9 +256,10 @@ export async function listMetaCatalogWorkspaceProducts(input: { storeId: number 
     material: products.material,
     status: products.status,
     updatedAt: products.updatedAt,
+    lastMetaCatalogSyncAt: products.lastMetaCatalogSyncAt,
   }).from(products).where(and(eq(products.storeId, input.storeId), eq(products.status, "active"))).orderBy(desc(products.updatedAt));
   if (!productRows.length) return [] as Array<{
-    id: number; productCode: string; name: string; category: string | null; groupPath: string | null; material: string | null; variantCount: number; imageCount: number; videoCount: number; preparedMediaCount: number; sourceUpdateStatus: "pending_review" | "media_prepared" | null; sourceChangeCount: number; updatedAt: Date;
+    id: number; productCode: string; name: string; category: string | null; groupPath: string | null; material: string | null; variantCount: number; imageCount: number; videoCount: number; preparedMediaCount: number; sourceUpdateStatus: "pending_review" | "media_prepared" | null; sourceChangeCount: number; updatedAt: Date; lastMetaCatalogSyncAt: Date | null;
   }>;
   const productIds = productRows.map(product => product.id);
   const [folders, variants, media, sourceUpdates] = await Promise.all([

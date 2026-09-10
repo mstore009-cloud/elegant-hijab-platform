@@ -20,6 +20,13 @@ export async function getCatalogSyncSettingsByTaskUid(taskUid: string) {
   return setting ?? null;
 }
 
+export async function getCatalogSyncSettingsByMetaAutoSyncTaskUid(taskUid: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [setting] = await db.select().from(catalogSyncSettings).where(eq(catalogSyncSettings.metaAutoSyncTaskUid, taskUid)).limit(1);
+  return setting ?? null;
+}
+
 export async function markCatalogSyncStarted(settingId: number) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");

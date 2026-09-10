@@ -134,12 +134,37 @@ export const products = mysqlTable(
     createdByUserId: int("createdByUserId").references(() => users.id),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+    lastMetaCatalogSyncAt: timestamp("lastMetaCatalogSyncAt"),
   },
   table => [
     uniqueIndex("product_store_code_unique").on(table.storeId, table.productCode),
     index("product_store_status_idx").on(table.storeId, table.status),
     index("product_status_idx").on(table.status),
     index("product_category_idx").on(table.category),
+  ],
+);
+
+/** Durable store/product queue for automatic Meta Catalog synchronization after product changes. */
+export const metaCatalogAutoSyncQueue = mysqlTable(
+  "meta_catalog_auto_sync_queue",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    productId: int("productId").notNull().references(() => products.id),
+    status: mysqlEnum("status", ["pending", "processing", "completed", "failed"]).default("pending").notNull(),
+    requestedByUserId: int("requestedByUserId").references(() => users.id),
+    requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+    startedAt: timestamp("startedAt"),
+    completedAt: timestamp("completedAt"),
+    attemptCount: int("attemptCount").default(0).notNull(),
+    nextAttemptAt: timestamp("nextAttemptAt"),
+    lastError: varchar("lastError", { length: 500 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("meta_catalog_auto_sync_store_product_unq").on(table.storeId, table.productId),
+    index("meta_catalog_auto_sync_pending_idx").on(table.storeId, table.status, table.nextAttemptAt),
   ],
 );
 
@@ -1802,6 +1827,8 @@ export const catalogSyncSettings = mysqlTable(
     storeId: int("storeId").notNull().references(() => stores.id),
     ownerUserId: int("ownerUserId").notNull().references(() => users.id),
     scheduleCronTaskUid: varchar("scheduleCronTaskUid", { length: 65 }),
+    metaAutoSyncTaskUid: varchar("metaAutoSyncTaskUid", { length: 65 }),
+    metaAutoSyncEnabled: boolean("metaAutoSyncEnabled").default(false).notNull(),
     cronExpression: varchar("cronExpression", { length: 80 }).default("0 */10 * * * *").notNull(),
     isEnabled: boolean("isEnabled").default(true).notNull(),
     lastStartedAt: timestamp("lastStartedAt"),
@@ -1818,7 +1845,7 @@ export const catalogSyncSettings = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
-  table => [uniqueIndex("catalog_sync_store_unique").on(table.storeId), index("catalog_sync_owner_idx").on(table.ownerUserId), index("catalog_sync_enabled_idx").on(table.isEnabled)],
+  table => [uniqueIndex("catalog_sync_store_unique").on(table.storeId), index("catalog_sync_owner_idx").on(table.ownerUserId), index("catalog_sync_enabled_idx").on(table.isEnabled), index("catalog_meta_auto_sync_task_idx").on(table.metaAutoSyncTaskUid)],
 );
 
 /** A durable read-only observation of every Catalog product folder. */

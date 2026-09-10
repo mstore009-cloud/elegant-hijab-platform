@@ -12,6 +12,7 @@ export type ProductWithFinancials = {
   previousPrice: string | null;
   costPrice: string | null;
   targetMarginPercent: string | null;
+  lastMetaCatalogSyncAt: Date | null;
 };
 
 export function presentProductForViewer(product: ProductWithFinancials, canViewFinancials: boolean) {
