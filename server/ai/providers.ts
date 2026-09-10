@@ -71,6 +71,28 @@ async function toGeminiContents(messages: Message[], timeoutMs: number) {
   return { contents, systemInstruction: systemText ? { parts: [{ text: systemText }] } : undefined };
 }
 
+function toGeminiSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(item => toGeminiSchema(item));
+  if (!schema || typeof schema !== "object") return schema;
+  const source = schema as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (key === "additionalProperties" || key === "name" || key === "strict" || key === "$schema") continue;
+    if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
+      result.properties = Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([property, propertySchema]) => [property, toGeminiSchema(propertySchema)]));
+      continue;
+    }
+    if (key === "type" && Array.isArray(value)) {
+      const types = value.filter(item => item !== "null");
+      if (types.length === 1) result.type = types[0];
+      if (value.includes("null")) result.nullable = true;
+      continue;
+    }
+    result[key] = toGeminiSchema(value);
+  }
+  return result;
+}
+
 export async function listProviderModels(provider: AiProvider, apiKey: string, timeoutMs = 10_000): Promise<ProviderModel[]> {
   if (provider === "openai") {
     const payload = await fetchJson("https://api.openai.com/v1/models", { headers: { authorization: `Bearer ${apiKey}` } }, timeoutMs);
@@ -99,7 +121,7 @@ export async function invokeProvider(connection: AiProviderRuntimeConnection, re
   if (connection.provider === "gemini") {
     const body = await toGeminiContents(request.messages, request.timeoutMs);
     const jsonSchema = request.responseFormat?.type === "json_schema" ? request.responseFormat.json_schema : undefined;
-    const payload = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(request.model)}:generateContent`, { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": apiKey }, body: JSON.stringify({ ...body, generationConfig: { maxOutputTokens: request.maxTokens, responseMimeType: jsonSchema || request.responseFormat?.type === "json_object" ? "application/json" : "text/plain", ...(jsonSchema ? { responseSchema: jsonSchema.schema } : {}) } }) }, request.timeoutMs);
+    const payload = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(request.model)}:generateContent`, { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": apiKey }, body: JSON.stringify({ ...body, generationConfig: { maxOutputTokens: request.maxTokens, responseMimeType: jsonSchema || request.responseFormat?.type === "json_object" ? "application/json" : "text/plain", ...(jsonSchema ? { responseSchema: toGeminiSchema(jsonSchema.schema) } : {}) } }) }, request.timeoutMs);
     const text = (payload?.candidates?.[0]?.content?.parts ?? []).map((part: any) => part?.text ?? "").join("");
     return { id: String(payload?.responseId ?? ""), model: request.model, text, inputTokens: Number(payload?.usageMetadata?.promptTokenCount ?? 0), outputTokens: Number(payload?.usageMetadata?.candidatesTokenCount ?? 0), imageUnits: 0, finishReason: payload?.candidates?.[0]?.finishReason ?? null };
   }
