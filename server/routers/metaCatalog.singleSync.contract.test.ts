@@ -15,4 +15,10 @@ describe("Meta Catalog single-product sync contract", () => {
     expect(source).toContain("asset.assetType === \"catalog\" && asset.isSelected");
     expect(source).toContain("لم يُحدد Catalog متصل لهذا المتجر بعد.");
   });
+
+  it("exposes a bounded bulk procedure and deduplicates product ids", () => {
+    expect(source).toContain("syncProductsNow: protectedProcedure");
+    expect(source).toContain("z.array(z.number().int().positive()).min(1).max(250)");
+    expect(source).toContain("Array.from(new Set(input.productIds))");
+  });
 });

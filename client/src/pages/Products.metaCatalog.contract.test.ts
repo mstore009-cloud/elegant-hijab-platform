@@ -32,4 +32,11 @@ describe("Products Meta Catalog export contract", () => {
     expect(source).toContain("مزامنة الآن");
     expect(source).toContain("جارٍ المزامنة...");
   });
+
+  it("يدعم تحديد عدة منتجات من فلاتر لم تتم ومتأخرة", () => {
+    expect(source).toContain("selectedMetaProductIds");
+    expect(source).toContain("تحديد الكل");
+    expect(source).toContain("مزامنة المحدد");
+    expect(source).toContain("aria-label={`تحديد ${product.name} للمزامنة`}");
+  });
 });

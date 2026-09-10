@@ -216,6 +216,20 @@ export const metaCatalogRouter = router({
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر مزامنة المنتج مع Meta." });
     }
   }),
+  syncProductsNow: protectedProcedure.input(z.object({ productIds: z.array(z.number().int().positive()).min(1).max(250) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    try {
+      const overview = await listMetaConnectionOverview(storeId);
+      const catalogAsset = overview.assets.find(asset => asset.assetType === "catalog" && asset.isSelected)
+        ?? overview.assets.find(asset => asset.assetType === "catalog");
+      if (!catalogAsset) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "لم يُحدد Catalog متصل لهذا المتجر بعد." });
+      return await runMetaCatalogExport({ storeId, catalogAssetId: catalogAsset.id, productIds: Array.from(new Set(input.productIds)), createdByUserId: ctx.user.id });
+    } catch (error) {
+      if (error instanceof TRPCError) throw error;
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر مزامنة المنتجات المحددة مع Meta." });
+    }
+  }),
   jobs: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
     return listMetaCatalogExportJobs({ storeId: requireOperationalStoreId(ctx.operationalStore?.id) });
