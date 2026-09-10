@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { products, stores } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 import { runMetaCatalogExport } from "./catalogExportDb";
@@ -11,11 +11,10 @@ describe.runIf(runLive)("Meta Catalog live visibility repair", () => {
   it("updates H12 as published and verifies its Product Items", async () => {
     const db = await getDb();
     if (!db) throw new Error("قاعدة البيانات غير متاحة.");
-    const [product] = await db.select({ id: products.id }).from(products).where(eq(products.productCode, "H12 test")).limit(1);
+    const activeProducts = await db.select({ id: products.id }).from(products).where(and(inArray(products.id, [990001, 1380001]), eq(products.storeId, 1)));
     const [store] = await db.select({ ownerId: stores.primaryOwnerUserId }).from(stores).where(eq(stores.id, 1)).limit(1);
-    expect(product).toBeTruthy();
-    expect(store?.ownerId).toBeTruthy();
-    const result = await runMetaCatalogExport({ storeId: 1, catalogAssetId: 510040, productIds: [product!.id], createdByUserId: store!.ownerId! });
+    expect(activeProducts).toHaveLength(2);
+    const result = await runMetaCatalogExport({ storeId: 1, catalogAssetId: 510040, productIds: activeProducts.map(product => product.id), createdByUserId: store!.ownerId! });
     const token = await getMetaCatalogAccessToken({ storeId: 1, connectionId: result.job.connectionId, assetId: 510040 });
     const checkUrl = new URL("https://graph.facebook.com/v26.0/998320369206650/check_batch_request_status");
     checkUrl.searchParams.set("handle", result.job.handle ?? "");

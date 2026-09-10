@@ -201,7 +201,10 @@ export async function runMetaCatalogExport(input: { storeId: number; catalogAsse
     }
     const expectedRetailerIds = snapshot.items.map(item => item.retailer_id);
     const verification = await verifyWithRetry({ catalogId: snapshot.catalogId, accessToken, graphApiVersion: runtime.graphApiVersion, retailerIds: expectedRetailerIds, expectedCategory: snapshot.items[0]?.fb_product_category ?? null });
-    if (verification.status === "verified" && verification.hiddenItemIds.length) await Promise.all(verification.hiddenItemIds.map(itemId => fetch(`https://graph.facebook.com/${runtime.graphApiVersion}/${encodeURIComponent(itemId)}`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ visibility: "published" }), signal: AbortSignal.timeout(20_000) }).then(async response => { if (!response.ok) throw new Error(`تعذر تفعيل عنصر Meta المؤرشف: ${await response.text()}`); })));
+    if (verification.status === "verified" && verification.hiddenItemIds.length) {
+      await Promise.all(verification.hiddenItemIds.map(itemId => fetch(`https://graph.facebook.com/${runtime.graphApiVersion}/${encodeURIComponent(itemId)}`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ visibility: "published" }), signal: AbortSignal.timeout(20_000) }).then(async response => { if (!response.ok) throw new Error(`تعذر تفعيل عنصر Meta المؤرشف: ${await response.text()}`); })));
+      await new Promise(resolve => setTimeout(resolve, 8_000));
+    }
     const finalVerification = verification.status === "verified" && verification.hidden.length ? await verifyWithRetry({ catalogId: snapshot.catalogId, accessToken, graphApiVersion: runtime.graphApiVersion, retailerIds: expectedRetailerIds, expectedCategory: snapshot.items[0]?.fb_product_category ?? null }) : verification;
     const hasValidationErrors = validationStatus.some((entry: any) => entry?.status === "ERROR");
     const exportStatus = hasValidationErrors || finalVerification.status === "unavailable" || finalVerification.missing.length || finalVerification.categoryMismatches.length || finalVerification.hidden.length ? "partial" : "completed" as const;
