@@ -45,6 +45,7 @@ export type MetaCatalogProductItem = {
   title: string;
   description: string;
   availability: "in stock" | "out of stock" | "available for order" | "discontinued";
+  visibility?: "published" | "hidden";
   condition: "new" | "refurbished" | "used";
   brand: string;
   price: string;
@@ -141,6 +142,7 @@ export function buildMetaCatalogProductItems(input: {
       title: titleFor(product, variant),
       description: description.slice(0, 5000),
       availability: variant.inventoryQuantity > 0 ? (product.defaultAvailability ?? "in stock") : "out of stock",
+      visibility: "published",
       condition: product.condition ?? "new",
       brand: input.brand.trim().slice(0, 100),
       price: regularPrice,

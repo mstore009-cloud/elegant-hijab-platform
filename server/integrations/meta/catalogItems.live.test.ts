@@ -23,7 +23,7 @@ describe.runIf(runLive)("Meta Catalog live Product Items", () => {
     const retailerIds = rows.map(row => `${row.productCode}-${row.variantId}`);
     expect(retailerIds.length).toBeGreaterThan(0);
     const url = new URL(`https://graph.facebook.com/v26.0/${encodeURIComponent(asset!.externalId)}/products`);
-    url.searchParams.set("fields", "id,retailer_id,title,description,fb_product_category,material,video,videos,video_fetch_status,item_group_id");
+    url.searchParams.set("fields", "id,retailer_id,title,description,fb_product_category,material,video,videos,video_fetch_status,item_group_id,availability,condition,visibility,commerce_approval_status");
     url.searchParams.set("limit", "100");
     const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000) });
     const body = await response.json().catch(() => null) as any;
