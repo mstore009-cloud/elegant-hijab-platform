@@ -259,5 +259,11 @@ export async function saveMetaCatalogProductEnrichment(input: MetaCatalogProduct
 
 export function buildStorefrontProductUrl(baseUrl: string | null | undefined, productCode: string) {
   const base = normalizeCatalogBaseUrl(baseUrl);
-  return base ? `${base}/store/${encodeURIComponent(productCode)}` : null;
+  if (!base) return null;
+  const parsed = new URL(base);
+  const basePath = parsed.pathname.replace(/\/+$/, "");
+  // The visible storefront URL is often pasted as `/store`. Avoid producing
+  // the invalid `/store/store/<code>` variant while preserving custom paths.
+  const storefrontPath = basePath || "/store";
+  return `${parsed.origin}${storefrontPath}/${encodeURIComponent(productCode)}`;
 }

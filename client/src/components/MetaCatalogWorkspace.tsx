@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { skipToken } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle2, ChevronLeft, ImageUp, Layers3, Send, Settings2, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, ImageUp, Layers3, RefreshCw, Send, Settings2, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 
 type Props = { canEdit: boolean; onOpenProduct: (productId: number) => void; onOpenSettings: () => void };
@@ -54,7 +54,7 @@ export function MetaCatalogWorkspace({ canEdit, onOpenProduct, onOpenSettings }:
       setStep("review");
     },
   });
-  const exportNow = trpc.metaCatalog.exportNow.useMutation({
+  const exportNow = trpc.metaCatalog.syncNow.useMutation({
     onSuccess: () => {
       void utils.metaCatalog.jobs.invalidate();
       void utils.metaCatalog.sourceUpdates.invalidate();
@@ -146,6 +146,7 @@ export function MetaCatalogWorkspace({ canEdit, onOpenProduct, onOpenSettings }:
             {report?.primaryImageUrl ? <img src={report.primaryImageUrl} alt={`معاينة ${report.metaTitle}`} className="h-14 w-14 rounded-xl object-cover" /> : null}
             <div><p className="font-bold text-[#28463b]">{report?.metaTitle ?? product.name} <span className="font-normal text-[#74817a]">— {product.productCode}</span></p>
               <p className="mt-1 line-clamp-2 text-xs text-[#64786e]">الوصف: <b>{report?.metaDescription || "غير موجود"}</b></p>
+              <p className="mt-1 flex items-center gap-1 text-xs text-[#64786e]">رابط Meta: {report?.productLink ? <a href={report.productLink} target="_blank" rel="noreferrer" className="inline-flex max-w-[24rem] items-center gap-1 truncate font-bold text-[#245b4d] underline decoration-[#b9d3c6] underline-offset-2" title={report.productLink}>{report.productLink}<ExternalLink className="h-3 w-3 shrink-0" /></a> : <b className="text-[#a35d1c]">غير موجود</b>}</p>
               <p className="mt-1 text-xs text-[#64786e]">فئة Meta: <b>{report?.category?.path ?? "غير محددة"}</b></p>
               <p className="mt-1 text-xs text-[#64786e]">الخامة: <b>{report?.material ?? product.material ?? "غير محددة"}</b> · سيُرسل {report?.imageCount ?? 0} صور و{report?.videoCount ?? 0} فيديو</p>
               {report?.videoUrls.length ? <p className="mt-1 text-xs font-bold text-[#21624d]">يوجد رابط فيديو صالح للإرسال.</p> : null}
@@ -157,7 +158,7 @@ export function MetaCatalogWorkspace({ canEdit, onOpenProduct, onOpenSettings }:
       <div className="mt-4 flex flex-wrap justify-between gap-2 border-t border-[#edf0ee] pt-4">
         {step === "complete" ? <Button variant="outline" onClick={() => setStep("select")} className="border-[#d8e5de] text-[#526a60]">تعديل الاختيار</Button> : <Button variant="outline" onClick={() => setStep("complete")} className="border-[#d8e5de] text-[#526a60]">عودة للفحص</Button>}
         {step === "complete" ? <Button onClick={prepareSelection} disabled={!canEdit || !selectedIds.length || prepare.isPending} className="bg-[#a47d40] text-white hover:bg-[#8f6b35]"><ImageUp className="ml-1.5 h-4 w-4" />{prepare.isPending ? "جارٍ التجهيز…" : "جهّز الوسائط وراجع"}</Button> : null}
-        {step === "review" ? <Button onClick={submitSelected} disabled={!canEdit || !selectedAssetId || !readyCount || preview.isFetching || exportNow.isPending || !readiness.data?.capability?.enabled || readiness.data.capability.status !== "ready"} className="bg-[#183d35] text-white hover:bg-[#245b4d]"><Send className="ml-1.5 h-4 w-4" />{exportNow.isPending ? "جارٍ الإرسال…" : `تصدير ${readyCount} منتج جاهز إلى Meta`}</Button> : null}
+        {step === "review" ? <Button onClick={submitSelected} disabled={!canEdit || !selectedAssetId || !readyCount || preview.isFetching || exportNow.isPending || !readiness.data?.capability?.enabled || readiness.data.capability.status !== "ready"} className="bg-[#183d35] text-white hover:bg-[#245b4d]" title={`تصدير ${readyCount} منتج جاهز إلى Meta`}><RefreshCw className={`ml-1.5 h-4 w-4 ${exportNow.isPending ? "animate-spin" : ""}`} />{exportNow.isPending ? "جارٍ مزامنة Meta…" : `مزامنة ${readyCount} منتج جاهز مع Meta`}</Button> : null}
       </div>
       {prepareResult ? <div className={`mt-3 rounded-xl p-3 text-xs ${prepareResult.skipped.length ? "border border-[#f0d6bc] bg-[#fff7ef] text-[#8f5527]" : "bg-[#eef7f2] text-[#21624d]"}`}><p className="font-bold"><CheckCircle2 className="ml-1 inline h-4 w-4" />تم تجهيز {prepareResult.prepared} وسيط.</p>{prepareResult.preparedItems.length ? <div className="mt-2 space-y-1">{prepareResult.preparedItems.map(item => <p key={`${item.productId}-${item.mediaId}`}><CheckCircle2 className="ml-1 inline h-3.5 w-3.5" />المنتج #{item.productId} · {item.mediaType === "image" ? "صورة" : "فيديو"} #{item.mediaId}: جاهز</p>)}</div> : null}{prepareResult.skipped.length ? <div className="mt-2 space-y-1">{prepareResult.skipped.map(item => <p key={`${item.productId}-${item.mediaId}`}><AlertCircle className="ml-1 inline h-3.5 w-3.5" />الوسيط #{item.mediaId}: {item.reason}</p>)}</div> : <p className="mt-1">لا توجد وسائط متخطاة في هذه العملية.</p>}</div> : null}
       {exportNow.data ? <div className={`mt-3 rounded-xl p-3 text-xs ${exportNow.data.job.status === "completed" ? "bg-[#eef7f2] text-[#21624d]" : "border border-[#f0d6bc] bg-[#fff7ef] text-[#8f5527]"}`}><p className="font-bold"><Sparkles className="ml-1 inline h-4 w-4" />{exportNow.data.job.status === "completed" ? `تم التحقق من ظهور ${exportVerification?.found.length ?? exportNow.data.snapshot.itemCount} عنصرًا في Meta.` : "أُرسل الطلب لكن لم يكتمل التحقق من جميع عناصر Meta."}</p>{exportVerification?.missing.length ? <p className="mt-1">العناصر غير الظاهرة بعد: {exportVerification.missing.join("، ")}</p> : null}{exportVerification?.categoryMismatches.length ? <p className="mt-1">العناصر التي لم تطابق الفئة: {exportVerification.categoryMismatches.join("، ")}</p> : null}</div> : null}

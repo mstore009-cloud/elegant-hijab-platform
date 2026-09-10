@@ -173,6 +173,16 @@ export const metaCatalogRouter = router({
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر تصدير Catalog إلى Meta." });
     }
   }),
+  syncNow: protectedProcedure.input(catalogScopeInput).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    try {
+      const productIds = input.productIds ?? (await listMetaCatalogWorkspaceProducts({ storeId })).map(product => product.id);
+      return await runMetaCatalogExport({ storeId, catalogAssetId: input.catalogAssetId, productIds, createdByUserId: ctx.user.id });
+    } catch (error) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر مزامنة Catalog مع Meta." });
+    }
+  }),
   jobs: protectedProcedure.query(async ({ ctx }) => {
     await assertPermission(ctx.user, "products.create");
     return listMetaCatalogExportJobs({ storeId: requireOperationalStoreId(ctx.operationalStore?.id) });

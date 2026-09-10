@@ -13,6 +13,7 @@ describe("مساحة عمل Meta Catalog", () => {
     expect(source).toContain("جهّز الوسائط وراجع");
     expect(source).toContain("إصلاح المنتج");
     expect(source).toContain("تصدير ${readyCount} منتج جاهز إلى Meta");
+    expect(source).toContain("مزامنة ${readyCount} منتج جاهز مع Meta");
     expect(source).toContain("window.confirm");
     expect(source).toContain("الاسم والوصف والفئة والصور والفيديو المعروضة هنا هي القيم النهائية");
     expect(source).toContain("الوصف: <b>{report?.metaDescription || \"غير موجود\"}</b>");
@@ -21,5 +22,7 @@ describe("مساحة عمل Meta Catalog", () => {
     expect(source).toContain("await Promise.all");
     expect(source).toContain("سيُرسل {report?.imageCount ?? 0} صور");
     expect(source).toContain("report?.primaryImageUrl");
+    expect(source).toContain("report?.productLink");
+    expect(source).toContain("trpc.metaCatalog.syncNow.useMutation");
   });
 });
