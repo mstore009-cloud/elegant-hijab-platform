@@ -45,6 +45,7 @@ export type MetaCatalogProductItem = {
   title: string;
   description: string;
   availability: "in stock" | "out of stock" | "available for order" | "discontinued";
+  status?: "active" | "archived";
   visibility?: "published" | "hidden";
   condition: "new" | "refurbished" | "used";
   brand: string;
@@ -142,6 +143,7 @@ export function buildMetaCatalogProductItems(input: {
       title: titleFor(product, variant),
       description: description.slice(0, 5000),
       availability: variant.inventoryQuantity > 0 ? (product.defaultAvailability ?? "in stock") : "out of stock",
+      status: "active",
       visibility: "published",
       condition: product.condition ?? "new",
       brand: input.brand.trim().slice(0, 100),
@@ -170,7 +172,7 @@ export function buildCatalogExportIdempotencyKey(input: { storeId: number; catal
   // Bump this contract version whenever the outgoing Meta API envelope changes.
   // It prevents an already-submitted legacy envelope from suppressing a corrected
   // product update for the same data snapshot.
-  const payload = JSON.stringify({ schemaVersion: "items_batch_v3", storeId: input.storeId, catalogId: input.catalogId, productItems: input.productItems });
+  const payload = JSON.stringify({ schemaVersion: "items_batch_v5_reactivate_archived", storeId: input.storeId, catalogId: input.catalogId, productItems: input.productItems });
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
@@ -184,7 +186,10 @@ export function toMetaCatalogBatchRequests(items: MetaCatalogProductItem[]) {
   }));
 }
 
-export type MetaCatalogBatchRequest = ReturnType<typeof toMetaCatalogBatchRequests>[number];
+export type MetaCatalogBatchRequest = {
+  method: "UPDATE" | "DELETE";
+  data: Record<string, string | Array<{ url: string }> | undefined>;
+};
 
 export function chunkMetaCatalogBatchRequests(requests: MetaCatalogBatchRequest[], chunkSize = 2500) {
   if (!Number.isInteger(chunkSize) || chunkSize < 1 || chunkSize > 3000) throw new Error("حجم دفعة Meta Catalog يجب أن يكون بين 1 و3000.");

@@ -155,18 +155,20 @@ async function verifyMetaCatalogItems(input: { catalogId: string; accessToken: s
   url.searchParams.set("limit", "100");
   const response = await fetch(url, { headers: { Authorization: `Bearer ${input.accessToken}` }, signal: AbortSignal.timeout(20_000) });
   const payload = await response.json().catch(() => null) as any;
-  if (!response.ok || payload?.error) return { status: "unavailable" as const, found: [] as string[], missing: input.retailerIds, categoryMismatches: [] as string[], error: String(payload?.error?.message || response.statusText || "تعذر قراءة عناصر Meta") };
+  if (!response.ok || payload?.error) return { status: "unavailable" as const, found: [] as string[], missing: input.retailerIds, categoryMismatches: [] as string[], hidden: [] as string[], hiddenItemIds: [] as string[], error: String(payload?.error?.message || response.statusText || "تعذر قراءة عناصر Meta") };
   const items = Array.isArray(payload?.data) ? payload.data : [];
   const byRetailerId = new Map<string, any>(items.filter((item: any) => typeof item?.retailer_id === "string").map((item: any) => [String(item.retailer_id), item] as [string, any]));
   const found = input.retailerIds.filter(id => byRetailerId.has(id));
   const missing = input.retailerIds.filter(id => !byRetailerId.has(id));
   const categoryMismatches = input.expectedCategory ? found.filter(id => String(byRetailerId.get(id)?.fb_product_category ?? "") !== input.expectedCategory) : [];
-  return { status: "verified" as const, found, missing, categoryMismatches, error: null };
+  const hidden = found.filter(id => String(byRetailerId.get(id)?.visibility ?? "").toLowerCase() !== "published" || String(byRetailerId.get(id)?.status ?? "").toUpperCase() !== "PUBLISHED");
+  const hiddenItemIds = hidden.map(id => String(byRetailerId.get(id)?.id ?? "")).filter(Boolean);
+  return { status: "verified" as const, found, missing, categoryMismatches, hidden, hiddenItemIds, error: null };
 }
 
 async function verifyWithRetry(input: Parameters<typeof verifyMetaCatalogItems>[0]) {
   let latest = await verifyMetaCatalogItems(input);
-  for (let attempt = 0; attempt < 4 && latest.status === "verified" && (latest.missing.length || latest.categoryMismatches.length); attempt += 1) {
+  for (let attempt = 0; attempt < 4 && latest.status === "verified" && (latest.missing.length || latest.categoryMismatches.length || latest.hidden.length); attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 1500));
     latest = await verifyMetaCatalogItems(input);
   }
@@ -199,13 +201,15 @@ export async function runMetaCatalogExport(input: { storeId: number; catalogAsse
     }
     const expectedRetailerIds = snapshot.items.map(item => item.retailer_id);
     const verification = await verifyWithRetry({ catalogId: snapshot.catalogId, accessToken, graphApiVersion: runtime.graphApiVersion, retailerIds: expectedRetailerIds, expectedCategory: snapshot.items[0]?.fb_product_category ?? null });
+    if (verification.status === "verified" && verification.hiddenItemIds.length) await Promise.all(verification.hiddenItemIds.map(itemId => fetch(`https://graph.facebook.com/${runtime.graphApiVersion}/${encodeURIComponent(itemId)}`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ visibility: "published" }), signal: AbortSignal.timeout(20_000) }).then(async response => { if (!response.ok) throw new Error(`تعذر تفعيل عنصر Meta المؤرشف: ${await response.text()}`); })));
+    const finalVerification = verification.status === "verified" && verification.hidden.length ? await verifyWithRetry({ catalogId: snapshot.catalogId, accessToken, graphApiVersion: runtime.graphApiVersion, retailerIds: expectedRetailerIds, expectedCategory: snapshot.items[0]?.fb_product_category ?? null }) : verification;
     const hasValidationErrors = validationStatus.some((entry: any) => entry?.status === "ERROR");
-    const exportStatus = hasValidationErrors || verification.status === "unavailable" || verification.missing.length || verification.categoryMismatches.length ? "partial" : "completed" as const;
-    const validationPayload = { batch: validationStatus, verification };
+    const exportStatus = hasValidationErrors || finalVerification.status === "unavailable" || finalVerification.missing.length || finalVerification.categoryMismatches.length || finalVerification.hidden.length ? "partial" : "completed" as const;
+    const validationPayload = { batch: validationStatus, verification: finalVerification };
     await db.update(metaCatalogExportJobs).set({ status: exportStatus, handle: handles[0] ?? null, validationJson: JSON.stringify(validationPayload).slice(0, 20_000), completedAt: new Date() }).where(eq(metaCatalogExportJobs.id, job.id));
     if (exportStatus === "completed") await markMetaCatalogSourceUpdatesExported({ storeId: input.storeId, productIds: input.productIds, exportJobId: job.id });
     const [updated] = await db.select().from(metaCatalogExportJobs).where(eq(metaCatalogExportJobs.id, job.id)).limit(1);
-    return { job: updated ?? job, reused: false, verification, snapshot: { itemCount: snapshot.items.length, idempotencyKey: snapshot.idempotencyKey } };
+    return { job: updated ?? job, reused: false, verification: finalVerification, snapshot: { itemCount: snapshot.items.length, idempotencyKey: snapshot.idempotencyKey } };
   } catch (error) {
     const message = error instanceof Error ? error.message : "فشل تصدير Meta Catalog.";
     await db.update(metaCatalogExportJobs).set({ status: "failed", lastError: message.slice(0, 500), completedAt: new Date() }).where(eq(metaCatalogExportJobs.id, job.id));
