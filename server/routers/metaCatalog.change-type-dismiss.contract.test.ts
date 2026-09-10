@@ -27,4 +27,11 @@ describe("Products Meta change type and dismiss contract", () => {
     expect(autoSyncSource).toContain("لا يمكن تجاهل المزامنة لتعديل خارجي");
     expect(autoSyncSource).toContain("metaCatalogSyncIgnoredAt: ignoredAt");
   });
+
+  it("restores an ignored internal change to the pending queue", () => {
+    expect(productsRouterSource).toContain("restoreInternalMetaSync");
+    expect(autoSyncSource).toContain("restoreInternalMetaCatalogAutoSync");
+    expect(pageSource).toContain("إعادة للمزامنة");
+    expect(pageSource).toContain("restoreInternalSync.mutate");
+  });
 });

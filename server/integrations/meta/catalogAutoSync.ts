@@ -188,3 +188,26 @@ export async function dismissInternalMetaCatalogAutoSync(input: {
   }).where(and(eq(metaCatalogAutoSyncQueue.storeId, input.storeId), eq(metaCatalogAutoSyncQueue.productId, input.productId), eq(metaCatalogAutoSyncQueue.status, "pending")));
   return { success: true, ignoredAt };
 }
+
+export async function restoreInternalMetaCatalogAutoSync(input: {
+  storeId: number;
+  productId: number;
+  userId: number;
+  sessionToken?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(and(eq(products.id, input.productId), eq(products.storeId, input.storeId))).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  if (!product.metaCatalogSyncIgnoredAt || (!product.lastMetaCatalogChangeInternal && product.lastMetaCatalogChangeType !== "internal")) {
+    throw new Error("لا يوجد تجاهل داخلي يمكن التراجع عنه لهذا المنتج.");
+  }
+  return enqueueMetaCatalogAutoSync({
+    storeId: input.storeId,
+    productIds: [input.productId],
+    changeType: (product.lastMetaCatalogChangeType as "price" | "inventory" | "image" | "details" | "internal" | "system" | null) ?? "internal",
+    isInternalOnly: true,
+    requestedByUserId: input.userId,
+    sessionToken: input.sessionToken,
+  });
+}
