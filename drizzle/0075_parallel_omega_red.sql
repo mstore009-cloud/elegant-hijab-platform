@@ -75,14 +75,14 @@ CREATE TABLE `ai_usage_ledger` (
 	CONSTRAINT `ai_usage_ledger_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-ALTER TABLE `ai_pricing_cards` ADD CONSTRAINT `ai_pricing_cards_createdByUserId_users_id_fk` FOREIGN KEY (`createdByUserId`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE `ai_provider_connections` ADD CONSTRAINT `ai_provider_connections_updatedByUserId_users_id_fk` FOREIGN KEY (`updatedByUserId`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE `ai_task_configurations` ADD CONSTRAINT `ai_task_configurations_providerConnectionId_ai_provider_connections_id_fk` FOREIGN KEY (`providerConnectionId`) REFERENCES `ai_provider_connections`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE `ai_task_configurations` ADD CONSTRAINT `ai_task_configurations_updatedByUserId_users_id_fk` FOREIGN KEY (`updatedByUserId`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE `ai_usage_ledger` ADD CONSTRAINT `ai_usage_ledger_providerConnectionId_ai_provider_connections_id_fk` FOREIGN KEY (`providerConnectionId`) REFERENCES `ai_provider_connections`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE `ai_usage_ledger` ADD CONSTRAINT `ai_usage_ledger_storeId_stores_id_fk` FOREIGN KEY (`storeId`) REFERENCES `stores`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE `ai_usage_ledger` ADD CONSTRAINT `ai_usage_ledger_customerId_customer_profiles_id_fk` FOREIGN KEY (`customerId`) REFERENCES `customer_profiles`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE `ai_usage_ledger` ADD CONSTRAINT `ai_usage_ledger_conversationId_inbox_conversations_id_fk` FOREIGN KEY (`conversationId`) REFERENCES `inbox_conversations`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_pricing_cards` ADD CONSTRAINT `ai_price_created_user_fk` FOREIGN KEY (`createdByUserId`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_provider_connections` ADD CONSTRAINT `ai_provider_updated_user_fk` FOREIGN KEY (`updatedByUserId`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_task_configurations` ADD CONSTRAINT `ai_task_provider_conn_fk` FOREIGN KEY (`providerConnectionId`) REFERENCES `ai_provider_connections`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_task_configurations` ADD CONSTRAINT `ai_task_updated_user_fk` FOREIGN KEY (`updatedByUserId`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_usage_ledger` ADD CONSTRAINT `ai_usage_provider_conn_fk` FOREIGN KEY (`providerConnectionId`) REFERENCES `ai_provider_connections`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_usage_ledger` ADD CONSTRAINT `ai_usage_store_fk` FOREIGN KEY (`storeId`) REFERENCES `stores`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_usage_ledger` ADD CONSTRAINT `ai_usage_customer_fk` FOREIGN KEY (`customerId`) REFERENCES `customer_profiles`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `ai_usage_ledger` ADD CONSTRAINT `ai_usage_conversation_fk` FOREIGN KEY (`conversationId`) REFERENCES `inbox_conversations`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX `ai_pricing_provider_model_idx` ON `ai_pricing_cards` (`provider`,`model`,`effectiveFrom`);--> statement-breakpoint
 CREATE INDEX `ai_provider_status_idx` ON `ai_provider_connections` (`provider`,`status`,`enabled`);--> statement-breakpoint
 CREATE INDEX `ai_task_configuration_provider_idx` ON `ai_task_configurations` (`providerConnectionId`);--> statement-breakpoint

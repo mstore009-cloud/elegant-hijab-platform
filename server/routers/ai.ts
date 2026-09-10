@@ -3,7 +3,7 @@ import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
 import { recordAuditEvent } from "../audit/db";
 import { aiTaskNames } from "../../drizzle/schema";
-import { getAiConnection, getAiOverview, listAiModels, listAiUsage, saveAiConnection, testAiConnection, updateAiTask } from "../ai/db";
+import { getAiConnection, getAiOverview, listAiModels, listAiUsage, saveAiConnection, saveAiPricingCard, testAiConnection, updateAiTask } from "../ai/db";
 import type { AiProvider, AiTask } from "../ai/types";
 
 function requireStore(ctx: { operationalStore: { id: number } | null }) {
@@ -15,6 +15,7 @@ const provider = z.enum(["openai", "gemini", "anthropic"]);
 const task = z.enum(aiTaskNames);
 const connectionInput = z.object({ id: z.number().int().positive().optional(), provider, displayName: z.string().trim().min(2).max(160), connectionType: z.enum(["api_key", "vertex_ai"]).default("api_key"), apiKey: z.string().trim().max(500).optional(), enabled: z.boolean().default(false) });
 const taskInput = z.object({ task, providerConnectionId: z.number().int().positive().nullable(), model: z.string().trim().min(1).max(160), enabled: z.boolean(), maxTokens: z.number().int().min(1).max(100000), timeoutMs: z.number().int().min(1000).max(120000), maxRetries: z.number().int().min(0).max(6), fallbackEnabled: z.boolean(), dailyQuota: z.number().int().positive().nullable(), monthlyQuota: z.number().int().positive().nullable(), monthlyBudget: z.string().regex(/^\d+(\.\d{1,6})?$/).nullable(), overLimitAction: z.enum(["pause", "draft_only", "handoff"]) });
+const pricingInput = z.object({ provider, model: z.string().trim().min(1).max(160), version: z.string().trim().min(1).max(60), inputPerMillion: z.string().regex(/^\d+(\.\d{1,6})?$/), outputPerMillion: z.string().regex(/^\d+(\.\d{1,6})?$/), imagePerUnit: z.string().regex(/^\d+(\.\d{1,6})?$/), currency: z.string().trim().length(3), effectiveFrom: z.coerce.date(), effectiveTo: z.coerce.date().nullable() });
 
 export const aiRouter = router({
   overview: adminProcedure.query(async () => getAiOverview()),
@@ -36,6 +37,14 @@ export const aiRouter = router({
     } catch (error) { throw new TRPCError({ code: "BAD_GATEWAY", message: error instanceof Error ? error.message : "فشل اختبار اتصال AI." }); }
   }),
   models: adminProcedure.input(z.object({ connectionId: z.number().int().positive() })).query(async ({ input }) => listAiModels({ id: input.connectionId })),
+  savePricingCard: adminProcedure.input(pricingInput).mutation(async ({ ctx, input }) => {
+    try {
+      const result = await saveAiPricingCard({ ...input, actorUserId: ctx.user.id });
+      const store = requireStore(ctx);
+      await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "ai_pricing_card", entityId: `${input.provider}:${input.model}:${input.version}`, action: "ai.pricing_saved", summary: `تم تحديث بطاقة سعر ${input.provider}/${input.model}.` });
+      return result;
+    } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ بطاقة التسعير." }); }
+  }),
   updateTask: adminProcedure.input(taskInput).mutation(async ({ ctx, input }) => {
     try {
       const result = await updateAiTask({ ...input, task: input.task as AiTask, actorUserId: ctx.user.id });

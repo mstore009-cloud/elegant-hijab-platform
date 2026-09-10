@@ -1,4 +1,4 @@
-import { desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, or, isNull, sql } from "drizzle-orm";
 import { aiPricingCards, aiProviderConnections, aiTaskConfigurations, aiTaskNames, aiUsageLedger } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { encryptAiSecret, decryptAiSecret, aiSecretContext } from "./secretCipher";
@@ -60,7 +60,7 @@ export async function saveAiConnection(input: { id?: number; provider: AiProvide
 export async function testAiConnection(input: { id?: number; provider: AiProvider; apiKey?: string; displayName?: string }) {
   const db = await requireDb();
   const connection = input.id ? await getAiConnection(input.id) : null;
-  const plainKey = input.apiKey?.trim() || (connection?.encryptedApiKey ? decryptAiSecret(connection.encryptedApiKey, aiSecretContext(connection.provider, connection.id)) : "");
+  const plainKey = input.apiKey?.trim() || (connection?.encryptedApiKey ? decryptAiSecret(connection.encryptedApiKey, aiSecretContext(connection.provider, connection.displayName)) : "");
   if (!plainKey) throw new Error("لا يوجد مفتاح لاختباره.");
   const result = await testProviderConnection(input.provider, plainKey);
   if (connection) await db.update(aiProviderConnections).set({ status: "verified", enabled: true, lastTestedAt: new Date(), lastError: null }).where(eq(aiProviderConnections.id, connection.id));
@@ -80,6 +80,84 @@ export async function listAiTasks() {
   return db.select().from(aiTaskConfigurations).orderBy(aiTaskConfigurations.id);
 }
 
+export async function listAiPricingCards() {
+  const db = await requireDb();
+  return db.select().from(aiPricingCards).orderBy(aiPricingCards.provider, aiPricingCards.model, desc(aiPricingCards.effectiveFrom));
+}
+
+export async function saveAiPricingCard(input: {
+  provider: AiProvider;
+  model: string;
+  version: string;
+  inputPerMillion: string;
+  outputPerMillion: string;
+  imagePerUnit: string;
+  currency: string;
+  effectiveFrom: Date;
+  effectiveTo: Date | null;
+  actorUserId: number;
+}) {
+  const db = await requireDb();
+  const model = input.model.trim();
+  const version = input.version.trim();
+  if (!model || !version) throw new Error("أدخل اسم النموذج ونسخة بطاقة السعر.");
+  await db.insert(aiPricingCards).values({
+    provider: input.provider,
+    model,
+    version,
+    inputPerMillion: input.inputPerMillion,
+    outputPerMillion: input.outputPerMillion,
+    imagePerUnit: input.imagePerUnit,
+    currency: input.currency.trim().toUpperCase(),
+    effectiveFrom: input.effectiveFrom,
+    effectiveTo: input.effectiveTo,
+    createdByUserId: input.actorUserId,
+  }).onDuplicateKeyUpdate({
+    set: {
+      inputPerMillion: input.inputPerMillion,
+      outputPerMillion: input.outputPerMillion,
+      imagePerUnit: input.imagePerUnit,
+      currency: input.currency.trim().toUpperCase(),
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: input.effectiveTo,
+      createdByUserId: input.actorUserId,
+    },
+  });
+  return listAiPricingCards();
+}
+
+export async function getActiveAiPricingCard(provider: AiProvider, model: string) {
+  const db = await requireDb();
+  const now = new Date();
+  const [card] = await db.select().from(aiPricingCards).where(and(
+    eq(aiPricingCards.provider, provider),
+    eq(aiPricingCards.model, model),
+    lte(aiPricingCards.effectiveFrom, now),
+    or(isNull(aiPricingCards.effectiveTo), gte(aiPricingCards.effectiveTo, now)),
+  )).orderBy(desc(aiPricingCards.effectiveFrom)).limit(1);
+  return card ?? null;
+}
+
+function startOfUtcDay(now = new Date()) {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+function startOfUtcMonth(now = new Date()) {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
+export async function assertAiTaskAllowance(input: { task: AiTask; config: Awaited<ReturnType<typeof listAiTasks>>[number] }) {
+  const db = await requireDb();
+  const now = new Date();
+  const statusCondition = sql`${aiUsageLedger.status} IN ('reserved', 'succeeded')`;
+  const [daily] = await db.select({ count: sql<number>`count(*)` }).from(aiUsageLedger).where(and(eq(aiUsageLedger.task, input.task), statusCondition, gte(aiUsageLedger.createdAt, startOfUtcDay(now))));
+  if (input.config.dailyQuota !== null && Number(daily?.count ?? 0) >= input.config.dailyQuota) return { allowed: false as const, reason: "تم بلوغ الحد اليومي لهذه المهمة." };
+  const [monthly] = await db.select({ count: sql<number>`count(*)`, cost: sql<string>`coalesce(sum(${aiUsageLedger.estimatedCost}), 0)` }).from(aiUsageLedger).where(and(eq(aiUsageLedger.task, input.task), statusCondition, gte(aiUsageLedger.createdAt, startOfUtcMonth(now))));
+  if (input.config.monthlyQuota !== null && Number(monthly?.count ?? 0) >= input.config.monthlyQuota) return { allowed: false as const, reason: "تم بلوغ الحد الشهري لهذه المهمة." };
+  if (input.config.monthlyBudget !== null && Number(monthly?.cost ?? 0) >= Number(input.config.monthlyBudget)) return { allowed: false as const, reason: "تم بلوغ سقف التكلفة الشهري لهذه المهمة." };
+  return { allowed: true as const };
+}
+
 export async function updateAiTask(input: { task: AiTask; providerConnectionId: number | null; model: string; enabled: boolean; maxTokens: number; timeoutMs: number; maxRetries: number; fallbackEnabled: boolean; dailyQuota: number | null; monthlyQuota: number | null; monthlyBudget: string | null; overLimitAction: "pause" | "draft_only" | "handoff"; actorUserId: number }) {
   const db = await requireDb();
   const connection = input.providerConnectionId ? await getAiConnection(input.providerConnectionId) : null;
@@ -90,10 +168,10 @@ export async function updateAiTask(input: { task: AiTask; providerConnectionId: 
 
 export async function getAiOverview() {
   await ensureDefaultAiTasks();
-  const [connections, tasks] = await Promise.all([listAiConnections(), listAiTasks()]);
+  const [connections, tasks, pricingCards] = await Promise.all([listAiConnections(), listAiTasks(), listAiPricingCards()]);
   const db = await requireDb();
   const [summary] = await db.select({ calls: sql<number>`count(*)`, estimatedCost: sql<string>`coalesce(sum(${aiUsageLedger.estimatedCost}), 0)`, failed: sql<number>`sum(case when ${aiUsageLedger.status} = 'failed' then 1 else 0 end)` }).from(aiUsageLedger).where(gte(aiUsageLedger.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)));
-  return { connections, tasks, summary: { calls: Number(summary?.calls ?? 0), estimatedCost: String(summary?.estimatedCost ?? "0"), failed: Number(summary?.failed ?? 0) } };
+  return { connections, tasks, pricingCards, summary: { calls: Number(summary?.calls ?? 0), estimatedCost: String(summary?.estimatedCost ?? "0"), failed: Number(summary?.failed ?? 0) } };
 }
 
 export async function listAiUsage(limit = 100) {
