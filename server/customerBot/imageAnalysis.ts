@@ -63,6 +63,12 @@ function compactError(error: unknown) {
   return (error instanceof Error ? error.message : "تعذر تحليل صورة الزبون.").slice(0, 500);
 }
 
+/** Vision models sometimes return confidence as 0..1 instead of the documented 0..100 scale. */
+export function normalizeVisionConfidence(value: number) {
+  const normalized = value >= 0 && value <= 1 ? value * 100 : value;
+  return Math.max(0, Math.min(100, Math.round(normalized)));
+}
+
 async function requireDb() {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
@@ -156,7 +162,8 @@ export async function analyzeCustomerMessageImage(input: { storeId: number; medi
       }],
       response_format: { type: "json_schema", json_schema: { name: "customer_image_analysis", strict: true, schema: { type: "object", properties: { garmentType: { type: "string" }, dominantColor: { type: "string" }, secondaryColors: { type: "array", items: { type: "string" } }, pattern: { type: "string" }, detectedText: { type: "string" }, visualSummary: { type: "string" }, suitableForMatching: { type: "boolean" }, confidence: { type: "number" } }, required: ["garmentType", "dominantColor", "secondaryColors", "pattern", "detectedText", "visualSummary", "suitableForMatching", "confidence"], additionalProperties: false } } },
     });
-    const result = safeJson(replyText(analysisResponse), analysisSchema, "لم يرجع محلل الصورة نتيجة منظمة قابلة للمراجعة.");
+    const parsedResult = safeJson(replyText(analysisResponse), analysisSchema, "لم يرجع محلل الصورة نتيجة منظمة قابلة للمراجعة.");
+    const result = { ...parsedResult, confidence: normalizeVisionConfidence(parsedResult.confidence) };
     const savedAnalysisId = await saveAnalysisResult(db, { storeId: input.storeId, mediaId: media.id, sourceMessageId: message.id, model: analysisResponse.model || model, result });
     analysisId = savedAnalysisId;
     await db.delete(customerBotImageMatches).where(and(eq(customerBotImageMatches.storeId, input.storeId), eq(customerBotImageMatches.analysisId, savedAnalysisId)));
@@ -178,7 +185,7 @@ export async function analyzeCustomerMessageImage(input: { storeId: number; medi
       }],
       response_format: { type: "json_schema", json_schema: { name: "customer_image_matches", strict: true, schema: { type: "object", properties: { matches: { type: "array", items: { type: "object", properties: { productCode: { type: "string" }, confidence: { type: "number" }, reason: { type: "string" } }, required: ["productCode", "confidence", "reason"], additionalProperties: false } } }, required: ["matches"], additionalProperties: false } } },
     });
-    const matches = safeJson(replyText(matchResponse), matchSchema, "لم يرجع محلل الصورة مطابقات منظمة قابلة للمراجعة.").matches;
+    const matches = safeJson(replyText(matchResponse), matchSchema, "لم يرجع محلل الصورة مطابقات منظمة قابلة للمراجعة.").matches.map(match => ({ ...match, confidence: normalizeVisionConfidence(match.confidence) }));
     const known = new Map(candidateUrls.map(candidate => [candidate.productCode, candidate]));
     const accepted = matches.filter(match => match.confidence >= 60 && known.has(match.productCode)).sort((left, right) => right.confidence - left.confidence).slice(0, 3);
     if (accepted.length) await db.insert(customerBotImageMatches).values(accepted.map((match, index) => {
