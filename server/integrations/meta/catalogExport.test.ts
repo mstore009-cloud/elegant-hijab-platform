@@ -55,6 +55,19 @@ describe("Meta Catalog export mapping", () => {
     expect(result.items[0]?.title).not.toContain("مقاس موحد");
   });
 
+  it("applies the specific scarf category to every exported variant", () => {
+    const result = buildMetaCatalogProductItems({
+      product: { ...baseProduct, fbProductCategory: "381" },
+      variants: Array.from({ length: 7 }, (_, index) => ({ id: 100 + index, colorName: `لون ${index + 1}`, sizeLabel: null, inventoryQuantity: 1 })),
+      brand: "Brand",
+      currency: "IQD",
+      media: Array.from({ length: 7 }, (_, index) => ({ id: 200 + index, variantId: 100 + index, mediaType: "image" as const, catalogUrl: `https://cdn.example/${index}.jpg` })),
+    });
+    expect(result.items).toHaveLength(7);
+    expect(result.items.every(item => item.fb_product_category === "381")).toBe(true);
+    expect(result.items.every(item => item.material === "حرير")).toBe(true);
+  });
+
   it("copies a product-level video to every variant while keeping variant videos scoped", () => {
     const result = buildMetaCatalogProductItems({
       product: baseProduct,
