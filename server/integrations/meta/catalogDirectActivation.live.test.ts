@@ -20,7 +20,7 @@ describe.runIf(runLive)("Meta direct Product Item activation", () => {
     const items = Array.isArray(list.data) ? list.data : [];
     expect(items).toHaveLength(3);
     const updates = await Promise.all(items.map(async (item: any) => {
-      const response = await fetch(`https://graph.facebook.com/v26.0/${item.id}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ visibility: "published" }) });
+      const response = await fetch(`https://graph.facebook.com/v26.0/${item.id}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ visibility: "published", fb_product_category: "381" }) });
       return { id: item.id, retailerId: item.retailer_id, status: response.status, body: await response.json().catch(() => null) };
     }));
     console.log(JSON.stringify({ updates }, null, 2));

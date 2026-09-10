@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getMetaCatalogFieldDescriptors } from "./catalogTaxonomy";
+import { describeMetaProductTaxonomy, getMetaCatalogFieldDescriptors } from "./catalogTaxonomy";
 
 export type MetaCatalogProduct = {
   id: number;
@@ -97,7 +97,8 @@ export function buildMetaCatalogProductItems(input: {
   if (!variants.length) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "لا توجد متغيرات معتمدة لتصدير المنتج." };
   const description = product.description?.trim() ?? "";
   if (!description) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "أضف وصف المنتج قبل تصديره إلى Meta؛ لا يُستخدم الاسم بديلًا عن الوصف." };
-  if (!product.fbProductCategory?.trim()) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "اختر فئة Meta من Taxonomy الرسمية في إعدادات المتجر أو المجموعة أو المنتج." };
+  const category = describeMetaProductTaxonomy(product.fbProductCategory);
+  if (!category) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "اختر فئة Meta من Taxonomy الرسمية في إعدادات المتجر أو المجموعة أو المنتج." };
   const productLink = product.productLink;
   if (!productLink || !/^https:\/\//i.test(productLink)) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "أضف رابط صفحة المنتج العامة في إعدادات Meta Catalog أو استثناء المنتج." };
   if (!input.brand.trim()) return { items: [] as MetaCatalogProductItem[], skipped: true, reason: "أضف العلامة التجارية في إعدادات Meta Catalog." };
@@ -106,7 +107,7 @@ export function buildMetaCatalogProductItems(input: {
   const salePrice = priorPrice && Number(priorPrice) > Number(currentPrice) ? `${currentPrice} ${input.currency}` : undefined;
   const regularPrice = `${priorPrice && Number(priorPrice) > Number(currentPrice) ? priorPrice : currentPrice} ${input.currency}`;
   const issues: string[] = [];
-  const categoryFields = getMetaCatalogFieldDescriptors(product.fbProductCategory);
+  const categoryFields = getMetaCatalogFieldDescriptors(category.id);
   // Meta represents a product with variants as a virtual parent grouped by
   // item_group_id; there is no separate writable parent Product Item. A
   // product-level video (variantId null) must therefore be included on every
@@ -153,7 +154,11 @@ export function buildMetaCatalogProductItems(input: {
       size: variant.sizeLabel?.trim() || undefined,
       item_group_id: product.productCode.trim().slice(0, 100),
       link: productLink,
-      fb_product_category: product.fbProductCategory?.trim() || undefined,
+      // Although Meta accepts a taxonomy ID through the API, its Commerce
+      // Manager editor resolves and displays the canonical English path.
+      // The store retains the immutable numeric ID; only the outgoing field
+      // uses the official path for consistent UI representation.
+      fb_product_category: category.path,
       google_product_category: product.googleProductCategory?.trim() || undefined,
       material: product.material?.trim() || undefined,
       pattern: product.pattern?.trim() || undefined,
@@ -172,7 +177,7 @@ export function buildCatalogExportIdempotencyKey(input: { storeId: number; catal
   // Bump this contract version whenever the outgoing Meta API envelope changes.
   // It prevents an already-submitted legacy envelope from suppressing a corrected
   // product update for the same data snapshot.
-  const payload = JSON.stringify({ schemaVersion: "items_batch_v5_reactivate_archived", storeId: input.storeId, catalogId: input.catalogId, productItems: input.productItems });
+  const payload = JSON.stringify({ schemaVersion: "items_batch_v6_category_path", storeId: input.storeId, catalogId: input.catalogId, productItems: input.productItems });
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 

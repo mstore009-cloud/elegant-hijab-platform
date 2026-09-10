@@ -45,7 +45,7 @@ describe("Meta Catalog export mapping", () => {
       size: "مقاس موحد",
       item_group_id: "HJ-001",
       link: "https://shop.example/store/HJ-001",
-      fb_product_category: "Clothing & Accessories",
+      fb_product_category: "clothing & accessories",
       material: "حرير",
       pattern: "سادة",
       gender: "female",
@@ -66,7 +66,7 @@ describe("Meta Catalog export mapping", () => {
       media: Array.from({ length: 7 }, (_, index) => ({ id: 200 + index, variantId: 100 + index, mediaType: "image" as const, catalogUrl: `https://cdn.example/${index}.jpg` })),
     });
     expect(result.items).toHaveLength(7);
-    expect(result.items.every(item => item.fb_product_category === "381")).toBe(true);
+    expect(result.items.every(item => item.fb_product_category === "clothing & accessories > clothing accessories > women's accessories > scarves & wraps")).toBe(true);
     expect(result.items.every(item => item.material === "حرير")).toBe(true);
   });
 
@@ -163,7 +163,7 @@ describe("Meta Catalog export mapping", () => {
       visibility: "published",
       image: [{ url: "https://cdn.example/item.jpg" }],
       video: [{ url: "https://cdn.example/item.mp4" }],
-      fb_product_category: "Clothing & Accessories",
+      fb_product_category: "clothing & accessories",
       item_group_id: "HJ-001",
     });
     expect(toMetaCatalogBatchRequests(input.items)[0]).not.toHaveProperty("retailer_id");

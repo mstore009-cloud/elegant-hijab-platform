@@ -23,7 +23,7 @@ describe.runIf(runLive)("Meta Catalog live Product Items", () => {
     const retailerIds = rows.map(row => `${row.productCode}-${row.variantId}`);
     expect(retailerIds.length).toBeGreaterThan(0);
     const url = new URL(`https://graph.facebook.com/v26.0/${encodeURIComponent(asset!.externalId)}/products`);
-    url.searchParams.set("fields", "id,retailer_id,title,description,fb_product_category,material,video,videos,video_fetch_status,item_group_id,availability,condition,visibility,status,commerce_approval_status,errors");
+    url.searchParams.set("fields", "id,retailer_id,title,description,category,fb_product_category,material,video,videos,video_fetch_status,item_group_id,availability,condition,visibility,status,commerce_approval_status,errors");
     url.searchParams.set("limit", "100");
     const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000) });
     const body = await response.json().catch(() => null) as any;
@@ -35,7 +35,7 @@ describe.runIf(runLive)("Meta Catalog live Product Items", () => {
     const groupsResponse = await fetch(groupsUrl, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000) });
     const groupsPayload = await groupsResponse.json().catch(() => null) as any;
     const groups = Array.isArray(groupsPayload?.data) ? groupsPayload.data : [];
-    console.log(JSON.stringify({ catalogId: asset!.externalId, apiStatus: response.status, paging: body?.paging, productGroups: { status: groupsResponse.status, groups: groups.filter((group: any) => ["h04", "H12 test"].includes(group?.retailer_id)) }, results }, null, 2));
+    console.log(JSON.stringify({ catalogId: asset!.externalId, apiStatus: response.status, paging: body?.paging, sampleCatalogFields: items.slice(0, 30).map((item: any) => ({ retailer_id: item.retailer_id, title: item.title, category: item.category, fb_product_category: item.fb_product_category, item_group_id: item.item_group_id })), productGroups: { status: groupsResponse.status, groups: groups.filter((group: any) => ["h04", "H12 test"].includes(group?.retailer_id)) }, results }, null, 2));
     expect(response.ok, JSON.stringify(body)).toBe(true);
     expect(results.every(result => result.item)).toBe(true);
     expect(results.filter(result => result.retailerId.startsWith("h04-")).every(result => String(result.item?.fb_product_category ?? "") === "381")).toBe(true);

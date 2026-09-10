@@ -737,3 +737,9 @@
 - [ ] معالجة Product Items التي تعيد Meta لها status=HIDDEN وخطأ Archived، وإعادة تفعيلها قبل احتساب الدفعة مكتملة.
 - [ ] توسيع التحقق الحي ليرفض success إذا كانت العناصر موجودة لكنها HIDDEN أو تحتوي product_item_not_visible.
 - [x] إثبات مسار تفعيل Product Item المؤرشف مباشرةً عبر Meta API: استجاب H12 بنجاح ثم تحولت عناصره الثلاثة إلى visibility=published وstatus=PUBLISHED.
+
+- [ ] تشخيص سبب بقاء عمود Facebook product category فارغًا في محرر Commerce Manager رغم أن المنتج ظاهر والفئة 381 موجودة في API.
+- [ ] اختبار تحديث مباشر لحقل fb_product_category على Product Items المنشورة ومراجعة أثره في محرر Meta.
+- [ ] تثبيت طريقة التصدير التي تجعل Facebook product category ظاهرة في Commerce Manager قبل إغلاق قسم Meta Catalog.
+
+- [ ] مطابقة الحقل الظاهر في محرر Meta مع Product Item API بعد أن لم ينعكس fb_product_category=381 حتى عند التحديث المباشر الناجح.
