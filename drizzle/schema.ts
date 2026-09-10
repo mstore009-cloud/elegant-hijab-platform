@@ -1886,6 +1886,111 @@ export const productFinancialChangeEvents = mysqlTable(
   ],
 );
 
+/** Platform-admin managed AI provider connection. Secrets are encrypted server-side and never returned. */
+export const aiProviderConnections = mysqlTable(
+  "ai_provider_connections",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    provider: mysqlEnum("provider", ["openai", "gemini", "anthropic"]).notNull(),
+    displayName: varchar("displayName", { length: 160 }).notNull(),
+    connectionType: mysqlEnum("connectionType", ["api_key", "vertex_ai"]).default("api_key").notNull(),
+    encryptedApiKey: text("encryptedApiKey"),
+    status: mysqlEnum("status", ["disabled", "untested", "verified", "needs_attention"]).default("untested").notNull(),
+    enabled: boolean("enabled").default(false).notNull(),
+    lastTestedAt: timestamp("lastTestedAt"),
+    lastError: varchar("lastError", { length: 500 }),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("ai_provider_connection_name_unique").on(table.provider, table.displayName), index("ai_provider_status_idx").on(table.provider, table.status, table.enabled)],
+);
+
+export const aiTaskNames = [
+  "customer_reply_fast",
+  "customer_reply_escalation",
+  "product_image_analysis",
+  "customer_image_analysis",
+  "image_product_matching",
+  "marketing_analysis",
+  "content_generation",
+] as const;
+
+/** One centrally managed route for each AI task. Business modules resolve tasks through the router. */
+export const aiTaskConfigurations = mysqlTable(
+  "ai_task_configurations",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    task: mysqlEnum("task", aiTaskNames).notNull(),
+    providerConnectionId: int("providerConnectionId").references(() => aiProviderConnections.id),
+    model: varchar("model", { length: 160 }).notNull(),
+    enabled: boolean("enabled").default(false).notNull(),
+    maxTokens: int("maxTokens").default(1000).notNull(),
+    timeoutMs: int("timeoutMs").default(20000).notNull(),
+    maxRetries: int("maxRetries").default(2).notNull(),
+    fallbackEnabled: boolean("fallbackEnabled").default(false).notNull(),
+    dailyQuota: int("dailyQuota"),
+    monthlyQuota: int("monthlyQuota"),
+    monthlyBudget: decimal("monthlyBudget", { precision: 12, scale: 6 }),
+    overLimitAction: mysqlEnum("overLimitAction", ["pause", "draft_only", "handoff"]).default("draft_only").notNull(),
+    updatedByUserId: int("updatedByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("ai_task_configuration_task_unique").on(table.task), index("ai_task_configuration_provider_idx").on(table.providerConnectionId)],
+);
+
+/** Versioned provider price card used to calculate internal estimates without rewriting history. */
+export const aiPricingCards = mysqlTable(
+  "ai_pricing_cards",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    provider: mysqlEnum("provider", ["openai", "gemini", "anthropic"]).notNull(),
+    model: varchar("model", { length: 160 }).notNull(),
+    version: varchar("version", { length: 60 }).notNull(),
+    inputPerMillion: decimal("inputPerMillion", { precision: 12, scale: 6 }).default("0").notNull(),
+    outputPerMillion: decimal("outputPerMillion", { precision: 12, scale: 6 }).default("0").notNull(),
+    imagePerUnit: decimal("imagePerUnit", { precision: 12, scale: 6 }).default("0").notNull(),
+    currency: varchar("currency", { length: 12 }).default("USD").notNull(),
+    effectiveFrom: timestamp("effectiveFrom").defaultNow().notNull(),
+    effectiveTo: timestamp("effectiveTo"),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [uniqueIndex("ai_pricing_provider_model_version_unique").on(table.provider, table.model, table.version), index("ai_pricing_provider_model_idx").on(table.provider, table.model, table.effectiveFrom)],
+);
+
+/** Append-only usage and cost evidence. Text prompts and secrets are intentionally excluded. */
+export const aiUsageLedger = mysqlTable(
+  "ai_usage_ledger",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    provider: mysqlEnum("provider", ["openai", "gemini", "anthropic"]).notNull(),
+    providerConnectionId: int("providerConnectionId").references(() => aiProviderConnections.id),
+    task: mysqlEnum("task", aiTaskNames).notNull(),
+    model: varchar("model", { length: 160 }).notNull(),
+    storeId: int("storeId").references(() => stores.id),
+    customerId: int("customerId").references(() => customerProfiles.id),
+    conversationId: int("conversationId").references(() => inboxConversations.id),
+    inputTokens: int("inputTokens").default(0).notNull(),
+    outputTokens: int("outputTokens").default(0).notNull(),
+    imageUnits: int("imageUnits").default(0).notNull(),
+    estimatedCost: decimal("estimatedCost", { precision: 12, scale: 6 }).default("0").notNull(),
+    currency: varchar("currency", { length: 12 }).default("USD").notNull(),
+    priceVersion: varchar("priceVersion", { length: 60 }),
+    providerRequestId: varchar("providerRequestId", { length: 255 }),
+    status: mysqlEnum("status", ["reserved", "succeeded", "failed", "rejected_quota"]).notNull(),
+    errorCode: varchar("errorCode", { length: 120 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("ai_usage_provider_time_idx").on(table.provider, table.createdAt), index("ai_usage_store_time_idx").on(table.storeId, table.createdAt), index("ai_usage_task_time_idx").on(table.task, table.createdAt)],
+);
+
+export type AiProviderConnection = typeof aiProviderConnections.$inferSelect;
+export type AiTaskConfiguration = typeof aiTaskConfigurations.$inferSelect;
+export type AiPricingCard = typeof aiPricingCards.$inferSelect;
+export type AiUsageLedger = typeof aiUsageLedger.$inferSelect;
+
 export type Product = typeof products.$inferSelect;
 export type ProductVariant = typeof productVariants.$inferSelect;
 export type ProductImportJob = typeof productImportJobs.$inferSelect;

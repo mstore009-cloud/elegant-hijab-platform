@@ -25,6 +25,7 @@ import Financials from "./pages/Financials";
 import MetaConnections from "./pages/MetaConnections";
 import MetaPlatformSettings from "./pages/MetaPlatformSettings";
 import PublicLegal from "./pages/PublicLegal";
+import AiPlatformSettings from "./pages/AiPlatformSettings";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -50,6 +51,7 @@ function Router() {
       <Route path={"/settings/delivery"} component={StoreSettings} />
       <Route path={"/meta-connections"} component={MetaConnections} />
       <Route path={"/settings/meta-app"} component={MetaPlatformSettings} />
+      <Route path={"/settings/ai"} component={AiPlatformSettings} />
       <Route path={"/content-posts"} component={ContentPosts} />
       <Route path={"/marketing"} component={Marketing} />
       <Route path={"/analytics"} component={Analytics} />

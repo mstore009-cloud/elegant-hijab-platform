@@ -44,6 +44,7 @@ import {
   MessageCircleMore,
   PanelLeft,
   Settings2,
+  Sparkles,
   ShoppingBag,
   UserCog,
   UsersRound,
@@ -100,6 +101,7 @@ const menuGroups: MenuGroup[] = [
       { icon: Settings2, label: "إعدادات المتجر", path: "/settings/store" },
       { icon: CloudCog, label: "مصدر المنتجات OneDrive", path: "/settings/onedrive" },
       { icon: KeyRound, label: "إعداد تطبيق Meta", path: "/settings/meta-app" },
+      { icon: Sparkles, label: "تكاملات AI", path: "/settings/ai" },
       { icon: Cable, label: "ربط Meta", path: "/meta-connections" },
     ],
   },
@@ -126,6 +128,7 @@ const pageDescriptions: Record<string, string> = {
   "/settings/onedrive": "ربط مصدر المنتجات وشجرة الأقسام لهذا المتجر",
   "/settings/delivery": "إعدادات التوصيل وقواعده",
   "/settings/meta-app": "إعداد التطبيق المركزي والأسرار المشفرة وروابط OAuth وWebhook",
+  "/settings/ai": "اتصالات OpenAI وGemini ومسارات النماذج والاستخدام",
   "/meta-connections": "قنوات Meta والأصول والصلاحيات لكل متجر",
 };
 
