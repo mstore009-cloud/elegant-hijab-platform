@@ -18,4 +18,18 @@ describe("Products Meta Catalog export contract", () => {
     expect(source).toContain("مساحة تجهيز ومزامنة المنتجات مع Meta");
     expect(source).not.toContain("exportMetaCatalog.mutate");
   });
+
+  it("يعرض فلاتر حالة المزامنة مع عدّادات واضحة", () => {
+    expect(source).toContain("MetaSyncFilter");
+    expect(source).toContain("حالة مزامنة Meta:");
+    expect(source).toContain('"لم تتم"');
+    expect(source).toContain('"متأخرة"');
+    expect(source).toContain("isMetaSyncStale");
+  });
+
+  it("يوفر مزامنة فورية من تفاصيل المنتج", () => {
+    expect(source).toContain("syncProductNow");
+    expect(source).toContain("مزامنة الآن");
+    expect(source).toContain("جارٍ المزامنة...");
+  });
 });
