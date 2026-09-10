@@ -63,7 +63,10 @@ export function normalizeCatalogBaseUrl(value: string | null | undefined) {
   if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new Error("استخدم رابط HTTPS عاماً من دون بيانات دخول أو معاملات.");
   }
-  return parsed.origin;
+  // Preserve an intentional storefront path (for example /shop) rather than
+  // collapsing every saved URL back to its origin on the next settings read.
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  return `${parsed.origin}${pathname === "/" ? "" : pathname}`;
 }
 
 export function normalizeCatalogProductUrl(value: string | null | undefined) {
