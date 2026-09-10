@@ -14,10 +14,11 @@ import {
   storeSettings,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { invokeLLM, type InvokeParams, type InvokeResult } from "../_core/llm";
+import type { InvokeParams, InvokeResult } from "../_core/llm";
 import { notifyEmployee, notifyPermissionHolders } from "../notifications/db";
 import { listCustomerImageFacts, type CustomerImageFacts } from "./imageAnalysis";
 import { sendMetaCommentReply, sendMetaConversationMessage } from "../channels/metaOutbound";
+import { createAiTaskInvoker } from "../ai/taskInvoker";
 
 export const botModes = ["draft_only", "auto_reply"] as const;
 export type BotMode = (typeof botModes)[number];
@@ -297,7 +298,7 @@ export async function simulateCustomerBotInstruction(input: { storeId: number; i
   if (instruction.length < 3) throw new Error("اكتبي تعليمة مشغل قصيرة قبل بدء المحاكاة.");
   if (sampleMessage.length < 2) throw new Error("اكتبي رسالة اختبار قصيرة قبل بدء المحاكاة.");
   const settings = await getSettings(db, input.storeId);
-  const llm = input.llm ?? invokeLLM;
+  const llm = input.llm ?? createAiTaskInvoker("customer_reply_fast", { storeId: input.storeId });
   const result = await llm({
     model: settings.fastModel,
     messages: [{ role: "system", content: [
@@ -335,7 +336,8 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
     await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: null, escalationReason: reason };
   }
-  const llm = input.llm ?? invokeLLM;
+  const fastLlm = input.llm ?? createAiTaskInvoker("customer_reply_fast", { storeId: input.storeId, conversationId: conversation.id });
+  const escalationLlm = input.llm ?? createAiTaskInvoker("customer_reply_escalation", { storeId: input.storeId, conversationId: conversation.id });
   const preEscalationReason = shouldEscalateBeforeModel(sourceMessage.body, facts.products.length, facts.recentMessages.length, facts.imageAnalyses);
   const fastReserved = await reserveUsage({ db, storeId: input.storeId, kind: "fast", limit: settings.maxDailyReplies });
   if (!fastReserved) {
@@ -345,16 +347,16 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
   }
   try {
     if (!preEscalationReason) {
-              const fastResult = await llm({ model: settings.fastModel, messages: [{ role: "system", content: assistantPrompt({ facts, incoming: sourceMessage.body, stronger: false, dialect: settings.dialect, tone: settings.tone, operatorInstructions: settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
+              const fastResult = await fastLlm({ model: settings.fastModel, messages: [{ role: "system", content: assistantPrompt({ facts, incoming: sourceMessage.body, stronger: false, dialect: settings.dialect, tone: settings.tone, operatorInstructions: settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
       const parsed = parseStructuredReply(responseText(fastResult));
       if (!parsed.needsEscalation && parsed.confidence >= settings.minimumConfidence && parsed.reply) {
-        const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "fast", status: "draft", model: settings.fastModel, confidence: parsed.confidence, facts, replyDraft: parsed.reply, usage: fastResult.usage });
+        const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "fast", status: "draft", model: fastResult.model || settings.fastModel, confidence: parsed.confidence, facts, replyDraft: parsed.reply, usage: fastResult.usage });
         const delivery = await maybeSendAutomaticReply({ db, settings, storeId: input.storeId, conversation, sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, actorUserId: input.actorUserId, route: "fast" });
         return { runId, route: "fast" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? null };
       }
-      return generateEscalatedDraft({ db, settings, facts, sourceMessage, conversationId: conversation.id, storeId: input.storeId, llm, reason: parsed.escalationReason || "ثقة المسار السريع أقل من الحد" });
+      return generateEscalatedDraft({ db, settings, facts, sourceMessage, conversationId: conversation.id, storeId: input.storeId, llm: escalationLlm, reason: parsed.escalationReason || "ثقة المسار السريع أقل من الحد" });
     }
-    return generateEscalatedDraft({ db, settings, facts, sourceMessage, conversationId: conversation.id, storeId: input.storeId, llm, reason: preEscalationReason });
+    return generateEscalatedDraft({ db, settings, facts, sourceMessage, conversationId: conversation.id, storeId: input.storeId, llm: escalationLlm, reason: preEscalationReason });
   } catch (error) {
     const message = error instanceof Error ? error.message : "تعذر إنشاء المسودة.";
     const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: preEscalationReason ? "escalated" : "fast", status: "failed", model: preEscalationReason ? settings.escalationModel : settings.fastModel, facts, errorSummary: message.slice(0, 500) });
@@ -373,12 +375,12 @@ async function generateEscalatedDraft(input: { db: any; settings: any; facts: Bo
   const result = await input.llm({ model: input.settings.escalationModel, messages: [{ role: "system", content: assistantPrompt({ facts: input.facts, incoming: input.sourceMessage.body, stronger: true, dialect: input.settings.dialect, tone: input.settings.tone, operatorInstructions: input.settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_escalated_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
   const parsed = parseStructuredReply(responseText(result));
   if (parsed.needsEscalation || parsed.confidence < input.settings.minimumConfidence || !parsed.reply) {
-    const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "human_handoff", status: "handoff", model: input.settings.escalationModel, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason, facts: input.facts, usage: result.usage });
+    const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "human_handoff", status: "handoff", model: result.model || input.settings.escalationModel, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason, facts: input.facts, usage: result.usage });
     const conversation = await getScopedConversation(input.db, input.storeId, input.conversationId);
     await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason: parsed.escalationReason || input.reason });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason };
   }
-  const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "escalated", status: "draft", model: input.settings.escalationModel, confidence: parsed.confidence, escalationReason: input.reason, facts: input.facts, replyDraft: parsed.reply, usage: result.usage });
+  const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "escalated", status: "draft", model: result.model || input.settings.escalationModel, confidence: parsed.confidence, escalationReason: input.reason, facts: input.facts, replyDraft: parsed.reply, usage: result.usage });
   const conversation = await getScopedConversation(input.db, input.storeId, input.conversationId);
   const delivery = await maybeSendAutomaticReply({ db: input.db, settings: input.settings, storeId: input.storeId, conversation, sourceMessage: input.sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, route: "escalated" });
   return { runId, route: "escalated" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? input.reason };

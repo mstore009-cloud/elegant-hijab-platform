@@ -36,18 +36,36 @@ function toOpenAiMessages(messages: Message[]) {
   });
 }
 
-function toGeminiContents(messages: Message[]) {
-  const contents = messages
+function parseDataUrl(url: string) {
+  const match = url.match(/^data:([^;,]+)?;base64,([\s\S]+)$/);
+  if (!match) return null;
+  return { mimeType: match[1] || "application/octet-stream", data: match[2] };
+}
+
+async function toGeminiImagePart(url: string, timeoutMs: number) {
+  const dataUrl = parseDataUrl(url);
+  if (dataUrl) return { inlineData: { mimeType: dataUrl.mimeType, data: dataUrl.data } };
+  const response = await fetch(url, { signal: AbortSignal.timeout(Math.max(1000, timeoutMs)) });
+  if (!response.ok) throw new Error(`تعذر تنزيل صورة الإدخال لتحليل Gemini: ${response.status}`);
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+  if (!contentType.startsWith("image/")) throw new Error("رابط صورة الإدخال لا يعيد نوع ملف صورة صالحًا.");
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > 12 * 1024 * 1024) throw new Error("صورة الإدخال أكبر من الحد الآمن لتحليل Gemini.");
+  return { inlineData: { mimeType: contentType, data: buffer.toString("base64") } };
+}
+
+async function toGeminiContents(messages: Message[], timeoutMs: number) {
+  const contents = await Promise.all(messages
     .filter(message => message.role !== "system")
-    .map(message => ({
+    .map(async message => ({
       role: message.role === "assistant" ? "model" : "user",
-      parts: contentParts(message.content).map(part => {
+      parts: await Promise.all(contentParts(message.content).map(async part => {
         if (typeof part === "string") return { text: part };
         if (part.type === "text") return { text: part.text };
-        if (part.type === "image_url") return { text: `[image: ${part.image_url.url}]` };
+        if (part.type === "image_url") return toGeminiImagePart(part.image_url.url, timeoutMs);
         return { text: `[file: ${part.file_url.url}]` };
-      }),
-    }));
+      })),
+    })));
   const system = messages.find(message => message.role === "system");
   const systemText = system ? contentParts(system.content).map(part => typeof part === "string" ? part : part.type === "text" ? part.text : "").join("\n") : undefined;
   return { contents, systemInstruction: systemText ? { parts: [{ text: systemText }] } : undefined };
@@ -79,8 +97,9 @@ export async function invokeProvider(connection: AiProviderRuntimeConnection, re
     return { id: String(payload?.id ?? ""), model: String(payload?.model ?? request.model), text: typeof choice?.message?.content === "string" ? choice.message.content : JSON.stringify(choice?.message?.content ?? ""), inputTokens: Number(payload?.usage?.prompt_tokens ?? 0), outputTokens: Number(payload?.usage?.completion_tokens ?? 0), imageUnits: 0, finishReason: choice?.finish_reason ?? null };
   }
   if (connection.provider === "gemini") {
-    const body = toGeminiContents(request.messages);
-    const payload = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(request.model)}:generateContent`, { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": apiKey }, body: JSON.stringify({ ...body, generationConfig: { maxOutputTokens: request.maxTokens, responseMimeType: request.responseFormat?.type === "json_object" || request.responseFormat?.type === "json_schema" ? "application/json" : "text/plain" } }) }, request.timeoutMs);
+    const body = await toGeminiContents(request.messages, request.timeoutMs);
+    const jsonSchema = request.responseFormat?.type === "json_schema" ? request.responseFormat.json_schema : undefined;
+    const payload = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(request.model)}:generateContent`, { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": apiKey }, body: JSON.stringify({ ...body, generationConfig: { maxOutputTokens: request.maxTokens, responseMimeType: jsonSchema || request.responseFormat?.type === "json_object" ? "application/json" : "text/plain", ...(jsonSchema ? { responseSchema: jsonSchema.schema } : {}) } }) }, request.timeoutMs);
     const text = (payload?.candidates?.[0]?.content?.parts ?? []).map((part: any) => part?.text ?? "").join("");
     return { id: String(payload?.responseId ?? ""), model: request.model, text, inputTokens: Number(payload?.usageMetadata?.promptTokenCount ?? 0), outputTokens: Number(payload?.usageMetadata?.candidatesTokenCount ?? 0), imageUnits: 0, finishReason: payload?.candidates?.[0]?.finishReason ?? null };
   }

@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { invokeLLM, listLLMModels } from "../_core/llm";
+import type { InvokeParams, InvokeResult } from "../_core/llm";
 import { storageGetSignedUrl } from "../storage";
+import { createAiTaskInvoker } from "../ai/taskInvoker";
 
 const analysisSchema = z.object({
   colorGroups: z.array(z.object({
@@ -16,6 +17,7 @@ const analysisSchema = z.object({
 export type ProductColorSuggestion = z.infer<typeof analysisSchema>;
 
 type AnalyzableImage = { id: number; name: string; url: string };
+type LlmInvoker = (params: InvokeParams) => Promise<InvokeResult>;
 
 const IMAGES_PER_VISION_BATCH = 8;
 const MAX_VISION_BATCHES_PER_PRODUCT = 20;
@@ -75,8 +77,9 @@ async function requestVisionSuggestion(input: {
   mediaUrls: AnalyzableImage[];
   maxTokens: number;
   retry: boolean;
+  llm: LlmInvoker;
 }) {
-  const response = await invokeLLM({
+  const response = await input.llm({
     model: input.model,
     max_tokens: input.maxTokens,
     messages: [
@@ -118,6 +121,7 @@ async function requestVisionSuggestion(input: {
 export async function analyzeStoredProductColors(input: {
   productCode: string;
   media: Array<{ id: number; storageKey: string | null; originalFileName: string | null }>;
+  llm?: LlmInvoker;
 }): Promise<ProductColorSuggestion> {
   const analyzableMedia = input.media.filter(item => item.storageKey);
   if (analyzableMedia.length === 0) throw new Error("لا توجد صور تشغيلية محفوظة لتحليل الألوان. أضف صورة أو أنشئ WebP أولًا.");
@@ -125,10 +129,8 @@ export async function analyzeStoredProductColors(input: {
   if (mediaBatches.length > MAX_VISION_BATCHES_PER_PRODUCT) {
     throw new Error(`يتجاوز المنتج حد التحليل الآمن الحالي (${IMAGES_PER_VISION_BATCH * MAX_VISION_BATCHES_PER_PRODUCT} صورة). راجع الصور على دفعات أصغر بدل إنشاء اقتراح جزئي.`);
   }
-  const models = await listLLMModels();
-  const visionModel = models.data.find(model => model.id === "gemini-3-flash-preview")?.id
-    ?? models.data.find(model => model.id.startsWith("gemini-"))?.id;
-  if (!visionModel) throw new Error("لا يتوفر نموذج بصري لتحليل الصور حاليًا.");
+  const visionModel = "configured-gemini-vision";
+  const llm = input.llm ?? createAiTaskInvoker("product_image_analysis");
 
   const batchSuggestions: ProductColorSuggestion[] = [];
   for (let batchIndex = 0; batchIndex < mediaBatches.length; batchIndex += 1) {
@@ -139,10 +141,10 @@ export async function analyzeStoredProductColors(input: {
       url: await storageGetSignedUrl(item.storageKey!),
     })));
     try {
-      batchSuggestions.push(await requestVisionSuggestion({ model: visionModel, productCode: input.productCode, mediaUrls, maxTokens: 4096, retry: false }));
+      batchSuggestions.push(await requestVisionSuggestion({ model: visionModel, productCode: input.productCode, mediaUrls, maxTokens: 4096, retry: false, llm }));
     } catch (firstError) {
       try {
-        batchSuggestions.push(await requestVisionSuggestion({ model: visionModel, productCode: input.productCode, mediaUrls, maxTokens: 8192, retry: true }));
+        batchSuggestions.push(await requestVisionSuggestion({ model: visionModel, productCode: input.productCode, mediaUrls, maxTokens: 8192, retry: true, llm }));
       } catch (secondError) {
         const firstMessage = firstError instanceof Error ? firstError.message : "فشل التحليل الأول";
         const secondMessage = secondError instanceof Error ? secondError.message : "فشل التحليل المعاد";

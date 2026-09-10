@@ -10,8 +10,9 @@ import {
   products,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { invokeLLM, listLLMModels, type InvokeParams, type InvokeResult } from "../_core/llm";
+import type { InvokeParams, InvokeResult } from "../_core/llm";
 import { storageGetSignedUrl } from "../storage";
+import { createAiTaskInvoker } from "../ai/taskInvoker";
 
 type LlmInvoker = (params: InvokeParams) => Promise<InvokeResult>;
 
@@ -66,13 +67,6 @@ async function requireDb() {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   return db;
-}
-
-async function resolveVisionModel() {
-  const models = await listLLMModels();
-  const model = models.data.find(item => item.id === "gemini-3-flash-preview")?.id ?? models.data.find(item => item.id.startsWith("gemini-"))?.id;
-  if (!model) throw new Error("لا يتوفر نموذج رؤية لتحليل صور العملاء حاليًا.");
-  return model;
 }
 
 async function loadScopedMedia(db: any, storeId: number, mediaId: number) {
@@ -143,8 +137,9 @@ async function saveAnalysisResult(db: any, input: { storeId: number; mediaId: nu
 export async function analyzeCustomerMessageImage(input: { storeId: number; mediaId: number; llm?: LlmInvoker; visionModel?: string; getSignedUrl?: (key: string) => Promise<string> }) {
   const db = await requireDb();
   const { media, message } = await loadScopedMedia(db, input.storeId, input.mediaId);
-  const model = input.visionModel ?? await resolveVisionModel();
-  const llm = input.llm ?? invokeLLM;
+  const model = input.visionModel ?? (input.llm ? "custom-vision" : "configured-gemini-vision");
+  const llm = input.llm ?? createAiTaskInvoker("customer_image_analysis", { storeId: input.storeId });
+  const matchLlm = input.llm ?? createAiTaskInvoker("image_product_matching", { storeId: input.storeId });
   const getSignedUrl = input.getSignedUrl ?? storageGetSignedUrl;
   let analysisId: number | null = null;
   try {
@@ -162,7 +157,7 @@ export async function analyzeCustomerMessageImage(input: { storeId: number; medi
       response_format: { type: "json_schema", json_schema: { name: "customer_image_analysis", strict: true, schema: { type: "object", properties: { garmentType: { type: "string" }, dominantColor: { type: "string" }, secondaryColors: { type: "array", items: { type: "string" } }, pattern: { type: "string" }, detectedText: { type: "string" }, visualSummary: { type: "string" }, suitableForMatching: { type: "boolean" }, confidence: { type: "number" } }, required: ["garmentType", "dominantColor", "secondaryColors", "pattern", "detectedText", "visualSummary", "suitableForMatching", "confidence"], additionalProperties: false } } },
     });
     const result = safeJson(replyText(analysisResponse), analysisSchema, "لم يرجع محلل الصورة نتيجة منظمة قابلة للمراجعة.");
-    const savedAnalysisId = await saveAnalysisResult(db, { storeId: input.storeId, mediaId: media.id, sourceMessageId: message.id, model, result });
+    const savedAnalysisId = await saveAnalysisResult(db, { storeId: input.storeId, mediaId: media.id, sourceMessageId: message.id, model: analysisResponse.model || model, result });
     analysisId = savedAnalysisId;
     await db.delete(customerBotImageMatches).where(and(eq(customerBotImageMatches.storeId, input.storeId), eq(customerBotImageMatches.analysisId, savedAnalysisId)));
     if (!result.suitableForMatching || result.confidence < 60) return { analysisId: savedAnalysisId, status: "completed" as const, matchCount: 0 };
@@ -170,7 +165,7 @@ export async function analyzeCustomerMessageImage(input: { storeId: number; medi
     const candidates = await loadProductCandidates(db, input.storeId);
     if (!candidates.length) return { analysisId: savedAnalysisId, status: "completed" as const, matchCount: 0 };
     const candidateUrls = await Promise.all(candidates.map(async candidate => ({ ...candidate, imageUrl: await getSignedUrl(candidate.representative.storageKey) })));
-    const matchResponse = await llm({
+    const matchResponse = await matchLlm({
       model,
       max_tokens: 1800,
       messages: [{
