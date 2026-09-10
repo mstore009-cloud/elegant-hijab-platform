@@ -1370,6 +1370,26 @@ export const productMedia = mysqlTable(
   table => [index("media_product_idx").on(table.productId), index("media_variant_idx").on(table.variantId)],
 );
 
+/** Curated, image-only references supplied to vision matching; points to existing product media. */
+export const productVisualReferences = mysqlTable(
+  "product_visual_references",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    productId: int("productId").notNull().references(() => products.id),
+    productMediaId: int("productMediaId").notNull().references(() => productMedia.id),
+    referenceType: mysqlEnum("referenceType", ["primary", "color", "detail"]).default("color").notNull(),
+    sortOrder: int("sortOrder").default(0).notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    createdByUserId: int("createdByUserId").references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("visual_reference_media_unique").on(table.productMediaId),
+    index("visual_reference_store_product_idx").on(table.storeId, table.productId, table.enabled, table.sortOrder),
+  ],
+);
+
 /**
  * Audit trail for derived operational media only. This table intentionally keeps
  * no OneDrive URL, OAuth token, or storage key after a reference is released.

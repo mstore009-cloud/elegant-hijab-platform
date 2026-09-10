@@ -6,6 +6,7 @@ import {
   inboxMessageMedia,
   inboxMessages,
   productMedia,
+  productVisualReferences,
   productVariants,
   products,
 } from "../../drizzle/schema";
@@ -87,6 +88,7 @@ async function loadScopedMedia(db: any, storeId: number, mediaId: number) {
 async function loadProductCandidates(db: any, storeId: number) {
   type Candidate = { id: number; productCode: string; name: string; category: string; description: string | null; sellingPrice: string };
   type CandidateMedia = { id: number; productId: number; storageKey: string | null; sortOrder: number };
+  type CandidateReference = { productId: number; mediaId: number; storageKey: string; referenceType: "primary" | "color" | "detail"; sortOrder: number };
   type CandidateVariant = { productId: number; colorName: string };
   const candidates: Candidate[] = await db.select({ id: products.id, productCode: products.productCode, name: products.name, category: products.category, description: products.description, sellingPrice: products.sellingPrice })
     .from(products)
@@ -95,21 +97,30 @@ async function loadProductCandidates(db: any, storeId: number) {
     .limit(8);
   if (!candidates.length) return [];
   const ids = candidates.map(candidate => candidate.id);
-  const [mediaRows, variantRows]: [CandidateMedia[], CandidateVariant[]] = await Promise.all([
+  const [mediaRows, referenceRows, variantRows]: [CandidateMedia[], CandidateReference[], CandidateVariant[]] = await Promise.all([
     db.select({ id: productMedia.id, productId: productMedia.productId, storageKey: productMedia.storageKey, sortOrder: productMedia.sortOrder })
       .from(productMedia)
       .where(and(inArray(productMedia.productId, ids), eq(productMedia.mediaType, "image"), isNotNull(productMedia.storageKey)))
       .orderBy(productMedia.sortOrder, productMedia.id),
+    db.select({ productId: productVisualReferences.productId, mediaId: productVisualReferences.productMediaId, storageKey: productMedia.storageKey, referenceType: productVisualReferences.referenceType, sortOrder: productVisualReferences.sortOrder })
+      .from(productVisualReferences)
+      .innerJoin(productMedia, eq(productMedia.id, productVisualReferences.productMediaId))
+      .where(and(eq(productVisualReferences.storeId, storeId), eq(productVisualReferences.enabled, true), inArray(productVisualReferences.productId, ids), eq(productMedia.mediaType, "image"), isNotNull(productMedia.storageKey)))
+      .orderBy(productVisualReferences.sortOrder, productVisualReferences.id),
     db.select({ productId: productVariants.productId, colorName: productVariants.colorName })
       .from(productVariants)
       .where(inArray(productVariants.productId, ids)),
   ]);
-  const mediaByProduct = new Map<number, { id: number; storageKey: string }>();
-  for (const media of mediaRows) if (media.storageKey && !mediaByProduct.has(media.productId)) mediaByProduct.set(media.productId, { id: media.id, storageKey: media.storageKey });
+  const mediaByProduct = new Map<number, CandidateMedia[]>();
+  for (const media of mediaRows) if (media.storageKey) mediaByProduct.set(media.productId, [...(mediaByProduct.get(media.productId) ?? []), media]);
+  const referencesByProduct = new Map<number, CandidateReference[]>();
+  for (const reference of referenceRows) referencesByProduct.set(reference.productId, [...(referencesByProduct.get(reference.productId) ?? []), reference]);
   return candidates.flatMap(candidate => {
-    const representative = mediaByProduct.get(candidate.id);
-    if (!representative) return [];
-    return [{ ...candidate, representative, colorNames: Array.from(new Set(variantRows.filter(row => row.productId === candidate.id).map(row => row.colorName))).slice(0, 8) }];
+    const curated = referencesByProduct.get(candidate.id) ?? [];
+    const fallback = (mediaByProduct.get(candidate.id) ?? []).slice(0, 3).map((media, index) => ({ productId: candidate.id, mediaId: media.id, storageKey: media.storageKey!, referenceType: index === 0 ? "primary" as const : "color" as const, sortOrder: index }));
+    const references = (curated.length ? curated : fallback).slice(0, 3);
+    if (!references.length) return [];
+    return [{ ...candidate, references, colorNames: Array.from(new Set(variantRows.filter(row => row.productId === candidate.id).map(row => row.colorName))).slice(0, 8) }];
   });
 }
 
@@ -171,16 +182,16 @@ export async function analyzeCustomerMessageImage(input: { storeId: number; medi
 
     const candidates = await loadProductCandidates(db, input.storeId);
     if (!candidates.length) return { analysisId: savedAnalysisId, status: "completed" as const, matchCount: 0 };
-    const candidateUrls = await Promise.all(candidates.map(async candidate => ({ ...candidate, imageUrl: await getSignedUrl(candidate.representative.storageKey) })));
+    const candidateUrls = await Promise.all(candidates.map(async candidate => ({ ...candidate, imageUrls: await Promise.all(candidate.references.map(reference => getSignedUrl(reference.storageKey))) })));
     const matchResponse = await matchLlm({
       model,
       max_tokens: 1800,
       messages: [{
         role: "user",
         content: [
-          { type: "text", text: `قارن صورة عميلة مع صور مرجعية لمنتجات المتجر. لا تعتبر التشابه إثباتاً للهوية. أرجع حتى 3 مرشحين فقط إذا كانت الثقة 60 أو أعلى. صورة العميل أولاً، ثم صور المنتجات بالترتيب: ${candidateUrls.map((candidate, index) => `${index + 1}) الرمز ${candidate.productCode}، الاسم ${candidate.name}، الفئة ${candidate.category}، الألوان ${candidate.colorNames.join("، ") || "غير محددة"}.`).join(" ")}` },
+          { type: "text", text: `قارن صورة عميلة مع صور مرجعية متعددة لمنتجات المتجر. كل مجموعة صور متتالية تخص منتجًا واحدًا. لا تعتبر التشابه إثباتاً للهوية. أرجع حتى 3 مرشحين فقط إذا كانت الثقة 60 أو أعلى. صورة العميل أولاً، ثم مجموعات المنتجات بالترتيب: ${candidateUrls.map((candidate, index) => `${index + 1}) الرمز ${candidate.productCode}، الاسم ${candidate.name}، الفئة ${candidate.category}، الألوان ${candidate.colorNames.join("، ") || "غير محددة"}، عدد الصور المرجعية ${candidate.imageUrls.length}.`).join(" ")}` },
           { type: "image_url", image_url: { url: imageUrl, detail: "auto" } },
-          ...candidateUrls.map(candidate => ({ type: "image_url" as const, image_url: { url: candidate.imageUrl, detail: "auto" as const } })),
+          ...candidateUrls.flatMap(candidate => candidate.imageUrls.map(url => ({ type: "image_url" as const, image_url: { url, detail: "auto" as const } }))),
         ],
       }],
       response_format: { type: "json_schema", json_schema: { name: "customer_image_matches", strict: true, schema: { type: "object", properties: { matches: { type: "array", items: { type: "object", properties: { productCode: { type: "string" }, confidence: { type: "number" }, reason: { type: "string" } }, required: ["productCode", "confidence", "reason"], additionalProperties: false } } }, required: ["matches"], additionalProperties: false } } },
@@ -190,7 +201,7 @@ export async function analyzeCustomerMessageImage(input: { storeId: number; medi
     const accepted = matches.filter(match => match.confidence >= 60 && known.has(match.productCode)).sort((left, right) => right.confidence - left.confidence).slice(0, 3);
     if (accepted.length) await db.insert(customerBotImageMatches).values(accepted.map((match, index) => {
       const candidate = known.get(match.productCode)!;
-      return { storeId: input.storeId, analysisId: savedAnalysisId, productId: candidate.id, productMediaId: candidate.representative.id, rank: index + 1, confidence: Math.round(match.confidence), matchReason: match.reason };
+      return { storeId: input.storeId, analysisId: savedAnalysisId, productId: candidate.id, productMediaId: candidate.references[0]!.mediaId, rank: index + 1, confidence: Math.round(match.confidence), matchReason: match.reason };
     }));
     return { analysisId: savedAnalysisId, status: "completed" as const, matchCount: accepted.length };
   } catch (error) {
