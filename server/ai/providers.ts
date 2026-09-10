@@ -114,7 +114,9 @@ export async function invokeProvider(connection: AiProviderRuntimeConnection, re
   if (!connection.encryptedApiKey) throw new Error("لا يوجد مفتاح API معتمد لهذا الاتصال.");
   const apiKey = decryptAiSecret(connection.encryptedApiKey, aiSecretContext(connection.provider, connection.displayName));
   if (connection.provider === "openai") {
-    const payload = await fetchJson("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model: request.model, messages: toOpenAiMessages(request.messages), max_tokens: request.maxTokens, ...(request.responseFormat ? { response_format: request.responseFormat } : {}) }) }, request.timeoutMs);
+    const usesCompletionTokens = /^(gpt-5|o[1-9])/i.test(request.model);
+    const tokenLimit = usesCompletionTokens ? { max_completion_tokens: request.maxTokens } : { max_tokens: request.maxTokens };
+    const payload = await fetchJson("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model: request.model, messages: toOpenAiMessages(request.messages), ...tokenLimit, ...(request.responseFormat ? { response_format: request.responseFormat } : {}) }) }, request.timeoutMs);
     const choice = payload?.choices?.[0];
     return { id: String(payload?.id ?? ""), model: String(payload?.model ?? request.model), text: typeof choice?.message?.content === "string" ? choice.message.content : JSON.stringify(choice?.message?.content ?? ""), inputTokens: Number(payload?.usage?.prompt_tokens ?? 0), outputTokens: Number(payload?.usage?.completion_tokens ?? 0), imageUnits: 0, finishReason: choice?.finish_reason ?? null };
   }

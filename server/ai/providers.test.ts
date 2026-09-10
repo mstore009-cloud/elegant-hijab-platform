@@ -35,4 +35,19 @@ describe("AI provider adapters", () => {
     expect(result.inputTokens).toBe(12);
     fetchMock.mockRestore();
   });
+
+  it("uses max_completion_tokens for gpt-5 models", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "openai-request", model: "gpt-5", choices: [{ message: { content: "{}" }, finish_reason: "stop" }], usage: { prompt_tokens: 8, completion_tokens: 3 } }), { status: 200, headers: { "content-type": "application/json" } }));
+    await invokeProvider({ id: 1, provider: "openai", displayName: "OpenAI Production", encryptedApiKey: "encrypted" }, {
+      provider: "openai",
+      model: "gpt-5",
+      messages: [{ role: "user", content: "اختبار" }],
+      maxTokens: 1800,
+      timeoutMs: 5_000,
+    });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.max_completion_tokens).toBe(1800);
+    expect(body.max_tokens).toBeUndefined();
+    fetchMock.mockRestore();
+  });
 });
