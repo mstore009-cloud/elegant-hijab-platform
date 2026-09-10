@@ -18,14 +18,25 @@ function nextAttemptAt(delayMs: number) {
 export async function enqueueMetaCatalogAutoSync(input: {
   storeId: number;
   productIds: number[];
+  changeType?: "price" | "inventory" | "image" | "details" | "internal" | "system";
+  isInternalOnly?: boolean;
   requestedByUserId?: number | null;
   sessionToken?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const productIds = Array.from(new Set(input.productIds.filter(Number.isInteger)));
+  const now = new Date();
+  const changeType = input.changeType ?? "details";
+  const isInternal = Boolean(input.isInternalOnly);
   if (productIds.length) {
-    await db.update(products).set({ lastMetaCatalogSyncAt: null }).where(and(eq(products.storeId, input.storeId), inArray(products.id, productIds)));
+    await db.update(products).set({
+      lastMetaCatalogSyncAt: null,
+      lastMetaCatalogChangeAt: now,
+      lastMetaCatalogChangeType: changeType,
+      lastMetaCatalogChangeInternal: isInternal,
+      metaCatalogSyncIgnoredAt: null,
+    }).where(and(eq(products.storeId, input.storeId), inArray(products.id, productIds)));
   }
   for (const productId of productIds) {
     await db.insert(metaCatalogAutoSyncQueue).values({
@@ -137,7 +148,7 @@ export async function processMetaCatalogAutoSync(input: { storeId: number; maxPr
     }
     const syncedAt = new Date();
     await db.update(metaCatalogAutoSyncQueue).set({ status: "completed", completedAt: syncedAt, nextAttemptAt: null, lastError: null }).where(inArray(metaCatalogAutoSyncQueue.id, claimed.map(row => row.queueId)));
-    await db.update(products).set({ lastMetaCatalogSyncAt: syncedAt }).where(inArray(products.id, productIds));
+    await db.update(products).set({ lastMetaCatalogSyncAt: syncedAt, metaCatalogSyncIgnoredAt: null }).where(inArray(products.id, productIds));
     return { queued: claimed.length, completed: claimed.length, failed: 0, deferred: 0, exportJobId: result.job.id };
   } catch (error) {
     const message = error instanceof Error ? error.message : "فشلت مزامنة Meta التلقائية.";
@@ -151,4 +162,29 @@ export async function getMetaCatalogAutoSyncStatus(input: { storeId: number; pro
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const filters = [eq(metaCatalogAutoSyncQueue.storeId, input.storeId), ...(input.productIds?.length ? [inArray(metaCatalogAutoSyncQueue.productId, input.productIds)] : [])];
   return db.select().from(metaCatalogAutoSyncQueue).where(and(...filters)).orderBy(desc(metaCatalogAutoSyncQueue.updatedAt)).limit(250);
+}
+export async function dismissInternalMetaCatalogAutoSync(input: {
+  storeId: number;
+  productId: number;
+  userId: number;
+  reason?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select().from(products).where(and(eq(products.id, input.productId), eq(products.storeId, input.storeId))).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  if (!product.lastMetaCatalogChangeInternal && product.lastMetaCatalogChangeType !== "internal") {
+    throw new Error("لا يمكن تجاهل المزامنة لتعديل خارجي يؤثر على سعر أو مخزون أو وسائط الكتالوج.");
+  }
+  const ignoredAt = new Date();
+  await db.update(products).set({
+    metaCatalogSyncIgnoredAt: ignoredAt,
+  }).where(and(eq(products.id, input.productId), eq(products.storeId, input.storeId)));
+  await db.update(metaCatalogAutoSyncQueue).set({
+    status: "ignored",
+    completedAt: ignoredAt,
+    nextAttemptAt: null,
+    lastError: input.reason ? `تم التجاهل يدويًا: ${input.reason.slice(0, 200)}` : "تم تجاهل المزامنة للتعديل الداخلي.",
+  }).where(and(eq(metaCatalogAutoSyncQueue.storeId, input.storeId), eq(metaCatalogAutoSyncQueue.productId, input.productId), eq(metaCatalogAutoSyncQueue.status, "pending")));
+  return { success: true, ignoredAt };
 }

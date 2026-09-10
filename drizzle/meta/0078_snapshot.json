@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "e5746363-b94b-4a5d-96d2-c296bd58b3a5",
+  "id": "db28b627-ab79-4d78-9413-6547f9e39b02",
   "prevId": "8cd1875a-ebe2-4496-bb54-303c322908d9",
   "tables": {
     "ai_pricing_cards": {
@@ -8166,7 +8166,7 @@
         },
         "status": {
           "name": "status",
-          "type": "enum('pending','processing','completed','failed')",
+          "type": "enum('pending','processing','completed','failed','ignored')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
@@ -14149,161 +14149,6 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "product_visual_references": {
-      "name": "product_visual_references",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "storeId": {
-          "name": "storeId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "productId": {
-          "name": "productId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "productMediaId": {
-          "name": "productMediaId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "referenceType": {
-          "name": "referenceType",
-          "type": "enum('primary','color','detail')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'color'"
-        },
-        "sortOrder": {
-          "name": "sortOrder",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "enabled": {
-          "name": "enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "createdByUserId": {
-          "name": "createdByUserId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "createdAt": {
-          "name": "createdAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        }
-      },
-      "indexes": {
-        "visual_reference_media_unique": {
-          "name": "visual_reference_media_unique",
-          "columns": [
-            "productMediaId"
-          ],
-          "isUnique": true
-        },
-        "visual_reference_store_product_idx": {
-          "name": "visual_reference_store_product_idx",
-          "columns": [
-            "storeId",
-            "productId",
-            "enabled",
-            "sortOrder"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "product_visual_references_storeId_stores_id_fk": {
-          "name": "product_visual_references_storeId_stores_id_fk",
-          "tableFrom": "product_visual_references",
-          "tableTo": "stores",
-          "columnsFrom": [
-            "storeId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "product_visual_references_productId_products_id_fk": {
-          "name": "product_visual_references_productId_products_id_fk",
-          "tableFrom": "product_visual_references",
-          "tableTo": "products",
-          "columnsFrom": [
-            "productId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "product_visual_references_productMediaId_product_media_id_fk": {
-          "name": "product_visual_references_productMediaId_product_media_id_fk",
-          "tableFrom": "product_visual_references",
-          "tableTo": "product_media",
-          "columnsFrom": [
-            "productMediaId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "product_visual_references_createdByUserId_users_id_fk": {
-          "name": "product_visual_references_createdByUserId_users_id_fk",
-          "tableFrom": "product_visual_references",
-          "tableTo": "users",
-          "columnsFrom": [
-            "createdByUserId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "product_visual_references_id": {
-          "name": "product_visual_references_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
     "products": {
       "name": "products",
       "columns": {
@@ -14440,6 +14285,35 @@
         },
         "lastMetaCatalogSyncAt": {
           "name": "lastMetaCatalogSyncAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lastMetaCatalogChangeAt": {
+          "name": "lastMetaCatalogChangeAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lastMetaCatalogChangeType": {
+          "name": "lastMetaCatalogChangeType",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lastMetaCatalogChangeInternal": {
+          "name": "lastMetaCatalogChangeInternal",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "metaCatalogSyncIgnoredAt": {
+          "name": "metaCatalogSyncIgnoredAt",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": false,
