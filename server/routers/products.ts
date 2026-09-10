@@ -16,7 +16,7 @@ import { generateOperationalMediaForProduct, regenerateOperationalMediaForProduc
 import { analyzeStoredProductColors } from "../products/colorAnalysis";
 import { getPublicStore } from "../stores/db";
 import { assignProductCategory, createManualProductCategory, listProductCategoryTree, renameProductCategory } from "../products/categories";
-import { enqueueMetaCatalogAutoSync } from "../integrations/meta/catalogAutoSync";
+import { enqueueMetaCatalogAutoSync, restoreInternalMetaCatalogAutoSync } from "../integrations/meta/catalogAutoSync";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
 const productStatus = z.enum(["draft", "needs_review", "ready", "active", "archived"]);
@@ -448,6 +448,11 @@ export const productsRouter = router({
     const { storeId } = await requireProductInOperationalStore(ctx, input.productId);
     const { dismissInternalMetaCatalogAutoSync } = await import("../integrations/meta/catalogAutoSync");
     return dismissInternalMetaCatalogAutoSync({ storeId, productId: input.productId, userId: ctx.user.id, reason: input.reason });
+  }),
+  restoreInternalMetaSync: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const { storeId } = await requireProductInOperationalStore(ctx, input.productId);
+    return restoreInternalMetaCatalogAutoSync({ storeId, productId: input.productId, userId: ctx.user.id, sessionToken: parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "" });
   }),
   importJobs: router({
     list: protectedProcedure.query(async ({ ctx }) => {
