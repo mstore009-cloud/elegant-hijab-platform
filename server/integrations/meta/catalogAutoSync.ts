@@ -24,6 +24,9 @@ export async function enqueueMetaCatalogAutoSync(input: {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const productIds = Array.from(new Set(input.productIds.filter(Number.isInteger)));
+  if (productIds.length) {
+    await db.update(products).set({ lastMetaCatalogSyncAt: null }).where(and(eq(products.storeId, input.storeId), inArray(products.id, productIds)));
+  }
   for (const productId of productIds) {
     await db.insert(metaCatalogAutoSyncQueue).values({
       storeId: input.storeId,

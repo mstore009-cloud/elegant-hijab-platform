@@ -10,6 +10,7 @@ import { generateAutomaticColorSuggestion } from "./db";
 import { assignOneDriveCategoryToProduct } from "./categories";
 import { notifyPermissionHolders } from "../notifications/db";
 import { type CatalogSourceChange, upsertMetaCatalogSourceUpdate } from "../integrations/meta/catalogSourceUpdates";
+import { enqueueMetaCatalogAutoSync } from "../integrations/meta/catalogAutoSync";
 
 const isImage = (item: CatalogDriveItem) => item.kind === "file" && /\.(jpg|jpeg|png|webp)$/i.test(item.name);
 const isVideo = (item: CatalogDriveItem) => item.kind === "file" && /\.(mp4|mov|m4v|webm)$/i.test(item.name);
@@ -400,7 +401,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
   const summary: CatalogAutomationSummary = { discovered: 0, draftsCreated: 0, existing: 0, failed: 0, operationalCopiesCreated: 0 };
-  const knownProducts = await db.select({ id: products.id, productCode: products.productCode }).from(products).where(eq(products.storeId, input.storeId));
+  const knownProducts = await db.select({ id: products.id, productCode: products.productCode, status: products.status }).from(products).where(eq(products.storeId, input.storeId));
   const productByCode = new Map(knownProducts.map(product => [product.productCode, product]));
   const productById = new Map(knownProducts.map(product => [product.id, product]));
   const groups = (await listCatalogChildren({ encryptedAccessToken: connection.encryptedAccessToken, driveId: connection.selectedDriveId, folderId: connection.selectedFolderId })).filter(item => item.kind === "folder");
@@ -486,15 +487,19 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
         if (folderObservation.changed) {
           await notifyPermissionHolders(buildCatalogFolderReviewNotification({ storeId: input.storeId, entityId: folderObservationRecord.id, folderId: folder.id, folderName: folder.name, groupName }));
         }
-        if (priorFolder?.sourceFingerprint && priorFolder.sourceFingerprint !== fingerprint) {
+        const sourceChanged = Boolean(priorFolder?.sourceFingerprint && priorFolder.sourceFingerprint !== fingerprint);
+        if (sourceChanged) {
           const changes = await detectCatalogSourceChanges({ db, storeId: input.storeId, productId: existingProduct.id, contents, metadata });
           if (changes.some(change => change.kind === "media_changed")) await clearMetaCatalogMediaCopies({ db, productId: existingProduct.id });
           await upsertMetaCatalogSourceUpdate({ storeId: input.storeId, productId: existingProduct.id, catalogFolderId: folderObservationRecord.id, sourceFingerprint: fingerprint, changes });
           if (changes.length) await db.insert(productOperations).values({ productId: existingProduct.id, actorUserId: input.ownerUserId, source: "catalog_scan", action: "onedrive_update_pending_meta_review", changes: JSON.stringify({ source, changes }) });
         }
-        await syncCatalogSourceProductMetadata({ db, productId: existingProduct.id, actorUserId: input.ownerUserId, metadata });
+        const metadataChanged = await syncCatalogSourceProductMetadata({ db, productId: existingProduct.id, actorUserId: input.ownerUserId, metadata });
         await assignOneDriveCategoryToProduct({ storeId: input.storeId, productId: existingProduct.id, sourceCategoryPath: groupName });
-        await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
+        const mediaAdded = await syncNewCatalogMediaReferences({ db, productId: existingProduct.id, images, videos });
+        if (existingProduct.status === "active" && (sourceChanged || metadataChanged.length > 0 || mediaAdded.imagesAdded > 0 || mediaAdded.videosAdded > 0)) {
+          await enqueueMetaCatalogAutoSync({ storeId: input.storeId, productIds: [existingProduct.id], requestedByUserId: input.ownerUserId });
+        }
         await report("copying_operational_media", folder.name);
         const imageCopies = await generateOperationalMediaForProduct({ userId: input.ownerUserId, productId: existingProduct.id });
         summary.operationalCopiesCreated += imageCopies.created.length;
@@ -506,7 +511,7 @@ export async function scanCatalogForOwner(input: { ownerUserId: number; storeId:
         return;
       }
       const created = await createDraftFromFolder({ storeId: input.storeId, ownerUserId: input.ownerUserId, groupName, folder, images, videos, metadata });
-      productByCode.set(folder.name, { id: created.productId, productCode: folder.name });
+      productByCode.set(folder.name, { id: created.productId, productCode: folder.name, status: "draft" });
       await upsertFolderObservation({ storeId: input.storeId, ownerUserId: input.ownerUserId, productFolderId: folder.id, groupName, productCode: folder.name, source, state: "draft_created", linkedProductId: created.productId, missingFields: created.missingFields, imageCount: images.length, sourceFingerprint: fingerprint });
       await assignOneDriveCategoryToProduct({ storeId: input.storeId, productId: created.productId, sourceCategoryPath: groupName });
       summary.draftsCreated += 1;

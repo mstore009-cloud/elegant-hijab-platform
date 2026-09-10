@@ -90,6 +90,7 @@ export const productsRouter = router({
     const categoryPathById = new Map(categoryTree.map(category => [category.id, category.displayPath]));
     return Promise.all(productList.map(async ({ product, primaryMedia, missingFields }) => ({
       ...presentProductForViewer({ ...product, category: product.categoryId ? categoryPathById.get(product.categoryId) ?? product.category : product.category }, canViewFinancials),
+      updatedAt: product.updatedAt,
       primaryImageUrl: primaryMedia?.storageKey ? (await storageGet(primaryMedia.storageKey)).url : null,
       primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
       missingFields,

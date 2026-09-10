@@ -25,6 +25,8 @@ describe("Products Meta Catalog export contract", () => {
     expect(source).toContain('"لم تتم"');
     expect(source).toContain('"متأخرة"');
     expect(source).toContain("isMetaSyncStale");
+    expect(source).toContain("metaSyncNeedsRefresh");
+    expect(source).toContain("تحتاج مزامنة Meta");
   });
 
   it("يوفر مزامنة فورية من تفاصيل المنتج", () => {
