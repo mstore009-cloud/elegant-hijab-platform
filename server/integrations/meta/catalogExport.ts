@@ -105,6 +105,14 @@ export function buildMetaCatalogProductItems(input: {
   const regularPrice = `${priorPrice && Number(priorPrice) > Number(currentPrice) ? priorPrice : currentPrice} ${input.currency}`;
   const issues: string[] = [];
   const categoryFields = getMetaCatalogFieldDescriptors(product.fbProductCategory);
+  // Meta represents a product with variants as a virtual parent grouped by
+  // item_group_id; there is no separate writable parent Product Item. A
+  // product-level video (variantId null) must therefore be included on every
+  // variant item so it is available when the group is viewed, while a
+  // variant-specific video remains limited to its own color/size card.
+  const productVideos = media
+    .filter(item => item.variantId == null && item.mediaType === "video" && /^https?:\/\//i.test(item.catalogUrl ?? item.operationalUrl ?? ""))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   if (categoryFields.some(field => field.key === "material") && !product.material?.trim()) {
     issues.push("الخامة غير موجودة في product.txt أو product.docx ولا يوجد استثناء يدوي للمنتج.");
   }
@@ -123,6 +131,10 @@ export function buildMetaCatalogProductItems(input: {
     const variantVideos = media
       .filter(item => item.variantId === variant.id && item.mediaType === "video" && /^https?:\/\//i.test(item.catalogUrl ?? item.operationalUrl ?? ""))
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const videos = Array.from(new Map(
+      [...productVideos, ...variantVideos]
+        .map(entry => [entry.catalogUrl ?? entry.operationalUrl!, entry] as const),
+    ).values()).slice(0, 20);
     const item: MetaCatalogProductItem = {
       id: stableRetailerId(product, variant),
       retailer_id: stableRetailerId(product, variant),
@@ -145,7 +157,7 @@ export function buildMetaCatalogProductItems(input: {
       age_group: product.ageGroup ?? undefined,
       product_type: product.productType?.trim() || undefined,
       image: variantImages.slice(0, 21).map(entry => ({ url: entry.catalogUrl ?? entry.operationalUrl! })),
-      video: variantVideos.slice(0, 20).map(entry => ({ url: entry.catalogUrl ?? entry.operationalUrl! })),
+      video: videos.map(entry => ({ url: entry.catalogUrl ?? entry.operationalUrl! })),
     };
     return [Object.fromEntries(Object.entries(item).filter(([, value]) => value !== undefined)) as MetaCatalogProductItem];
   });

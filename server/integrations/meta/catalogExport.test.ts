@@ -55,6 +55,30 @@ describe("Meta Catalog export mapping", () => {
     expect(result.items[0]?.title).not.toContain("مقاس موحد");
   });
 
+  it("copies a product-level video to every variant while keeping variant videos scoped", () => {
+    const result = buildMetaCatalogProductItems({
+      product: baseProduct,
+      variants: [
+        { id: 11, colorName: "أسود", sizeLabel: "مقاس موحد", inventoryQuantity: 4 },
+        { id: 12, colorName: "أبيض", sizeLabel: "مقاس موحد", inventoryQuantity: 2 },
+      ],
+      brand: "Brand",
+      currency: "IQD",
+      media: [
+        { id: 1, variantId: 11, mediaType: "image", catalogUrl: "https://cdn.example/black.jpg" },
+        { id: 2, variantId: 12, mediaType: "image", catalogUrl: "https://cdn.example/white.jpg" },
+        { id: 3, variantId: null, mediaType: "video", catalogUrl: "https://cdn.example/product.mp4" },
+        { id: 4, variantId: 11, mediaType: "video", catalogUrl: "https://cdn.example/black.mp4" },
+      ],
+    });
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]?.video).toEqual([
+      { url: "https://cdn.example/product.mp4" },
+      { url: "https://cdn.example/black.mp4" },
+    ]);
+    expect(result.items[1]?.video).toEqual([{ url: "https://cdn.example/product.mp4" }]);
+  });
+
   it("skips drafts and does not create catalog items without a real active product", () => {
     const result = buildMetaCatalogProductItems({
       product: { ...baseProduct, status: "needs_review" },
