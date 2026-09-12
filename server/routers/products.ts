@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductVisualReferences, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, removeProductVisualReference, renameProductColor, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, saveProductVisualReference, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { recordInitialProductFinancialValues } from "../financials/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
@@ -215,6 +215,25 @@ export const productsRouter = router({
       };
     }));
     return [...storedPreviews, ...unavailableVideos, ...temporaryPreviews];
+  }),
+  visualReferences: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.inventory.update");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    await requireProductInOperationalStore(ctx, input.productId);
+    const references = await listProductVisualReferences({ storeId, productId: input.productId });
+    return Promise.all(references.map(async reference => ({ ...reference, url: reference.storageKey ? (await storageGet(reference.storageKey)).url : null })));
+  }),
+  saveVisualReference: protectedProcedure.input(z.object({ productId: z.number().int().positive(), productMediaId: z.number().int().positive(), referenceType: z.enum(["primary", "color", "detail"]), sortOrder: z.number().int().min(0).max(20) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    await requireProductInOperationalStore(ctx, input.productId);
+    return saveProductVisualReference({ ...input, storeId, actorUserId: ctx.user.id });
+  }),
+  removeVisualReference: protectedProcedure.input(z.object({ productId: z.number().int().positive(), referenceId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    await requireProductInOperationalStore(ctx, input.productId);
+    return removeProductVisualReference({ ...input, storeId });
   }),
   setPrimaryMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
