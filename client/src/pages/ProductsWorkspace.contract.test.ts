@@ -30,4 +30,13 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("تنشيط وتفعيل");
     expect(source).toContain('status: "draft"');
   });
+
+  it("يعرض مصفوفة اللون والقياس ويحفظ كل متغير عبر saveInventory", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("مصفوفة المخزون: اللون × القياس");
+    expect(source).toContain("trpc.products.saveInventory.useMutation");
+    expect(source).toContain("حفظ مخزون المتغيرات");
+    expect(source).toContain("inventoryDrafts[variant.id]");
+    expect(source).toContain("inventoryStatusLabel");
+  });
 });

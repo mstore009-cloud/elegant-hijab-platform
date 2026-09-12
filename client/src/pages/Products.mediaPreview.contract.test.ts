@@ -20,7 +20,7 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("trpc.products.analyzeColors.useMutation");
     expect(source).toContain("trpc.products.saveColorInventory.useMutation");
     expect(source).toContain("إضافة صور");
-    expect(source).not.toContain("trpc.products.saveInventory.useMutation");
+    expect(source).toContain("trpc.products.saveInventory.useMutation");
     expect(source).toContain("detachMedia");
     expect(source).toContain("trpc.products.deleteColor.useMutation");
     expect(source).toContain("trpc.products.deletePermanently.useMutation");
