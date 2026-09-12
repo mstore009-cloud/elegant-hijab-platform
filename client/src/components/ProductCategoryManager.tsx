@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
-import { Check, FolderPlus, Pencil, Plus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, FolderPlus, Pencil, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 type Category = {
@@ -27,7 +27,19 @@ export function ProductCategoryManager({ canCreate, canEdit, selectedProductId, 
   const createCategory = trpc.products.categories.create.useMutation({ onSuccess: async () => { setNewName(""); setParentId("root"); await refresh(); } });
   const renameCategory = trpc.products.categories.rename.useMutation({ onSuccess: async () => { setEditingId(null); setEditingName(""); await refresh(); } });
   const assignCategory = trpc.products.categories.assign.useMutation({ onSuccess: refresh });
+  const reorderCategories = trpc.products.categories.reorder.useMutation({ onSuccess: refresh });
   const orderedCategories = useMemo(() => (categories.data ?? []) as Category[], [categories.data]);
+  const moveCategory = (categoryId: number, direction: -1 | 1) => {
+    const category = orderedCategories.find(item => item.id === categoryId);
+    if (!category) return;
+    const siblings = orderedCategories.filter(item => (item.parentId ?? null) === (category.parentId ?? null));
+    const index = siblings.findIndex(item => item.id === categoryId);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= siblings.length) return;
+    const next = [...siblings];
+    [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+    reorderCategories.mutate({ categoryIds: next.map(item => item.id) });
+  };
   useEffect(() => { setAssignedCategoryId(currentCategoryId ? String(currentCategoryId) : "none"); }, [currentCategoryId, selectedProductId]);
 
   return <>
@@ -61,9 +73,9 @@ export function ProductCategoryManager({ canCreate, canEdit, selectedProductId, 
           {categories.isLoading ? <div className="mt-3 space-y-2"><div className="h-11 animate-pulse rounded-xl bg-[#f5f2eb]" /><div className="h-11 animate-pulse rounded-xl bg-[#f5f2eb]" /></div> : orderedCategories.length === 0 ? <p className="mt-3 rounded-2xl border border-dashed border-[#d8d0c3] bg-[#fcfaf6] p-4 text-sm text-[#738078]">لا توجد أقسام محفوظة بعد. أضف قسمًا من هنا أو استورد شجرة OneDrive من «مصدر المنتجات OneDrive».</p> : <div className="mt-3 space-y-2">{orderedCategories.map(category => <div key={category.id} className="flex items-center gap-2 rounded-xl border border-[#e9e3d8] bg-white p-2.5" style={{ marginRight: `${Math.min(category.depth, 4) * 16}px` }}>
             <span className="h-2 w-2 shrink-0 rounded-full bg-[#b48a49]" />
             {editingId === category.id ? <Input autoFocus value={editingName} onChange={event => setEditingName(event.target.value)} aria-label={`تعديل ${category.label}`} className="h-9 flex-1" /> : <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-[#29443a]">{category.label}</p><p className="text-[11px] text-[#829087]">{category.source === "onedrive" ? "مستورد من OneDrive" : "أُضيف في المنصة"}</p></div>}
-            {canEdit && (editingId === category.id ? <><Button size="icon" variant="ghost" onClick={() => renameCategory.mutate({ categoryId: category.id, name: editingName.trim() })} disabled={!editingName.trim() || renameCategory.isPending} aria-label="حفظ اسم التصنيف" className="h-9 w-9 text-[#21624d]"><Check className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => { setEditingId(null); setEditingName(""); }} aria-label="إلغاء تعديل التصنيف" className="h-9 w-9"><X className="h-4 w-4" /></Button></> : <Button size="icon" variant="ghost" onClick={() => { setEditingId(category.id); setEditingName(category.label); }} aria-label={`تعديل ${category.label}`} className="h-9 w-9 text-[#62786c]"><Pencil className="h-4 w-4" /></Button>)}
+            {canEdit && <div className="flex items-center gap-0.5">{editingId === category.id ? <><Button size="icon" variant="ghost" onClick={() => renameCategory.mutate({ categoryId: category.id, name: editingName.trim() })} disabled={!editingName.trim() || renameCategory.isPending} aria-label="حفظ اسم التصنيف" className="h-9 w-9 text-[#21624d]"><Check className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => { setEditingId(null); setEditingName(""); }} aria-label="إلغاء تعديل التصنيف" className="h-9 w-9"><X className="h-4 w-4" /></Button></> : <><Button size="icon" variant="ghost" onClick={() => moveCategory(category.id, -1)} disabled={reorderCategories.isPending} aria-label={`رفع ${category.label}`} className="h-9 w-9 text-[#62786c]"><ArrowUp className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => moveCategory(category.id, 1)} disabled={reorderCategories.isPending} aria-label={`خفض ${category.label}`} className="h-9 w-9 text-[#62786c]"><ArrowDown className="h-4 w-4" /></Button><Button size="icon" variant="ghost" onClick={() => { setEditingId(category.id); setEditingName(category.label); }} aria-label={`تعديل ${category.label}`} className="h-9 w-9 text-[#62786c]"><Pencil className="h-4 w-4" /></Button></>}</div>}
           </div>)}</div>}
-          {renameCategory.error && <p className="mt-2 text-xs text-[#a14724]">{renameCategory.error.message}</p>}
+          {renameCategory.error && <p className="mt-2 text-xs text-[#a14724]">{renameCategory.error.message}</p>}{reorderCategories.error && <p className="mt-2 text-xs text-[#a14724]">{reorderCategories.error.message}</p>}
         </section>
       </DialogContent>
     </Dialog>

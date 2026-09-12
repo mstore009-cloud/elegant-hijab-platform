@@ -106,6 +106,22 @@ export async function renameProductCategory(input: { storeId: number; categoryId
   return (await listProductCategoryTree(input.storeId)).find(item => item.id === category.id)!;
 }
 
+export async function reorderProductCategories(input: { storeId: number; categoryIds: number[] }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const categories = await db.select().from(productCategories).where(and(eq(productCategories.storeId, input.storeId), inArray(productCategories.id, input.categoryIds)));
+  if (categories.length !== input.categoryIds.length) throw new Error("بعض الأقسام غير موجودة في متجرك.");
+  const parentId = categories[0]?.parentId ?? null;
+  if (categories.some(category => (category.parentId ?? null) !== parentId)) throw new Error("يجب ترتيب أقسام المستوى نفسه معًا.");
+  await db.transaction(async tx => {
+    for (let sortOrder = 0; sortOrder < input.categoryIds.length; sortOrder += 1) {
+      const categoryId = input.categoryIds[sortOrder]!;
+      await tx.update(productCategories).set({ sortOrder }).where(and(eq(productCategories.id, categoryId), eq(productCategories.storeId, input.storeId)));
+    }
+  });
+  return listProductCategoryTree(input.storeId);
+}
+
 export async function assignProductCategory(input: { storeId: number; productId: number; categoryId: number | null; actorUserId: number }) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");

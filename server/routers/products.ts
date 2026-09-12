@@ -15,7 +15,7 @@ import { storageGet } from "../storage";
 import { generateOperationalMediaForProduct, regenerateOperationalMediaForProduct } from "../products/operationalMediaService";
 import { analyzeStoredProductColors } from "../products/colorAnalysis";
 import { getPublicStore } from "../stores/db";
-import { assignProductCategory, createManualProductCategory, listProductCategoryTree, renameProductCategory } from "../products/categories";
+import { assignProductCategory, createManualProductCategory, listProductCategoryTree, renameProductCategory, reorderProductCategories } from "../products/categories";
 import { enqueueMetaCatalogAutoSync, restoreInternalMetaCatalogAutoSync } from "../integrations/meta/catalogAutoSync";
 
 const moneyString = z.string().regex(/^\d+(\.\d{1,2})?$/, "يجب إدخال رقم مالي صالح.");
@@ -118,6 +118,10 @@ export const productsRouter = router({
     rename: protectedProcedure.input(z.object({ categoryId: z.number().int().positive(), name: z.string().trim().min(1).max(180) })).mutation(async ({ ctx, input }) => {
       await assertPermission(ctx.user, "products.edit");
       return renameProductCategory({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), ...input });
+    }),
+    reorder: protectedProcedure.input(z.object({ categoryIds: z.array(z.number().int().positive()).min(1).max(250) })).mutation(async ({ ctx, input }) => {
+      await assertPermission(ctx.user, "products.edit");
+      return reorderProductCategories({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), categoryIds: input.categoryIds });
     }),
     assign: protectedProcedure.input(z.object({ productId: z.number().int().positive(), categoryId: z.number().int().positive().nullable() })).mutation(async ({ ctx, input }) => {
       await assertPermission(ctx.user, "products.edit");

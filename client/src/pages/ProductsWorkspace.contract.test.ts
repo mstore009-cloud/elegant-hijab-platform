@@ -12,13 +12,22 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain(">المسودات ");
   });
 
-  it("يظهر OneDrive والمعاينة الانتقائية مباشرة مع إبقاء Meta قابلًا للفتح", () => {
+  it("يبقي OneDrive والمعاينة التقنية خارج المسار اليومي مع إبقاء Meta قابلًا للفتح", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
-    expect(source).toContain("const [oneDrivePanelOpen, setOneDrivePanelOpen] = useState(true)");
+    expect(source).toContain("const [oneDrivePanelOpen, setOneDrivePanelOpen] = useState(false)");
     expect(source).toContain("const [metaCatalogPanelOpen, setMetaCatalogPanelOpen] = useState(false)");
     expect(source).toContain(">OneDrive<");
     expect(source).toContain(">Meta Catalog<");
     expect(source).toContain("{oneDrivePanelOpen &&");
     expect(source).toContain("{metaCatalogPanelOpen &&");
+  });
+
+  it("يظهر الإدخال اليدوي ويستخدم قرار المسودة أو التنشيط فقط", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("trpc.products.create.useMutation");
+    expect(source).toContain("إضافة منتج يدويًا");
+    expect(source).toContain("حفظ كمسودة");
+    expect(source).toContain("تنشيط وتفعيل");
+    expect(source).toContain('status: "draft"');
   });
 });

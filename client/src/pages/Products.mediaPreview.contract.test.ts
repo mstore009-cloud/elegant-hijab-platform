@@ -47,10 +47,10 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("فتح الفيديو الأصلي في OneDrive");
     expect(source).toContain("video.playbackReady && video.dataUrl");
     expect(source).toContain("aspect-[9/16]");
-    expect(source).toContain("جاهز للمراجعة");
-    expect(source).toContain("قابل للنشر بعد اعتماد آلية التفعيل");
-    expect(source).toContain("غير قابل للنشر بعد");
-    expect(source).toContain("اعتماد المنتج");
+    expect(source).toContain("مسودة");
+    expect(source).toContain("جاهز للتنشيط والتفعيل");
+    expect(source).toContain("مسودة تحتاج إكمالًا");
+    expect(source).toContain("تنشيط وتفعيل");
     expect(source).not.toContain("حفظ المخزون");
     expect(source).toContain("syncStatus.data?.isRunning");
     expect(source).toContain("formatElapsed(catalogElapsedMs)");

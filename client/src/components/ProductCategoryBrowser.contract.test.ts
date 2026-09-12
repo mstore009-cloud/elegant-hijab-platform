@@ -17,5 +17,8 @@ describe("متصفح أقسام المنتجات", () => {
     expect(managerSource).toContain("إضافة قسم أو تصنيف");
     expect(managerSource).toContain("تصنيف المنتج المفتوح");
     expect(managerSource).toContain("ولا تستبدله مزامنة OneDrive");
+    expect(managerSource).toContain("trpc.products.categories.reorder.useMutation");
+    expect(managerSource).toContain("رفع");
+    expect(managerSource).toContain("خفض");
   });
 });
