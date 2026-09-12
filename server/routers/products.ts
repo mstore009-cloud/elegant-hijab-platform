@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { activateReadyProduct, archiveProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreArchivedProduct, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, archiveProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductReviewReadiness, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreArchivedProduct, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { recordInitialProductFinancialValues } from "../financials/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
@@ -94,7 +94,9 @@ export const productsRouter = router({
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     const [productList, categoryTree] = await Promise.all([listProductsWithPrimaryOperationalMedia(storeId), listProductCategoryTree(storeId)]);
     const categoryPathById = new Map(categoryTree.map(category => [category.id, category.displayPath]));
-    return Promise.all(productList.map(async ({ product, primaryMedia, missingFields, variants }) => ({
+    return Promise.all(productList.map(async ({ product, primaryMedia, missingFields, variants }) => {
+      const readiness = await getProductReviewReadiness(product.id);
+      return ({
       ...presentProductForViewer({ ...product, category: product.categoryId ? categoryPathById.get(product.categoryId) ?? product.category : product.category }, canViewFinancials),
       updatedAt: product.updatedAt,
       lastMetaCatalogChangeAt: product.lastMetaCatalogChangeAt,
@@ -105,7 +107,10 @@ export const productsRouter = router({
       primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
       missingFields,
       variants,
-    })));
+      isReadyForActivation: readiness.ready,
+      readinessReasons: readiness.reasons,
+    });
+    }));
   }),
   categories: router({
     list: protectedProcedure.query(async ({ ctx }) => {

@@ -68,4 +68,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain('setSurface("active")');
     expect(source).toContain("role=\"status\"");
   });
+
+  it("لا يعرض اعتماد المنتج إلا بعد فحص الجاهزية ويعرض إكمال المنتج للناقص", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("isReadyForActivation");
+    expect(source).toContain("أكمل المنتج");
+    expect(source).toContain("openProductCompletion(product.id)");
+    expect(source).toContain("scrollIntoView({ behavior: \"smooth\", block: \"start\" })");
+  });
 });
