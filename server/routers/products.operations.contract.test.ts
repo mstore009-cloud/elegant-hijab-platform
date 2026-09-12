@@ -14,6 +14,9 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(dbSource).toContain("primary_media_changed");
     expect(routerSource).toContain("restoreFromArchive");
     expect(routerSource).toContain("archive: protectedProcedure");
+    expect(routerSource).toContain("activateMany: protectedProcedure");
+    expect(routerSource).toContain("activatedProductIds");
+    expect(routerSource).toContain("Promise.allSettled");
     expect(dbSource).toContain("product_archived");
     expect(dbSource).toContain("product_restored_from_archive");
   });

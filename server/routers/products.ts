@@ -320,6 +320,19 @@ export const productsRouter = router({
     await queueProductMetaSync(ctx, input.productId);
     return result;
   }),
+  activateMany: protectedProcedure.input(z.object({ productIds: z.array(z.number().int().positive()).min(1).max(100) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const productIds = Array.from(new Set(input.productIds));
+    const results = await Promise.allSettled(productIds.map(async productId => {
+      await requireProductInOperationalStore(ctx, productId);
+      const result = await activateReadyProduct({ productId, actorUserId: ctx.user.id });
+      await queueProductMetaSync(ctx, productId);
+      return { productId, result };
+    }));
+    const activatedProductIds = results.flatMap(result => result.status === "fulfilled" ? [result.value.productId] : []);
+    const skipped = results.flatMap((result, index) => result.status === "rejected" ? [{ productId: productIds[index], reason: result.reason instanceof Error ? result.reason.message : "تعذر اعتماد المنتج." }] : []);
+    return { activatedProductIds, skipped };
+  }),
   archive: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);

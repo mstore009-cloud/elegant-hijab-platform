@@ -57,4 +57,15 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("اكتمال المنتج");
     expect(source).toContain("متغير");
   });
+
+  it("يتيح اعتماد المسودات المكتملة جماعيًا ويعيدها إلى تبويب النشطة مع إشعار", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("trpc.products.activateMany.useMutation");
+    expect(source).toContain("selectedReadyProductIds");
+    expect(source).toContain("تحديد المكتمل");
+    expect(source).toContain("اعتماد المحدد");
+    expect(source).toContain("تم اعتماد");
+    expect(source).toContain('setSurface("active")');
+    expect(source).toContain("role=\"status\"");
+  });
 });
