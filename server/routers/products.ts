@@ -113,6 +113,7 @@ export const productsRouter = router({
       reviewMediaPreviews,
       isReadyForActivation: readiness.ready,
       readinessReasons: readiness.reasons,
+      readinessCompletion: readiness.completion,
     });
     }));
   }),

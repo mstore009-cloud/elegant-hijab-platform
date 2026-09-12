@@ -19,7 +19,9 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(routerSource).toContain("Promise.allSettled");
     expect(routerSource).toContain("isReadyForActivation");
     expect(routerSource).toContain("readinessReasons");
+    expect(routerSource).toContain("readinessCompletion: readiness.completion");
     expect(routerSource).toContain("getProductReviewReadiness");
+    expect(dbSource).toContain("const checks = [hasRequiredFields, hasImages, hasOperationalImages, hasAssignedImages, hasApprovedColor, colorSuggestionsReviewed, hasSavedColorQuantities]");
     expect(dbSource).toContain("product_archived");
     expect(dbSource).toContain("product_restored_from_archive");
     expect(routerSource).toContain("updateDetails: protectedProcedure.input");

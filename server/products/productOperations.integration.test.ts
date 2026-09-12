@@ -212,7 +212,7 @@ describe("عمليات المنتج الموحدة", () => {
       await assignProductMediaColor({ productId, mediaId, colorName: "عنابي", actorUserId: owner.id });
       expect((await getProductReviewReadiness(productId)).reasons).toContain("لم تحفظ كمية اللون: عنابي");
       await saveProductColorInventory({ productId, colorName: "عنابي", inventoryQuantity: 5, actorUserId: owner.id });
-      expect(await getProductReviewReadiness(productId)).toEqual({ ready: true, reasons: [] });
+      expect(await getProductReviewReadiness(productId)).toEqual({ ready: true, reasons: [], completion: { completed: 7, total: 7, percent: 100 } });
       const [readyProduct] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
       expect(readyProduct?.status).toBe("ready");
       await expect(activateReadyProduct({ productId, actorUserId: owner.id })).resolves.toEqual({ status: "active" });

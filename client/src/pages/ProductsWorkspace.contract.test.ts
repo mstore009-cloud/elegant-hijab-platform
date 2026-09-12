@@ -59,7 +59,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("{hasSizes ? \"إجمالي القطع\" : \"قطعة\"}");
   });
 
-  it("يعرض الأرشيف ومؤشر اكتمال وملخص المتغيرات", () => {
+  it("يعرض الأرشيف ومؤشر جاهزية التفعيل وملخص المخزون المستقل", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain('surface === "archived"');
     expect(source).toContain(">الأرشيف ");
@@ -72,8 +72,11 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("activateProduct.mutate({ productId: detail.product.id })");
     expect(source).toContain("activateProduct.mutate({ productId: product.id })");
     expect(source).toContain("left-24 top-4 z-10");
-    expect(source).toContain("productCompletion(product)");
-    expect(source).toContain("اكتمال المنتج");
+    expect(source).not.toContain("productCompletion(product)");
+    expect(source).toContain("جاهزية التفعيل");
+    expect(source).toContain("readinessCompletion?.completed");
+    expect(source).toContain("readinessCompletion?.percent");
+    expect(source).toContain("المخزون: {product.variants.length} متغير");
     expect(source).toContain("متغير");
   });
 

@@ -89,19 +89,29 @@ export async function getProductReviewReadiness(productId: number) {
   ]);
   const reasons: string[] = [];
   const missingFields = parseMissingFields(folderImport?.missingFields ?? null);
+  const hasRequiredFields = missingFields.length === 0;
   if (missingFields.length) reasons.push(...missingFields.map(field => `حقل أساسي ناقص: ${field}`));
   const images = media.filter(item => item.mediaType === "image");
-  if (!images.length) reasons.push("لا توجد صور للمنتج.");
-  if (images.some(item => !item.storageKey)) reasons.push("توجد صور لم تجهز نسختها التشغيلية بعد.");
-  if (images.some(item => !item.variantId && !item.colorVerified)) reasons.push("توجد صور غير مسندة إلى لون.");
-  if (!variants.length) reasons.push("لا يوجد لون معتمد.");
+  const hasImages = images.length > 0;
+  const hasOperationalImages = !images.some(item => !item.storageKey);
+  const hasAssignedImages = !images.some(item => !item.variantId && !item.colorVerified);
+  const hasApprovedColor = variants.length > 0;
+  if (!hasImages) reasons.push("لا توجد صور للمنتج.");
+  if (!hasOperationalImages) reasons.push("توجد صور لم تجهز نسختها التشغيلية بعد.");
+  if (!hasAssignedImages) reasons.push("توجد صور غير مسندة إلى لون.");
+  if (!hasApprovedColor) reasons.push("لا يوجد لون معتمد.");
   const generated = operations.find(operation => operation.action === "color_suggestions_generated");
   const reviewed = generated && operations.some(operation => operation.action === "color_suggestions_reviewed" && (() => { try { return JSON.parse(operation.changes).suggestionOperationId === generated.id; } catch { return false; } })());
-  if (generated && !reviewed) reasons.push("يوجد اقتراح ألوان بانتظار المراجعة.");
+  const colorSuggestionsReviewed = !generated || Boolean(reviewed);
+  if (!colorSuggestionsReviewed) reasons.push("يوجد اقتراح ألوان بانتظار المراجعة.");
   const savedColorQuantities = new Set(operations.filter(operation => operation.action === "color_inventory_saved").flatMap(operation => { try { const colorName = JSON.parse(operation.changes).colorName; return typeof colorName === "string" ? [colorName] : []; } catch { return []; } }));
   if (operations.some(operation => operation.action === "inventory_saved")) variants.forEach(variant => savedColorQuantities.add(variant.colorName));
-  for (const colorName of Array.from(new Set(variants.map(variant => variant.colorName)))) if (!savedColorQuantities.has(colorName)) reasons.push(`لم تحفظ كمية اللون: ${colorName}`);
-  return { ready: reasons.length === 0, reasons };
+  const colorNames = Array.from(new Set(variants.map(variant => variant.colorName)));
+  const hasSavedColorQuantities = colorNames.every(colorName => savedColorQuantities.has(colorName));
+  for (const colorName of colorNames) if (!savedColorQuantities.has(colorName)) reasons.push(`لم تحفظ كمية اللون: ${colorName}`);
+  const checks = [hasRequiredFields, hasImages, hasOperationalImages, hasAssignedImages, hasApprovedColor, colorSuggestionsReviewed, hasSavedColorQuantities];
+  const completed = checks.filter(Boolean).length;
+  return { ready: reasons.length === 0, reasons, completion: { completed, total: checks.length, percent: Math.round((completed / checks.length) * 100) } };
 }
 
 export async function refreshProductReviewStatus(input: { productId: number; actorUserId: number; source?: "products_ui" | "whatsapp" }) {
