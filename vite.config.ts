@@ -3,6 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 
@@ -150,7 +151,26 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+function vitePluginBrotliAssets(): Plugin {
+  return {
+    name: "brotli-assets",
+    apply: "build",
+    closeBundle() {
+      const assetsDir = path.resolve(import.meta.dirname, "dist", "public", "assets");
+      if (!fs.existsSync(assetsDir)) return;
+      for (const fileName of fs.readdirSync(assetsDir)) {
+        if (!/\.(js|css)$/.test(fileName)) continue;
+        const filePath = path.join(assetsDir, fileName);
+        const compressed = zlib.brotliCompressSync(fs.readFileSync(filePath), {
+          params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 },
+        });
+        fs.writeFileSync(`${filePath}.br`, compressed);
+      }
+    },
+  };
+}
+
+const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginBrotliAssets()];
 
 export default defineConfig({
   plugins,
@@ -167,6 +187,18 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]react(?:-dom)?[\\/]|[\\/]scheduler[\\/]/.test(id)) return "react-vendor";
+          if (id.includes("@radix-ui") || id.includes("lucide-react")) return "ui-vendor";
+          if (id.includes("recharts")) return "charts-vendor";
+          if (id.includes("@trpc") || id.includes("@tanstack/react-query") || id.includes("superjson")) return "data-vendor";
+          return "vendor";
+        },
+      },
+    },
   },
   server: {
     host: true,

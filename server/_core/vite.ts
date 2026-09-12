@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type Response } from "express";
 import fs from "fs";
 import { type Server } from "http";
 import { nanoid } from "nanoid";
@@ -58,7 +58,26 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  const assetsRoot = path.resolve(distPath, "assets");
+  const setAssetHeaders = (res: Response, filePath: string) => {
+    const isHashedAsset = filePath.startsWith(`${assetsRoot}${path.sep}`) && /\.(js|css)$/.test(filePath);
+    res.setHeader("Cache-Control", isHashedAsset ? "public, max-age=31536000, immutable" : "no-cache");
+  };
+
+  app.use((req, res, next) => {
+    if ((req.method !== "GET" && req.method !== "HEAD") || !req.headers["accept-encoding"]?.includes("br")) return next();
+    const relativePath = decodeURIComponent(req.path).replace(/^\/+/, "");
+    const sourcePath = path.resolve(distPath, relativePath);
+    if (!sourcePath.startsWith(`${assetsRoot}${path.sep}`) || !/\.(js|css)$/.test(sourcePath)) return next();
+    const brotliPath = `${sourcePath}.br`;
+    if (!fs.existsSync(brotliPath)) return next();
+    res.setHeader("Content-Encoding", "br");
+    res.setHeader("Vary", "Accept-Encoding");
+    setAssetHeaders(res, sourcePath);
+    return res.sendFile(brotliPath);
+  });
+
+  app.use(express.static(distPath, { setHeaders: setAssetHeaders }));
 
   // fall through to index.html if the file doesn't exist
   app.use("*", (_req, res) => {

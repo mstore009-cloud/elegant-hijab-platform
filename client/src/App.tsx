@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch, useLocation } from "wouter";
 import { lazy, Suspense, useEffect } from "react";
+import { recordPerformanceMetric, appBootStartedAt } from "./performance";
 import ErrorBoundary from "./components/ErrorBoundary";
 import DashboardLayout from "./components/DashboardLayout";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -32,9 +33,21 @@ const MetaConnections = lazy(() => import("@/pages/MetaConnections"));
 const MetaPlatformSettings = lazy(() => import("@/pages/MetaPlatformSettings"));
 const PublicLegal = lazy(() => import("@/pages/PublicLegal"));
 const AiPlatformSettings = lazy(() => import("@/pages/AiPlatformSettings"));
+let firstOpenRecorded = false;
 
 function PageLoading() {
   return <div className="grid min-h-[40vh] place-items-center p-8 text-sm text-muted-foreground">جارٍ تحميل الصفحة…</div>;
+}
+
+function PerformanceTelemetry() {
+  const [location] = useLocation();
+  useEffect(() => {
+    const now = performance.now();
+    const metricName = firstOpenRecorded ? "route_navigation" : "first_open";
+    firstOpenRecorded = true;
+    recordPerformanceMetric(metricName, now - appBootStartedAt, location);
+  }, [location]);
+  return null;
 }
 
 function Router() {
@@ -98,6 +111,7 @@ function App() {
       >
         <TooltipProvider>
           <Toaster />
+          <PerformanceTelemetry />
           <Suspense fallback={<PageLoading />}><PublicOrDashboard /></Suspense>
         </TooltipProvider>
       </ThemeProvider>
