@@ -316,8 +316,8 @@ export default function Products() {
     const workspaceProducts = (products.data ?? []).filter(product => !["active", "archived"].includes(product.status));
     const lowStock = activeProducts.filter(product => product.variants.some((variant: { availability: string }) => variant.availability === "low_stock"));
     const outOfStock = activeProducts.filter(product => product.variants.some((variant: { availability: string }) => variant.availability === "out_of_stock"));
-    const mediaReview = (products.data ?? []).filter(product => operationalMissingFlags(product).media);
-    const colorReview = (products.data ?? []).filter(product => operationalMissingFlags(product).colors);
+    const mediaReview = activeProducts.filter(product => operationalMissingFlags(product).media);
+    const colorReview = activeProducts.filter(product => operationalMissingFlags(product).colors);
     return { completion: workspaceProducts.filter(product => product.missingFields.length > 0).length, lowStock: lowStock.length, outOfStock: outOfStock.length, mediaReview: mediaReview.length, colorReview: colorReview.length, metaSync: activeProducts.filter(product => metaSyncNeedsRefresh(product.lastMetaCatalogSyncAt, product.updatedAt, product.metaCatalogSyncIgnoredAt)).length, metaStale: activeProducts.filter(product => !metaSyncNeedsRefresh(product.lastMetaCatalogSyncAt, product.updatedAt, product.metaCatalogSyncIgnoredAt) && isMetaSyncStale(product.lastMetaCatalogSyncAt)).length };
   }, [products.data]);
   const productsInSurface = useMemo(() => (products.data ?? []).filter(product => {

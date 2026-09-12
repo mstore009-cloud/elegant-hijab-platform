@@ -107,6 +107,8 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain('surface !== "archived"');
     expect(source).toContain("workViewCounts.metaStale");
     expect(source).toContain("النتائج أدناه تخص هذا التنبيه فقط");
+    expect(source).toContain("const mediaReview = activeProducts.filter(product => operationalMissingFlags(product).media)");
+    expect(source).toContain("const colorReview = activeProducts.filter(product => operationalMissingFlags(product).colors)");
   });
 
   it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {
