@@ -622,6 +622,23 @@ export async function getProductMedia(productId: number) {
   return db.select().from(productMedia).where(eq(productMedia.productId, productId)).orderBy(productMedia.sortOrder);
 }
 
+export async function setPrimaryProductMedia(input: { productId: number; mediaId: number; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const media = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId)).orderBy(productMedia.sortOrder, productMedia.id);
+  const selected = media.find(item => item.id === input.mediaId);
+  if (!selected || selected.mediaType !== "image") throw new Error("اختر صورة صالحة من صور المنتج.");
+  const ordered = [selected, ...media.filter(item => item.id !== selected.id && item.mediaType === "image"), ...media.filter(item => item.id !== selected.id && item.mediaType !== "image")];
+  await db.transaction(async tx => {
+    for (let index = 0; index < ordered.length; index += 1) {
+      const item = ordered[index];
+      if (item) await tx.update(productMedia).set({ sortOrder: index }).where(eq(productMedia.id, item.id));
+    }
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "primary_media_changed", changes: JSON.stringify({ mediaId: input.mediaId, originalFileName: selected.originalFileName }) });
+  });
+  return { productId: input.productId, mediaId: input.mediaId };
+}
+
 export async function getCatalogProductFolderId(input: { productId: number; storeId: number }) {
   const db = await getDb();
   if (!db) return null;

@@ -46,6 +46,8 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain(">الأرشيف ");
     expect(source).toContain("trpc.products.archive.useMutation");
     expect(source).toContain("trpc.products.restoreFromArchive.useMutation");
+    expect(source).toContain("استعادة كمسودة</button>");
+    expect(source).toContain("left-4 top-4 z-20");
     expect(source).toContain("productCompletion(product)");
     expect(source).toContain("اكتمال المنتج");
     expect(source).toContain("متغير");
