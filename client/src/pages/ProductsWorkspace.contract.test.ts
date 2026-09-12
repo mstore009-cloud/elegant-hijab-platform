@@ -140,6 +140,10 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("تم تحديث {inventoryFeedback.label}");
     expect(source).toContain("الفرق:");
     expect(source).toContain('role="status"');
+    expect(source).toContain("const saveFocusedInventory = async () =>");
+    expect(source).toContain("trpc.products.updateInventory.useMutation");
+    expect(source).toContain("حفظ وإغلاق");
+    expect(source).toContain("setEditOpen(false)");
     expect(source).toContain('surface !== "archived"');
     expect(source).toContain("workViewCounts.metaStale");
     expect(source).toContain("النتائج أدناه تخص هذا التنبيه فقط");
