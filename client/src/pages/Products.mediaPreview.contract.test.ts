@@ -29,7 +29,12 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("تعيين كأساسية");
     expect(source).toContain("الصورة الأساسية");
     expect(source).toContain("trpc.metaCatalog.sourceUpdate.useQuery");
-    expect(source).toContain("تعارض أو تحديث من OneDrive يحتاج مراجعة");
+    expect(source).toContain("مراجعة تعارضات OneDrive");
+    expect(source).toContain("القيمة الحالية في المنصة");
+    expect(source).toContain("القيمة الجديدة في OneDrive");
+    expect(source).toContain("اعتماد OneDrive");
+    expect(source).toContain("الإبقاء على المنصة");
+    expect(source).toContain("حفظ القرارات وإغلاق التعارض");
     expect(source).toContain("استبعاد المحدد من مراجعة اللون");
     expect(source).toContain("إعادة المحدد إلى مراجعة اللون");
     expect(source).toContain("حالة المخزون:");
