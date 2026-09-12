@@ -126,6 +126,14 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("function outOfStockVariantLabels");
     expect(source).toContain("variant.sizeLabel");
     expect(source).toContain("نفد:");
+    expect(source).toContain('type InventoryFilter = "all" | "partial_out_of_stock"');
+    expect(source).toContain("function hasPartialOutOfStock");
+    expect(source).toContain("partialOutOfStockCount");
+    expect(source).toContain("ألوان نافدة جزئيًا");
+    expect(source).toContain("outOfStockVariantLabels(product).length} / {product.variants.length");
+    expect(source).toContain("openOutOfStockVariant");
+    expect(source).toContain("pendingInventoryFocus");
+    expect(source).toContain("مخزون ${colorName} ${sizeLabel}");
     expect(source).toContain('surface !== "archived"');
     expect(source).toContain("workViewCounts.metaStale");
     expect(source).toContain("النتائج أدناه تخص هذا التنبيه فقط");
