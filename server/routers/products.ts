@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { activateReadyProduct, archiveProduct, addManualProductImage, addManualProductVideo, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductReviewReadiness, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreArchivedProduct, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, archiveProduct, addManualProductImage, addManualProductVideo, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductReviewReadiness, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, normalizeLegacyProductsWithoutSizes, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, regenerateProductSizeMatrix, renameProductColor, restoreArchivedProduct, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { recordInitialProductFinancialValues } from "../financials/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
@@ -322,6 +322,13 @@ export const productsRouter = router({
     const changeType = hasPrice ? "price" as const : isInternalOnly ? "internal" as const : "details" as const;
     await queueProductMetaSync(ctx, productId, { changeType, isInternalOnly });
     return { ...updated, categoryAssignment };
+  }),
+  regenerateSizeMatrix: protectedProcedure.input(z.object({ productId: z.number().int().positive(), sizeLabels: z.array(z.string().trim().min(1).max(80)).min(1).max(30) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    await requireProductInOperationalStore(ctx, input.productId);
+    const result = await regenerateProductSizeMatrix({ ...input, actorUserId: ctx.user.id, source: "products_ui" });
+    await queueProductMetaSync(ctx, input.productId, { changeType: "details", isInternalOnly: false });
+    return result;
   }),
   activate: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");

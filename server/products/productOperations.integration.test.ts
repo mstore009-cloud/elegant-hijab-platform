@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
-import { activateReadyProduct, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductReviewReadiness, getProductWithVariants, recordAutomaticColorSuggestionDecision, saveProductColorInventory, updateProductDetails } from "./db";
+import { activateReadyProduct, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductReviewReadiness, getProductWithVariants, recordAutomaticColorSuggestionDecision, regenerateProductSizeMatrix, saveProductColorInventory, updateProductDetails } from "./db";
 
 async function getTestStoreId() {
   const store = await getPublicStore();
@@ -217,6 +217,34 @@ describe("عمليات المنتج الموحدة", () => {
       expect(variants).toHaveLength(2);
       expect(variants.find(variant => variant.colorName === "أسود")).toMatchObject({ sizeLabel: "", inventoryQuantity: 5, availability: "available" });
       expect(variants.find(variant => variant.colorName === "بيج")).toMatchObject({ sizeLabel: "", inventoryQuantity: 0, availability: "out_of_stock" });
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productVariants).where(eq(productVariants.productId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 15_000);
+
+  it("يعيد توليد مصفوفة اللون والقياس عند طلب قياسات جديدة", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار إعادة توليد المصفوفة.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار إعادة توليد المصفوفة.");
+    const storeId = await getTestStoreId();
+    const productCode = `TST-SIZE-REGEN-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ storeId, productCode, name: "منتج إعادة مصفوفة", category: "اختبار", description: "وصف", sizeLabels: null, status: "draft", sellingPrice: "10000.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      await db.insert(productVariants).values({ productId, colorName: "أسود", sizeLabel: "", inventoryQuantity: 4, availability: "available", sortOrder: 0 });
+      await regenerateProductSizeMatrix({ productId, sizeLabels: ["M", "L"], actorUserId: owner.id, source: "products_ui" });
+      const [updated] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      const variants = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
+      expect(updated?.sizeLabels).toBe(JSON.stringify(["M", "L"]));
+      expect(variants.map(variant => variant.sizeLabel).sort()).toEqual(["L", "M"]);
+      expect(variants.find(variant => variant.sizeLabel === "M")?.inventoryQuantity).toBe(4);
+      expect(variants.find(variant => variant.sizeLabel === "L")?.inventoryQuantity).toBe(0);
     } finally {
       if (productId) {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));

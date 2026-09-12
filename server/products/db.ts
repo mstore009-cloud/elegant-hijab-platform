@@ -390,6 +390,7 @@ export async function updateProductDetails(input: {
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: input.source, action: "details_updated", changes: JSON.stringify(changes) });
   });
   if (input.sizeLabels !== undefined && input.sizeLabels.every(size => !size.trim())) await collapseProductVariantsToColors({ productId: input.productId, actorUserId: input.actorUserId, source: input.source });
+  if (input.sizeLabels !== undefined && input.sizeLabels.some(size => size.trim()) && parseProductSizeLabels(product.sizeLabels).length === 0) await expandProductVariantsToSizes({ productId: input.productId, sizeLabels: input.sizeLabels, actorUserId: input.actorUserId, source: input.source, allowEmpty: true });
   await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId, source: input.source });
   const [updated] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
   return { product: updated!, missingFields: Array.from(nextMissing) };
@@ -431,6 +432,74 @@ async function collapseProductVariantsToColors(input: { productId: number; actor
   }
   if (collapsed.length) await db.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: input.source, action: "sizes_cleared", changes: JSON.stringify({ collapsed }) });
   return collapsed;
+}
+
+async function expandProductVariantsToSizes(input: { productId: number; sizeLabels: string[]; actorUserId: number; source: "products_ui" | "whatsapp"; allowEmpty?: boolean }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const sizes = Array.from(new Set(input.sizeLabels.map(size => size.trim()).filter(Boolean)));
+  if (!sizes.length) throw new Error("أدخل قياسًا واحدًا على الأقل لإعادة توليد المصفوفة.");
+  const variants = await db.select().from(productVariants).where(eq(productVariants.productId, input.productId));
+  if (!variants.length) {
+    if (input.allowEmpty) return [];
+    throw new Error("أضف لونًا واحدًا على الأقل قبل إعادة توليد المصفوفة.");
+  }
+  const byColor = new Map<string, typeof variants>();
+  for (const variant of variants) byColor.set(variant.colorName, [...(byColor.get(variant.colorName) ?? []), variant]);
+  const changes: Array<{ colorName: string; createdSizeLabels: string[]; removedVariantIds: number[] }> = [];
+  for (const colorName of Array.from(byColor.keys())) {
+    const colorVariants = byColor.get(colorName) ?? [];
+    const blankVariant = colorVariants.find(variant => !variant.sizeLabel.trim());
+    const targets: Array<(typeof colorVariants)[number]> = [];
+    const createdSizeLabels: string[] = [];
+    for (let index = 0; index < sizes.length; index += 1) {
+      const sizeLabel = sizes[index]!;
+      const existing = colorVariants.find(variant => variant.sizeLabel.trim() === sizeLabel && !targets.some(target => target.id === variant.id));
+      if (existing) {
+        targets.push(existing);
+      } else if (index === 0 && blankVariant && !targets.some(target => target.id === blankVariant.id)) {
+        await db.update(productVariants).set({ sizeLabel }).where(eq(productVariants.id, blankVariant.id));
+        blankVariant.sizeLabel = sizeLabel;
+        targets.push(blankVariant);
+      } else {
+        const [created] = await db.insert(productVariants).values({ productId: input.productId, colorName, sizeLabel, inventoryQuantity: 0, availability: "out_of_stock", sortOrder: colorVariants.length + createdSizeLabels.length }).$returningId();
+        const [createdVariant] = await db.select().from(productVariants).where(eq(productVariants.id, created.id)).limit(1);
+        if (createdVariant) targets.push(createdVariant);
+        createdSizeLabels.push(sizeLabel);
+      }
+    }
+    const targetIds = new Set(targets.map(variant => variant.id));
+    const removable = colorVariants.filter(variant => !targetIds.has(variant.id));
+    if (removable.length) {
+      const removableIds = removable.map(variant => variant.id);
+      const firstTarget = targets[0];
+      if (firstTarget) await db.update(productMedia).set({ variantId: firstTarget.id }).where(and(eq(productMedia.productId, input.productId), inArray(productMedia.variantId, removableIds)));
+      await db.delete(productVariants).where(inArray(productVariants.id, removableIds));
+    }
+    if (createdSizeLabels.length || removable.length || blankVariant) changes.push({ colorName, createdSizeLabels, removedVariantIds: removable.map(variant => variant.id) });
+  }
+  await db.update(products).set({ sizeLabels: JSON.stringify(sizes) }).where(eq(products.id, input.productId));
+  await db.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: input.source, action: "sizes_matrix_regenerated", changes: JSON.stringify({ sizeLabels: sizes, changes }) });
+  return { sizeLabels: sizes, changes };
+}
+
+export async function regenerateProductSizeMatrix(input: { productId: number; sizeLabels: string[]; actorUserId: number; source?: "products_ui" | "whatsapp" }) {
+  return expandProductVariantsToSizes({ ...input, source: input.source ?? "products_ui" });
+}
+
+export async function normalizeLegacyProductsWithoutSizes(input: { actorUserId: number; storeId?: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const productRows = await db.select().from(products);
+  const candidates = productRows.filter(product => (!input.storeId || product.storeId === input.storeId) && parseProductSizeLabels(product.sizeLabels).length === 0);
+  const normalized: Array<{ productId: number; productCode: string; collapsedColors: number }> = [];
+  for (const product of candidates) {
+    const variants = await db.select().from(productVariants).where(eq(productVariants.productId, product.id));
+    if (!variants.some(variant => variant.sizeLabel.trim())) continue;
+    const collapsed = await collapseProductVariantsToColors({ productId: product.id, actorUserId: input.actorUserId, source: "products_ui" });
+    normalized.push({ productId: product.id, productCode: product.productCode, collapsedColors: collapsed.length });
+  }
+  return { scanned: candidates.length, normalized };
 }
 
 async function removeCatalogMissingField(productId: number, field: string) {

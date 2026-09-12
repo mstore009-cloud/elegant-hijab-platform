@@ -57,7 +57,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("{productSizes.length > 0 && <p><span className=\"text-[#74817a]\">القياسات:");
     expect(source).toContain("sizeLabels={productSizes}");
     expect(source).toContain('sizes_cleared: "إزالة القياسات ودمج الألوان"');
+    expect(source).toContain('sizes_matrix_regenerated: "إعادة توليد مصفوفة القياسات"');
     expect(source).toContain("{hasSizes ? \"إجمالي القطع\" : \"قطعة\"}");
+    expect(source).toContain("sizeClearConfirmationOpen");
+    expect(source).toContain("confirmSizeClear");
+    expect(source).toContain("regenerateSizeMatrix");
+    expect(source).toContain("إعادة توليد مصفوفة اللون × القياس");
   });
 
   it("يعرض الأرشيف ومؤشر جاهزية التفعيل وملخص المخزون المستقل", () => {

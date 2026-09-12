@@ -33,6 +33,8 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(routerSource).toContain("generateAutomaticColorSuggestion");
     expect(routerSource).toContain("generateAutomaticColorSuggestionsMany");
     expect(routerSource).toContain("assignUnlinkedMediaToColorMany");
+    expect(routerSource).toContain("regenerateSizeMatrix: protectedProcedure");
+    expect(routerSource).toContain("regenerateProductSizeMatrix");
     expect(routerSource).toContain("totalMediaCount");
     expect(routerSource).toContain(")).min(0).max(250)");
     expect(dbSource).toContain("addManualProductVideo");
