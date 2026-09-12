@@ -134,6 +134,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("openOutOfStockVariant");
     expect(source).toContain("pendingInventoryFocus");
     expect(source).toContain("مخزون ${colorName} ${sizeLabel}");
+    expect(source).toContain("inventoryFocusHighlight");
+    expect(source).toContain("animate-pulse bg-[#fffaf0] ring-2 ring-[#d99528]");
+    expect(source).toContain("type InventoryFeedback = { label: string; before: number; after: number }");
+    expect(source).toContain("تم تحديث {inventoryFeedback.label}");
+    expect(source).toContain("الفرق:");
+    expect(source).toContain('role="status"');
     expect(source).toContain('surface !== "archived"');
     expect(source).toContain("workViewCounts.metaStale");
     expect(source).toContain("النتائج أدناه تخص هذا التنبيه فقط");
