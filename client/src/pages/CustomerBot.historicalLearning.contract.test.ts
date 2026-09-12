@@ -1,41 +1,40 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-describe("CustomerBot historical learning review flow", () => {
-  it("offers a real instruction simulation chat and explicitly prevents external sending", () => {
-    const source = readFileSync(new URL("./CustomerBot.tsx", import.meta.url), "utf8");
-    expect(source).toContain("customerBot.simulateInstruction.useMutation");
-    expect(source).toContain("مختبر تعليمات المشغل");
-    expect(source).toContain("لا إرسال");
-    expect(source).toContain("هذه محاكاة داخلية؛ لم تُنشأ مسودة ولم تُرسل رسالة.");
-    expect(source).toContain("AIChatBox");
+const read = (file: string) => readFileSync(new URL(`./${file}`, import.meta.url), "utf8");
+
+describe("Customer Bot training center", () => {
+  it("splits the crowded center into dedicated operational pages", () => {
+    const source = read("CustomerBot.tsx");
+    expect(source).toContain("مختبر المحادثة");
+    expect(source).toContain("مساعد الأوامر");
+    expect(source).toContain("المعرفة والتعلم");
+    expect(source).toContain("الاختبارات والمسودات");
   });
 
-  it("offers an explicit bot.teach opt-in and keeps learned style as a draft", () => {
-    const source = readFileSync(new URL("./CustomerBot.tsx", import.meta.url), "utf8");
-    expect(source).toContain("customerBot.teachFromReview.useMutation");
-    expect(source).toContain("تحويل هذه الصياغة إلى مرشح تعليم");
-    expect(source).toContain("يلزم اعتماده من صلاحية المعرفة");
-    expect(source).toContain("لا يقبل تعليم السعر أو المخزون");
+  it("offers a real playground that explicitly blocks external sending and final orders", () => {
+    const source = read("CustomerBotPlayground.tsx");
+    expect(source).toContain("customerBot.createPlaygroundSession.useMutation");
+    expect(source).toContain("customerBot.sendPlaygroundMessage.useMutation");
+    expect(source).toContain("لا إرسال إلى Meta");
+    expect(source).toContain("لا إنشاء طلب نهائي");
+    expect(source).toContain("تعديل وتعليم");
+    expect(source).toContain("customerBot.createLearningProposal.useMutation");
   });
 
-  it("offers a real extraction action and explicitly keeps candidates as drafts", () => {
-    const source = readFileSync(new URL("./CustomerBot.tsx", import.meta.url), "utf8");
-    expect(source).toContain("customerBot.extractHistoricalCandidates.useMutation");
-    expect(source).toContain("استخراج من التاريخ");
-    expect(source).toContain("ولا يعتمدها Bot-H3 أو يستخدمها تلقائياً");
-    expect(source).toContain("article.source === \"historical_candidate\"");
-    expect(source).toContain("historicalChannels");
-    expect(source).toContain("channels: historicalChannels");
+  it("offers text and voice command interpretation before saving a draft", () => {
+    const source = read("CustomerBotCommandAssistant.tsx");
+    expect(source).toContain("customerBot.createTextCommand.useMutation");
+    expect(source).toContain("customerBot.createAudioCommand.useMutation");
+    expect(source).toContain("فهم المساعد");
+    expect(source).toContain("حفظ كمسودة تعليمية");
+    expect(source).toContain("لا يُشغّل المساعد القنوات");
   });
 
-  it("keeps style, response choices, and order drafts visible in the platform interface", () => {
-    const source = readFileSync(new URL("./CustomerBot.tsx", import.meta.url), "utf8");
-    expect(source).toContain("تدريب البوت وأسلوب البيع");
-    expect(source).toContain("RAG داخلي ومراجعة بشرية");
-    expect(source).toContain("طريقة عرض المنتج");
-    expect(source).toContain("مسودات تثبيت الطلب");
-    expect(source).toContain("customerBot.createOrderFromDraft.useMutation");
-    expect(source).toContain("لا يخصم البوت مخزوناً ولا ينشئ طلباً نهائياً");
+  it("keeps live facts separate from RAG knowledge in the learning page", () => {
+    const source = read("CustomerBotLearning.tsx");
+    expect(source).toContain("السعر والمخزون وحالة الطلب");
+    expect(source).toContain("بيانات المنصة الحية");
+    expect(source).toContain("لا يتعلم البوت مباشرة من الملف");
   });
 });

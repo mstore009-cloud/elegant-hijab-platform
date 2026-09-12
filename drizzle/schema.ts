@@ -1208,6 +1208,140 @@ export const customerBotTrainingAssets = mysqlTable(
   table => [index("bot_training_asset_store_time_idx").on(table.storeId, table.createdAt)],
 );
 
+/** Safe internal playground sessions. They never write to Meta, CRM, inventory, or final orders. */
+export const customerBotPlaygroundSessions = mysqlTable(
+  "customer_bot_playground_sessions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    mode: mysqlEnum("mode", ["live_read_only", "conversation_context", "new_test_customer", "existing_customer_read_only", "order_simulation"]).default("live_read_only").notNull(),
+    channel: mysqlEnum("channel", ["whatsapp", "instagram", "messenger", "internal"]).default("internal").notNull(),
+    conversationId: int("conversationId").references(() => inboxConversations.id),
+    status: mysqlEnum("status", ["open", "closed"]).default("open").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    closedAt: timestamp("closedAt"),
+  },
+  table => [index("bot_playground_store_status_time").on(table.storeId, table.status, table.createdAt)],
+);
+
+export const customerBotPlaygroundMessages = mysqlTable(
+  "customer_bot_playground_messages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    sessionId: int("sessionId").notNull().references(() => customerBotPlaygroundSessions.id),
+    role: mysqlEnum("role", ["customer", "assistant", "system"]).notNull(),
+    body: text("body").notNull(),
+    actionJson: text("actionJson"),
+    confidence: int("confidence"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("bot_playground_message_session_idx").on(table.storeId, table.sessionId, table.createdAt)],
+);
+
+export const customerBotLearningProposals = mysqlTable(
+  "customer_bot_learning_proposals",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    sessionId: int("sessionId").references(() => customerBotPlaygroundSessions.id),
+    sourceMessageId: int("sourceMessageId").references(() => customerBotPlaygroundMessages.id),
+    category: mysqlEnum("category", ["dialect_style", "reply_example", "knowledge", "sales_playbook", "test_case", "guardrail", "knowledge_gap"]).notNull(),
+    originalReply: text("originalReply"),
+    editedReply: text("editedReply"),
+    title: varchar("title", { length: 240 }).notNull(),
+    body: text("body").notNull(),
+    aiClassificationJson: text("aiClassificationJson"),
+    status: mysqlEnum("status", ["draft", "approved", "rejected", "archived"]).default("draft").notNull(),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    reviewedByUserId: int("reviewedByUserId").references(() => users.id),
+    reviewedAt: timestamp("reviewedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("bot_learning_proposal_store_status_idx").on(table.storeId, table.status, table.updatedAt)],
+);
+
+export const customerBotBehaviorCards = mysqlTable(
+  "customer_bot_behavior_cards",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    title: varchar("title", { length: 240 }).notNull(),
+    kind: mysqlEnum("kind", ["welcome", "dialect", "tone", "reply_example", "guardrail"]).notNull(),
+    body: text("body").notNull(),
+    examplesJson: text("examplesJson"),
+    channelsJson: text("channelsJson"),
+    priority: int("priority").default(50).notNull(),
+    status: mysqlEnum("status", ["draft", "approved", "archived"]).default("draft").notNull(),
+    sourceProposalId: int("sourceProposalId").references(() => customerBotLearningProposals.id),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    approvedByUserId: int("approvedByUserId").references(() => users.id),
+    approvedAt: timestamp("approvedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("bot_behavior_store_status_priority").on(table.storeId, table.status, table.priority)],
+);
+
+export const customerBotPlaybooks = mysqlTable(
+  "customer_bot_playbooks",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    title: varchar("title", { length: 240 }).notNull(),
+    triggerJson: text("triggerJson").notNull(),
+    stepsJson: text("stepsJson").notNull(),
+    guardrailsJson: text("guardrailsJson"),
+    status: mysqlEnum("status", ["draft", "approved", "archived"]).default("draft").notNull(),
+    sourceProposalId: int("sourceProposalId").references(() => customerBotLearningProposals.id),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    approvedByUserId: int("approvedByUserId").references(() => users.id),
+    approvedAt: timestamp("approvedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("bot_playbook_store_status_idx").on(table.storeId, table.status, table.updatedAt)],
+);
+
+export const customerBotCommandRequests = mysqlTable(
+  "customer_bot_command_requests",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    inputType: mysqlEnum("inputType", ["text", "audio"]).notNull(),
+    originalText: text("originalText"),
+    storageKey: varchar("storageKey", { length: 512 }),
+    transcript: text("transcript"),
+    classificationJson: text("classificationJson"),
+    proposedChangeJson: text("proposedChangeJson"),
+    status: mysqlEnum("status", ["transcribed", "needs_clarification", "previewed", "saved_draft", "cancelled", "failed"]).default("previewed").notNull(),
+    errorSummary: varchar("errorSummary", { length: 500 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("bot_command_store_status_time").on(table.storeId, table.status, table.updatedAt)],
+);
+
+export const customerBotTestCases = mysqlTable(
+  "customer_bot_test_cases",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    title: varchar("title", { length: 240 }).notNull(),
+    inputJson: text("inputJson").notNull(),
+    expectedJson: text("expectedJson"),
+    status: mysqlEnum("status", ["draft", "approved", "archived"]).default("draft").notNull(),
+    sourceProposalId: int("sourceProposalId").references(() => customerBotLearningProposals.id),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("bot_test_case_store_status_idx").on(table.storeId, table.status, table.updatedAt)],
+);
+
 export type CustomerProfile = typeof customerProfiles.$inferSelect;
 export type InboxConversation = typeof inboxConversations.$inferSelect;
 export type InboxMessage = typeof inboxMessages.$inferSelect;
@@ -1218,6 +1352,10 @@ export type CustomerBotRunReview = typeof customerBotRunReviews.$inferSelect;
 export type CustomerBotKnowledgeGap = typeof customerBotKnowledgeGaps.$inferSelect;
 export type CustomerBotOrderDraft = typeof customerBotOrderDrafts.$inferSelect;
 export type CustomerBotTrainingAsset = typeof customerBotTrainingAssets.$inferSelect;
+export type CustomerBotPlaygroundSession = typeof customerBotPlaygroundSessions.$inferSelect;
+export type CustomerBotPlaygroundMessage = typeof customerBotPlaygroundMessages.$inferSelect;
+export type CustomerBotLearningProposal = typeof customerBotLearningProposals.$inferSelect;
+export type CustomerBotCommandRequest = typeof customerBotCommandRequests.$inferSelect;
 
 /** Customer request created from the public store or future staff/WhatsApp channels. */
 export const orders = mysqlTable(

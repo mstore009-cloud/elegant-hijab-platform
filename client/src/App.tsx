@@ -16,6 +16,11 @@ import OneDriveSettings from "./pages/OneDriveSettings";
 import CRM from "./pages/CRM";
 import Inbox from "./pages/Inbox";
 import CustomerBot from "./pages/CustomerBot";
+import CustomerBotPlayground from "./pages/CustomerBotPlayground";
+import CustomerBotCommandAssistant from "./pages/CustomerBotCommandAssistant";
+import CustomerBotLearning from "./pages/CustomerBotLearning";
+import CustomerBotTesting from "./pages/CustomerBotTesting";
+import CustomerBotSettings from "./pages/CustomerBotSettings";
 import Marketing from "./pages/Marketing";
 import Analytics from "./pages/Analytics";
 import Loyalty from "./pages/Loyalty";
@@ -44,6 +49,11 @@ function Router() {
       <Route path={"/crm"} component={CRM} />
       <Route path={"/loyalty"} component={Loyalty} />
       <Route path={"/inbox"} component={Inbox} />
+      <Route path={"/customer-bot/playground"} component={CustomerBotPlayground} />
+      <Route path={"/customer-bot/commands"} component={CustomerBotCommandAssistant} />
+      <Route path={"/customer-bot/learning"} component={CustomerBotLearning} />
+      <Route path={"/customer-bot/testing"} component={CustomerBotTesting} />
+      <Route path={"/customer-bot/settings"} component={CustomerBotSettings} />
       <Route path={"/customer-bot"} component={CustomerBot} />
       <Route path={"/employee-bot"} component={EmployeeBot} />
       <Route path={"/settings/store"} component={StoreSettings} />

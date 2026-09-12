@@ -4,6 +4,8 @@ import {
   customerBotSettings,
   customerBotUsageCounters,
   customerBotKnowledgeArticles,
+  customerBotBehaviorCards,
+  customerBotPlaybooks,
   customerBotRunKnowledgeSources,
   channelAccounts,
   inboxConversations,
@@ -51,6 +53,8 @@ export type BotFacts = {
   conversation: { id: number; subject: string | null; channel: string; customerName: string | null; order: { orderNumber: string; status: string; statusLabel: string; total: string } | null };
   products: Array<{ productCode: string; name: string; category: string; sellingPrice: string; description: string | null; productLink: string | null; imageUrls: string[]; colors: Array<{ colorName: string; imageUrls: string[]; sizes: Array<{ size: string | null; available: boolean }> }> }>;
   knowledge: Array<{ id: number; title: string; kind: string; body: string }>;
+  behaviorCards: Array<{ id: number; title: string; kind: string; body: string; priority: number }>;
+  playbooks: Array<{ id: number; title: string; triggerJson: string; stepsJson: string; guardrailsJson: string | null }>;
   recentMessages: Array<{ direction: "inbound" | "outbound"; body: string }>;
   imageAnalyses: CustomerImageFacts[];
 };
@@ -165,12 +169,17 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
   const approvedKnowledge: Array<{ id: number; title: string; kind: string; body: string }> = knowledgeFilters.length
     ? await db.select({ id: customerBotKnowledgeArticles.id, title: customerBotKnowledgeArticles.title, kind: customerBotKnowledgeArticles.kind, body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "approved"), or(...knowledgeFilters)!)).orderBy(desc(customerBotKnowledgeArticles.updatedAt)).limit(5)
     : await db.select({ id: customerBotKnowledgeArticles.id, title: customerBotKnowledgeArticles.title, kind: customerBotKnowledgeArticles.kind, body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "approved"))).orderBy(desc(customerBotKnowledgeArticles.updatedAt)).limit(3);
-  const [mediaRows, enrichmentRows] = matchingProducts.length
+  const mediaData = matchingProducts.length
     ? await Promise.all([
       db.select({ productId: productMedia.productId, variantId: productMedia.variantId, storageKey: productMedia.storageKey, mediaType: productMedia.mediaType, sortOrder: productMedia.sortOrder }).from(productMedia).where(and(inArray(productMedia.productId, matchingProducts.map(product => product.id)), eq(productMedia.mediaType, "image"))).orderBy(productMedia.sortOrder),
       db.select({ productId: metaCatalogProductEnrichments.productId, productLink: metaCatalogProductEnrichments.productLink }).from(metaCatalogProductEnrichments).where(and(eq(metaCatalogProductEnrichments.storeId, storeId), inArray(metaCatalogProductEnrichments.productId, matchingProducts.map(product => product.id)))),
     ])
     : [[], []];
+  const [mediaRows, enrichmentRows] = mediaData;
+  const [behaviorCards, playbooks] = await Promise.all([
+    db.select({ id: customerBotBehaviorCards.id, title: customerBotBehaviorCards.title, kind: customerBotBehaviorCards.kind, body: customerBotBehaviorCards.body, priority: customerBotBehaviorCards.priority }).from(customerBotBehaviorCards).where(and(eq(customerBotBehaviorCards.storeId, storeId), eq(customerBotBehaviorCards.status, "approved"))).orderBy(customerBotBehaviorCards.priority).limit(12),
+    db.select({ id: customerBotPlaybooks.id, title: customerBotPlaybooks.title, triggerJson: customerBotPlaybooks.triggerJson, stepsJson: customerBotPlaybooks.stepsJson, guardrailsJson: customerBotPlaybooks.guardrailsJson }).from(customerBotPlaybooks).where(and(eq(customerBotPlaybooks.storeId, storeId), eq(customerBotPlaybooks.status, "approved"))).orderBy(desc(customerBotPlaybooks.updatedAt)).limit(8),
+  ]);
   const [linkedOrder] = conversation.orderId
     ? await db.select({ orderNumber: orders.orderNumber, status: orders.status, total: orders.total }).from(orders).where(and(eq(orders.storeId, storeId), eq(orders.id, conversation.orderId))).limit(1)
     : [];
@@ -181,7 +190,7 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
         colorGroups.get(variant.colorName)!.sizes.push({ size: variant.sizeLabel || null, available: variant.inventoryQuantity > 0 && variant.availability !== "out_of_stock" });
       });
       const productMediaRows = mediaRows.filter((media: any) => media.productId === product.id).slice(0, 4);
-      const imageUrls = (await Promise.all(productMediaRows.map((media: any) => absoluteMetaCatalogStorageUrl(media.storageKey)))).filter((url): url is string => Boolean(url));
+      const imageUrls = (await Promise.all(productMediaRows.map((media: any) => absoluteMetaCatalogStorageUrl(media.storageKey)))).filter((url: string | null): url is string => Boolean(url));
       for (const media of productMediaRows) {
         const variant = variants.find(candidate => candidate.id === media.variantId);
         const target = variant ? colorGroups.get(variant.colorName) : null;
@@ -195,6 +204,8 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
     conversation: { id: conversation.id, subject: conversation.subject, channel: conversation.channel, customerName: conversation.contactNameSnapshot, order: linkedOrder ? { ...linkedOrder, statusLabel: orderStatusLabels[linkedOrder.status] ?? linkedOrder.status } : null },
     products: enrichedProducts,
     knowledge: approvedKnowledge,
+    behaviorCards,
+    playbooks,
     recentMessages: messages.reverse().map((message: { direction: "inbound" | "outbound"; body: string }) => ({ direction: message.direction, body: message.body })),
     imageAnalyses,
   };

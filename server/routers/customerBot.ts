@@ -9,6 +9,7 @@ import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHisto
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 import { archiveCustomerBotOrderDraft, createFinalOrderFromCustomerBotDraft, listCustomerBotOrderDrafts } from "../customerBot/orderDrafts";
 import { createStyleCandidateFromTrainingAsset, listCustomerBotTrainingAssets, uploadCustomerBotTrainingAsset } from "../customerBot/training";
+import { createAudioCommandRequest, createLearningProposal, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus } from "../customerBot/playground";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
@@ -94,6 +95,78 @@ export const customerBotRouter = router({
     const result = await simulateCustomerBotInstruction({ ...input, storeId: store.id });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_simulation", entityId: store.id, action: "bot.instruction_simulated", summary: "تم اختبار تعليمة مشغل داخل المحاكاة دون إرسال أو إنشاء تشغيل." });
     return result;
+  }),
+  playgroundSessions: protectedProcedure.query(async ({ ctx }) => listPlaygroundSessions((await requireStore(ctx, "bot.manage")).id)),
+  playgroundSession: protectedProcedure.input(z.object({ sessionId: z.number().int().positive() })).query(async ({ ctx, input }) => getPlaygroundSession((await requireStore(ctx, "bot.manage")).id, input.sessionId)),
+  createPlaygroundSession: protectedProcedure.input(z.object({ mode: z.enum(playgroundModes), channel: z.enum(playgroundChannels), conversationId: z.number().int().positive().nullable().optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const session = await createPlaygroundSession({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_playground", entityId: session.id, action: "bot.playground_created", summary: "بدأت جلسة اختبار داخلية لا ترسل إلى Meta ولا تنشئ طلباً نهائياً." });
+    return session;
+  }),
+  sendPlaygroundMessage: protectedProcedure.input(z.object({ sessionId: z.number().int().positive(), body: z.string().trim().min(2).max(1800) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await sendPlaygroundMessage({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_playground", entityId: input.sessionId, action: "bot.playground_message_sent", summary: "شُغلت رسالة اختبار داخل المختبر من دون إرسال خارجي أو إنشاء طلب نهائي." });
+    return result;
+  }),
+  closePlaygroundSession: protectedProcedure.input(z.object({ sessionId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    await closePlaygroundSession({ storeId: store.id, sessionId: input.sessionId });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_playground", entityId: input.sessionId, action: "bot.playground_closed", summary: "أُغلقت جلسة الاختبار الداخلية." });
+  }),
+  learningProposals: protectedProcedure.input(z.object({ status: z.enum(proposalStatuses).optional() }).optional()).query(async ({ ctx, input }) => listLearningProposals((await requireStore(ctx, "bot.manage")).id, input?.status)),
+  createLearningProposal: protectedProcedure.input(z.object({ sessionId: z.number().int().positive(), sourceMessageId: z.number().int().positive(), category: z.enum(proposalCategories), editedReply: z.string().trim().min(2).max(5000), title: z.string().trim().min(3).max(240).nullable().optional(), body: z.string().trim().min(2).max(12000).nullable().optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const proposal = await createLearningProposal({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_learning_proposal", entityId: proposal.id, action: "bot.playground_learning_proposal_created", summary: `حُفظ تعديل مختبر كمسودة ${proposal.category} للمراجعة.` });
+    return proposal;
+  }),
+  setLearningProposalStatus: protectedProcedure.input(z.object({ proposalId: z.number().int().positive(), status: z.enum(["approved", "rejected", "archived"]) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, input.status === "approved" ? "bot.knowledge.approve" : "bot.manage");
+    const result = await setLearningProposalStatus({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_learning_proposal", entityId: input.proposalId, action: `bot.learning_proposal_${input.status}`, summary: `تغيرت حالة اقتراح التعلم إلى ${input.status}.` });
+    return result;
+  }),
+  behaviorCards: protectedProcedure.query(async ({ ctx }) => listBehaviorCards((await requireStore(ctx, "bot.manage")).id)),
+  playbooks: protectedProcedure.query(async ({ ctx }) => listPlaybooks((await requireStore(ctx, "bot.manage")).id)),
+  testCases: protectedProcedure.query(async ({ ctx }) => listTestCases((await requireStore(ctx, "bot.manage")).id)),
+  setBehaviorCardStatus: protectedProcedure.input(z.object({ cardId: z.number().int().positive(), status: z.enum(["approved", "archived"]) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.knowledge.approve");
+    const card = await setBehaviorCardStatus({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_behavior_card", entityId: card.id, action: `bot.behavior_card_${input.status}`, summary: `تغيرت حالة بطاقة السلوك إلى ${input.status}.` });
+    return card;
+  }),
+  setPlaybookStatus: protectedProcedure.input(z.object({ playbookId: z.number().int().positive(), status: z.enum(["approved", "archived"]) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.knowledge.approve");
+    const playbook = await setPlaybookStatus({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_playbook", entityId: playbook.id, action: `bot.playbook_${input.status}`, summary: `تغيرت حالة إجراء البيع إلى ${input.status}.` });
+    return playbook;
+  }),
+  setTestCaseStatus: protectedProcedure.input(z.object({ testCaseId: z.number().int().positive(), status: z.enum(["approved", "archived"]) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.knowledge.approve");
+    const testCase = await setTestCaseStatus({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_test_case", entityId: testCase.id, action: `bot.test_case_${input.status}`, summary: `تغيرت حالة اختبار البوت إلى ${input.status}.` });
+    return testCase;
+  }),
+  commandRequests: protectedProcedure.query(async ({ ctx }) => listCommandRequests((await requireStore(ctx, "bot.manage")).id)),
+  createTextCommand: protectedProcedure.input(z.object({ text: z.string().trim().min(3).max(12000) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await createTextCommandRequest({ storeId: store.id, actorUserId: ctx.user.id, text: input.text });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_command", entityId: result.command.id, action: "bot.command_interpreted", summary: "فُسّر أمر نصي إلى تغيير مقترح ينتظر تأكيد المدير." });
+    return result;
+  }),
+  createAudioCommand: protectedProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(3).max(120), base64: z.string().min(4).max(23_000_000) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await createAudioCommandRequest({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_command", entityId: result.command.id, action: "bot.voice_command_transcribed", summary: "حُوّل أمر صوتي إلى نص وتغيير مقترح؛ لم يُنفذ أي تغيير تلقائياً." });
+    return result;
+  }),
+  saveCommandAsProposal: protectedProcedure.input(z.object({ commandId: z.number().int().positive(), category: z.enum(proposalCategories), title: z.string().trim().min(3).max(240), body: z.string().trim().min(2).max(12000) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const proposal = await saveCommandAsProposal({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_learning_proposal", entityId: proposal.id, action: "bot.command_saved_as_draft", summary: "حُفظ تفسير مساعد الأوامر كمسودة تعليمية تنتظر المراجعة." });
+    return proposal;
   }),
   generateDraft: protectedProcedure.input(z.object({ conversationId: z.number().int().positive(), sourceMessageId: z.number().int().positive().optional() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "inbox.reply");
