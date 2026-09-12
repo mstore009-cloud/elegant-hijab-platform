@@ -9,7 +9,7 @@ import { buildMetaCatalogExportSnapshot, listMetaCatalogExportJobs, listMetaCata
 import { deleteMetaCatalogGroupEnrichment, getMetaCatalogEnrichmentSettings, getMetaCatalogProductEnrichment, listMetaCatalogGroupEnrichments, listMetaCatalogGroupPaths, META_CATALOG_AGE_GROUPS, META_CATALOG_AVAILABILITY, META_CATALOG_CONDITIONS, META_CATALOG_GENDERS, META_CATALOG_MEDIA_POLICIES, saveMetaCatalogEnrichmentSettings, saveMetaCatalogGroupEnrichment, saveMetaCatalogProductEnrichment } from "../integrations/meta/catalogEnrichment";
 import { prepareMetaCatalogMediaForProduct, prepareMetaCatalogMediaForStore } from "../integrations/meta/catalogMediaPreparation";
 import { describeMetaProductTaxonomy, searchMetaProductTaxonomy } from "../integrations/meta/catalogTaxonomy";
-import { getMetaCatalogSourceUpdate, listMetaCatalogSourceUpdates, markMetaCatalogSourceUpdateStatus, resolveMetaCatalogSourceUpdate } from "../integrations/meta/catalogSourceUpdates";
+import { getMetaCatalogSourceUpdate, listMetaCatalogSourceUpdates, markMetaCatalogSourceUpdateStatus } from "../integrations/meta/catalogSourceUpdates";
 import { enqueueAllActiveProductsForMetaCatalog, enqueueMetaCatalogAutoSync } from "../integrations/meta/catalogAutoSync";
 
 function requireOperationalStoreId(storeId: number | null | undefined) {
@@ -173,20 +173,6 @@ export const metaCatalogRouter = router({
       return await markMetaCatalogSourceUpdateStatus({ storeId: requireOperationalStoreId(ctx.operationalStore?.id), productId: input.productId, status: "dismissed" });
     } catch (error) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ قرار مراجعة تحديث OneDrive." });
-    }
-  }),
-  resolveSourceUpdate: protectedProcedure.input(z.object({
-    productId: z.number().int().positive(),
-    decisions: z.array(z.object({ kind: z.enum(["media_added", "media_removed", "media_changed", "metadata_changed"]), label: z.string().trim().min(1).max(1000), decision: z.enum(["source", "platform"]) })).max(100),
-  })).mutation(async ({ ctx, input }) => {
-    await assertPermission(ctx.user, "products.edit");
-    try {
-      const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
-      const result = await resolveMetaCatalogSourceUpdate({ ...input, storeId, actorUserId: ctx.user.id });
-      await enqueueMetaCatalogAutoSync({ storeId, productIds: [input.productId], requestedByUserId: ctx.user.id, sessionToken: sessionToken(ctx) });
-      return result;
-    } catch (error) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "تعذر حفظ قرار تعارض OneDrive." });
     }
   }),
   preview: protectedProcedure.input(catalogScopeInput).query(async ({ ctx, input }) => {

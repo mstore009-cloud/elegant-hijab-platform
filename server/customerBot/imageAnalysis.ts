@@ -60,23 +60,8 @@ function safeJson<T>(value: string, schema: z.ZodType<T>, errorMessage: string) 
   }
 }
 
-function compact(value: unknown, max = 500) {
-  return typeof value === "string" ? value.trim().slice(0, max) : "";
-}
-
 function compactError(error: unknown) {
   return (error instanceof Error ? error.message : "تعذر تحليل صورة الزبون.").slice(0, 500);
-}
-
-/** Product media already carries the code; this only normalizes OCR output for lookup. */
-export function normalizeProductCode(value: unknown) {
-  return compact(value, 160)
-    .toUpperCase()
-    .replace(/[‐‑‒–—−]/g, "-")
-    .replace(/[\s_]+/g, "-")
-    .replace(/[^A-Z0-9\u0600-\u06FF-]/g, "")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-|-$/g, "");
 }
 
 /** Vision models sometimes return confidence as 0..1 instead of the documented 0..100 scale. */
@@ -139,17 +124,6 @@ async function loadProductCandidates(db: any, storeId: number) {
   });
 }
 
-async function resolveProductByCode(db: any, storeId: number, detectedText: string) {
-  const normalizedCode = normalizeProductCode(detectedText);
-  if (normalizedCode.length < 2) return null;
-  const rows = await db.select({ id: products.id, productCode: products.productCode }).from(products).where(and(eq(products.storeId, storeId), eq(products.status, "active"))).limit(500);
-  const match = rows.find((row: { id: number; productCode: string }) => {
-    const productCode = normalizeProductCode(row.productCode);
-    return normalizedCode === productCode || normalizedCode.endsWith(`-${productCode}`) || normalizedCode.includes(`-${productCode}-`);
-  });
-  return match ? { productId: match.id, normalizedCode } : null;
-}
-
 async function saveAnalysisResult(db: any, input: { storeId: number; mediaId: number; sourceMessageId: number; model: string; result: z.infer<typeof analysisSchema> }) {
   const values = {
     storeId: input.storeId,
@@ -204,12 +178,6 @@ export async function analyzeCustomerMessageImage(input: { storeId: number; medi
     const savedAnalysisId = await saveAnalysisResult(db, { storeId: input.storeId, mediaId: media.id, sourceMessageId: message.id, model: analysisResponse.model || model, result });
     analysisId = savedAnalysisId;
     await db.delete(customerBotImageMatches).where(and(eq(customerBotImageMatches.storeId, input.storeId), eq(customerBotImageMatches.analysisId, savedAnalysisId)));
-    const codeMatch = await resolveProductByCode(db, input.storeId, result.detectedText);
-    if (codeMatch) {
-      await db.insert(customerBotImageMatches).values({ storeId: input.storeId, analysisId: savedAnalysisId, productId: codeMatch.productId, productMediaId: null, rank: 1, confidence: 98, matchReason: `تم تحديد المنتج مباشرة من Product Code المقروء: ${codeMatch.normalizedCode}.` });
-      return { analysisId: savedAnalysisId, status: "completed" as const, matchCount: 1, matchingMode: "product_code" as const, productCode: codeMatch.normalizedCode };
-    }
-
     if (!result.suitableForMatching || result.confidence < 60) return { analysisId: savedAnalysisId, status: "completed" as const, matchCount: 0 };
 
     const candidates = await loadProductCandidates(db, input.storeId);
@@ -235,7 +203,7 @@ export async function analyzeCustomerMessageImage(input: { storeId: number; medi
       const candidate = known.get(match.productCode)!;
       return { storeId: input.storeId, analysisId: savedAnalysisId, productId: candidate.id, productMediaId: candidate.references[0]!.mediaId, rank: index + 1, confidence: Math.round(match.confidence), matchReason: match.reason };
     }));
-    return { analysisId: savedAnalysisId, status: "completed" as const, matchCount: accepted.length, matchingMode: "visual" as const };
+    return { analysisId: savedAnalysisId, status: "completed" as const, matchCount: accepted.length };
   } catch (error) {
     const errorSummary = compactError(error);
     const [existing] = await db.select().from(customerBotImageAnalyses).where(and(eq(customerBotImageAnalyses.storeId, input.storeId), eq(customerBotImageAnalyses.mediaId, input.mediaId))).limit(1);

@@ -13,9 +13,6 @@ describe("مراجعة تحديثات OneDrive لكتالوج Meta", () => {
     expect(source).toContain("onedrive_update_pending_meta_review");
     expect(source).toContain("upsertMetaCatalogSourceUpdate");
     expect(source).toContain("clearMetaCatalogMediaCopies");
-    expect(source).toContain("onedrive_manual_edit_conflict");
-    expect(source).toContain("manual_value_preserved");
-    expect(source).toContain("protectedFields");
   });
 
   it("تتغير بصمة المصدر عند تعديل نسخة ملف OneDrive حتى لو بقي الاسم والحجم ثابتين", () => {

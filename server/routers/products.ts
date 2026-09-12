@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { activateReadyProduct, archiveProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreArchivedProduct, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, archiveProduct, addManualProductImage, addManualProductVideo, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductReviewReadiness, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreArchivedProduct, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { recordInitialProductFinancialValues } from "../financials/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
@@ -94,7 +94,9 @@ export const productsRouter = router({
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     const [productList, categoryTree] = await Promise.all([listProductsWithPrimaryOperationalMedia(storeId), listProductCategoryTree(storeId)]);
     const categoryPathById = new Map(categoryTree.map(category => [category.id, category.displayPath]));
-    return Promise.all(productList.map(async ({ product, primaryMedia, missingFields, variants }) => ({
+    return Promise.all(productList.map(async ({ product, primaryMedia, missingFields, variants }) => {
+      const readiness = await getProductReviewReadiness(product.id);
+      return ({
       ...presentProductForViewer({ ...product, category: product.categoryId ? categoryPathById.get(product.categoryId) ?? product.category : product.category }, canViewFinancials),
       updatedAt: product.updatedAt,
       lastMetaCatalogChangeAt: product.lastMetaCatalogChangeAt,
@@ -105,7 +107,10 @@ export const productsRouter = router({
       primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
       missingFields,
       variants,
-    })));
+      isReadyForActivation: readiness.ready,
+      readinessReasons: readiness.reasons,
+    });
+    }));
   }),
   categories: router({
     list: protectedProcedure.query(async ({ ctx }) => {
@@ -249,6 +254,7 @@ export const productsRouter = router({
     category: z.string().trim().max(120).optional(),
     categoryId: z.number().int().positive().optional(),
     description: z.string().trim().max(4000).optional(),
+    sizeLabels: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
     status: productStatus.default("draft"),
     sellingPrice: moneyString,
     previousPrice: moneyString.optional(),
@@ -258,7 +264,7 @@ export const productsRouter = router({
       colorName: z.string().trim().min(1).max(100),
       sizeLabel: z.string().trim().max(80).optional(),
       inventoryQuantity: z.number().int().min(0).max(100000),
-    })).min(1).max(250),
+    })).min(0).max(250),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
@@ -296,7 +302,6 @@ export const productsRouter = router({
     previousPrice: moneyString.nullable().optional(),
     sizeLabels: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
     categoryId: z.number().int().positive().nullable().optional(),
-    status: z.enum(["draft", "needs_review", "ready", "archived"]).optional(),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     const { product: currentProduct } = await requireProductInOperationalStore(ctx, input.productId);
@@ -319,6 +324,19 @@ export const productsRouter = router({
     const result = await activateReadyProduct({ productId: input.productId, actorUserId: ctx.user.id });
     await queueProductMetaSync(ctx, input.productId);
     return result;
+  }),
+  activateMany: protectedProcedure.input(z.object({ productIds: z.array(z.number().int().positive()).min(1).max(100) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const productIds = Array.from(new Set(input.productIds));
+    const results = await Promise.allSettled(productIds.map(async productId => {
+      await requireProductInOperationalStore(ctx, productId);
+      const result = await activateReadyProduct({ productId, actorUserId: ctx.user.id });
+      await queueProductMetaSync(ctx, productId);
+      return { productId, result };
+    }));
+    const activatedProductIds = results.flatMap(result => result.status === "fulfilled" ? [result.value.productId] : []);
+    const skipped = results.flatMap((result, index) => result.status === "rejected" ? [{ productId: productIds[index], reason: result.reason instanceof Error ? result.reason.message : "تعذر اعتماد المنتج." }] : []);
+    return { activatedProductIds, skipped };
   }),
   archive: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
@@ -473,6 +491,18 @@ export const productsRouter = router({
           ? { status: "analysis_failed" as const, message: colorAnalysisError }
           : { status: "review_pending" as const },
     };
+  }),
+  uploadManualMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive(), fileName: z.string().trim().min(1).max(255), mimeType: z.string().regex(/^(image\/(jpeg|png|webp)|video\/(mp4|webm|quicktime))$/), base64Data: z.string().min(1) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    await requireProductInOperationalStore(ctx, input.productId);
+    const bytes = Buffer.from(input.base64Data, "base64");
+    if (bytes.length === 0 || bytes.length > 100 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "حجم الوسيط يجب أن يكون بين 1 بايت و100 ميغابايت." });
+    if (input.mimeType.startsWith("video/")) { const uploaded = await addManualProductVideo({ productId: input.productId, fileName: input.fileName, mimeType: input.mimeType, bytes, actorUserId: ctx.user.id }); await queueProductMetaSync(ctx, input.productId, { changeType: "image", isInternalOnly: false }); return { ...uploaded, mediaType: "video" as const }; }
+    const uploaded = await addManualProductImage({ productId: input.productId, fileName: input.fileName, bytes, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId, { changeType: "image", isInternalOnly: false });
+    let colorAnalysis: Awaited<ReturnType<typeof generateAutomaticColorSuggestion>> = null;
+    try { colorAnalysis = await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: ctx.user.id, source: "products_ui", mediaIds: [uploaded.mediaId] }); } catch { /* تظهر الصورة للمراجعة اليدوية إذا تعذر التحليل */ }
+    return { ...uploaded, mediaType: "image" as const, colorAnalysis: colorAnalysis ? { status: "suggestion_ready" as const, operationId: colorAnalysis.operationId } : { status: "review_pending" as const } };
   }),
   detachMedia: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),
