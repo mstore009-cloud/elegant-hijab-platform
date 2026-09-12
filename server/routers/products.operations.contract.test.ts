@@ -42,5 +42,8 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(routerSource).toContain("!media.variantId && !media.colorVerified");
     expect(dbSource).toContain("colorName: productVariants.colorName");
     expect(dbSource).toContain("sizeLabel: productVariants.sizeLabel");
+    expect(dbSource).toContain("collapseProductVariantsToColors");
+    expect(dbSource).toContain('action: "sizes_cleared"');
+    expect(dbSource).toContain('const hasSizes = (input.sizeLabels ?? []).some(size => size.trim().length > 0)');
   });
 });

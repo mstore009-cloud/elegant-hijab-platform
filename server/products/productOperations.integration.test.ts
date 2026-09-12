@@ -194,6 +194,38 @@ describe("عمليات المنتج الموحدة", () => {
     }
   }, 15_000);
 
+  it("يحول المنتج عند إزالة القياسات إلى متغير لون واحد لكل لون ويجمع مخزونه", async () => {
+    const db = await getDb();
+    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار تطبيع القياسات.");
+    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
+    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار تطبيع القياسات.");
+    const storeId = await getTestStoreId();
+    const productCode = `TST-SIZE-CLEAR-${randomUUID().slice(0, 10)}`;
+    let productId: number | null = null;
+    try {
+      const created = await db.insert(products).values({ storeId, productCode, name: "منتج بلا قياسات", category: "اختبار", description: "وصف", sizeLabels: JSON.stringify(["M", "L"]), status: "draft", sellingPrice: "10000.00", createdByUserId: owner.id });
+      productId = Number(created[0].insertId);
+      await db.insert(productVariants).values([
+        { productId, colorName: "أسود", sizeLabel: "M", inventoryQuantity: 2, availability: "available", sortOrder: 0 },
+        { productId, colorName: "أسود", sizeLabel: "L", inventoryQuantity: 3, availability: "available", sortOrder: 1 },
+        { productId, colorName: "بيج", sizeLabel: "M", inventoryQuantity: 0, availability: "out_of_stock", sortOrder: 2 },
+      ]);
+      await updateProductDetails({ productId, sizeLabels: [], actorUserId: owner.id, source: "products_ui" });
+      const [updated] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      const variants = await db.select().from(productVariants).where(eq(productVariants.productId, productId));
+      expect(updated?.sizeLabels).toBeNull();
+      expect(variants).toHaveLength(2);
+      expect(variants.find(variant => variant.colorName === "أسود")).toMatchObject({ sizeLabel: "", inventoryQuantity: 5, availability: "available" });
+      expect(variants.find(variant => variant.colorName === "بيج")).toMatchObject({ sizeLabel: "", inventoryQuantity: 0, availability: "out_of_stock" });
+    } finally {
+      if (productId) {
+        await db.delete(productOperations).where(eq(productOperations.productId, productId));
+        await db.delete(productVariants).where(eq(productVariants.productId, productId));
+        await db.delete(products).where(eq(products.id, productId));
+      }
+    }
+  }, 15_000);
+
   it("لا يصبح المنتج جاهزًا للمراجعة قبل حسم كل الصور وحفظ كمية كل لون، ويعود للمراجعة عند إضافة صورة", async () => {
     const db = await getDb();
     if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار جاهزية المنتج.");

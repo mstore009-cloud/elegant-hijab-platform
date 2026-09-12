@@ -56,6 +56,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("{productSizes.length > 0 && <p><span className=\"text-[#74817a]\">القياسات:");
     expect(source).toContain("sizeLabels={productSizes}");
+    expect(source).toContain('sizes_cleared: "إزالة القياسات ودمج الألوان"');
     expect(source).toContain("{hasSizes ? \"إجمالي القطع\" : \"قطعة\"}");
   });
 

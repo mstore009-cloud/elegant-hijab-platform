@@ -374,8 +374,9 @@ export async function updateProductDetails(input: {
     changes.previousPrice = input.previousPrice;
   }
   if (input.sizeLabels !== undefined) {
-    patch.sizeLabels = JSON.stringify(input.sizeLabels);
-    changes.sizeLabels = input.sizeLabels;
+    const normalizedSizes = input.sizeLabels.map(size => size.trim()).filter(Boolean);
+    patch.sizeLabels = normalizedSizes.length ? JSON.stringify(normalizedSizes) : null;
+    changes.sizeLabels = normalizedSizes;
     nextMissing.delete("sizes");
   }
   if (input.status !== undefined) {
@@ -388,6 +389,7 @@ export async function updateProductDetails(input: {
     if (folderImport) await tx.update(catalogFolderImports).set({ missingFields: JSON.stringify(Array.from(nextMissing)), state: "needs_review" }).where(eq(catalogFolderImports.id, folderImport.id));
     await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: input.source, action: "details_updated", changes: JSON.stringify(changes) });
   });
+  if (input.sizeLabels !== undefined && input.sizeLabels.every(size => !size.trim())) await collapseProductVariantsToColors({ productId: input.productId, actorUserId: input.actorUserId, source: input.source });
   await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId, source: input.source });
   const [updated] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
   return { product: updated!, missingFields: Array.from(nextMissing) };
@@ -402,6 +404,33 @@ function parseProductSizeLabels(value: string | null) {
   } catch {
     return [];
   }
+}
+
+async function collapseProductVariantsToColors(input: { productId: number; actorUserId: number; source: "products_ui" | "whatsapp" }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const variants = await db.select().from(productVariants).where(eq(productVariants.productId, input.productId));
+  const byColor = new Map<string, typeof variants>();
+  for (const variant of variants) byColor.set(variant.colorName, [...(byColor.get(variant.colorName) ?? []), variant]);
+  const collapsed: Array<{ colorName: string; keptVariantId: number; removedVariantIds: number[]; inventoryQuantity: number }> = [];
+  for (const colorName of Array.from(byColor.keys())) {
+    const colorVariants = byColor.get(colorName) ?? [];
+    const kept = colorVariants.find(variant => !variant.sizeLabel.trim()) ?? colorVariants[0];
+    if (!kept) continue;
+    const removed = colorVariants.filter(variant => variant.id !== kept.id);
+    const inventoryQuantity = colorVariants.reduce((sum, variant) => sum + variant.inventoryQuantity, 0);
+    await db.transaction(async tx => {
+      if (removed.length) {
+        const removedIds = removed.map(variant => variant.id);
+        await tx.update(productMedia).set({ variantId: kept.id }).where(and(eq(productMedia.productId, input.productId), inArray(productMedia.variantId, removedIds)));
+        await tx.delete(productVariants).where(inArray(productVariants.id, removedIds));
+      }
+      await tx.update(productVariants).set({ sizeLabel: "", inventoryQuantity, availability: inventoryQuantity > 0 ? "available" : "out_of_stock" }).where(eq(productVariants.id, kept.id));
+    });
+    if (removed.length || kept.sizeLabel.trim() || kept.inventoryQuantity !== inventoryQuantity) collapsed.push({ colorName, keptVariantId: kept.id, removedVariantIds: removed.map(variant => variant.id), inventoryQuantity });
+  }
+  if (collapsed.length) await db.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: input.source, action: "sizes_cleared", changes: JSON.stringify({ collapsed }) });
+  return collapsed;
 }
 
 async function removeCatalogMissingField(productId: number, field: string) {
@@ -710,11 +739,12 @@ export async function createProduct(input: {
     createdByUserId: input.createdByUserId,
   });
   const productId = Number(result[0].insertId);
+  const hasSizes = (input.sizeLabels ?? []).some(size => size.trim().length > 0);
   if (input.variants.length > 0) {
     await db.insert(productVariants).values(input.variants.map((variant, index) => ({
       productId,
       colorName: variant.colorName,
-      sizeLabel: variant.sizeLabel ?? "",
+      sizeLabel: hasSizes ? variant.sizeLabel?.trim() ?? "" : "",
       inventoryQuantity: variant.inventoryQuantity,
       availability: (variant.inventoryQuantity > 0 ? "available" : "out_of_stock") as "available" | "out_of_stock",
       sortOrder: index,
