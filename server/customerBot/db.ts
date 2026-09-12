@@ -17,7 +17,7 @@ import { getDb } from "../db";
 import type { InvokeParams, InvokeResult } from "../_core/llm";
 import { notifyEmployee, notifyPermissionHolders } from "../notifications/db";
 import { listCustomerImageFacts, type CustomerImageFacts } from "./imageAnalysis";
-import { sendMetaCommentReply, sendMetaConversationMessage } from "../channels/metaOutbound";
+import { sendMetaCommentReply, sendMetaDirectMessage } from "../channels/metaOutbound";
 import { createAiTaskInvoker } from "../ai/taskInvoker";
 
 export const botModes = ["draft_only", "auto_reply"] as const;
@@ -257,7 +257,13 @@ async function maybeSendAutomaticReply(input: { db: any; settings: any; storeId:
       if (!providerAccountId) throw new Error("لا يوجد أصل Meta محدد لرد التعليق.");
       await sendMetaCommentReply({ storeId: input.storeId, channel: input.conversation.channel, providerAccountId, commentExternalId: commentTarget.commentExternalId, body: input.body, idempotencyKey: `bot-comment:${input.runId}`, actorUserId: input.actorUserId ?? null, botRunId: input.runId });
     } else {
-      await sendMetaConversationMessage({ storeId: input.storeId, conversationId: input.conversation.id, body: input.body, idempotencyKey: `bot:${input.runId}`, mode: "bot_guarded", actorUserId: input.actorUserId ?? null, botRunId: input.runId });
+      const [account] = await input.db.select({ providerAccountId: channelAccounts.providerAccountId }).from(channelAccounts).where(and(eq(channelAccounts.storeId, input.storeId), input.conversation.channelAccountId ? eq(channelAccounts.id, input.conversation.channelAccountId) : eq(channelAccounts.channel, input.conversation.channel))).limit(1);
+      const prefix = `${input.conversation.channel}:`;
+      const recipientExternalId = typeof input.conversation.externalConversationId === "string" && input.conversation.externalConversationId.startsWith(prefix)
+        ? input.conversation.externalConversationId.slice(prefix.length)
+        : "";
+      if (!account?.providerAccountId || !recipientExternalId) throw new Error("لا يمكن تحديد مستلم القناة الأصلية لرد Bot.");
+      await sendMetaDirectMessage({ storeId: input.storeId, channel: input.conversation.channel, providerAccountId: account.providerAccountId, recipientExternalId, body: input.body, sourceExternalMessageId: input.sourceMessage.externalMessageId ?? null, replyWindowOpenedAt: input.sourceMessage.occurredAt ?? null, idempotencyKey: `bot:${input.runId}`, mode: "bot_guarded", botRunId: input.runId, projectionConversationId: input.conversation.id });
     }
     await input.db.update(customerBotRuns).set({ status: "replied" }).where(and(eq(customerBotRuns.id, input.runId), eq(customerBotRuns.storeId, input.storeId)));
     return { status: "replied" as const, sent: true as const };
@@ -316,7 +322,7 @@ export async function simulateCustomerBotInstruction(input: { storeId: number; i
   return { model: settings.fastModel, instruction, sampleMessage, reply: parsed.reply, confidence: parsed.confidence, needsEscalation: parsed.needsEscalation, escalationReason: parsed.escalationReason, externalSend: false as const, persistedRun: false as const, usage: result.usage ?? null };
 }
 
-export async function generateCustomerBotDraft(input: { storeId: number; actorUserId?: number | null; conversationId: number; sourceMessageId?: number; llm?: LlmInvoker }) {
+export async function generateCustomerBotDraft(input: { storeId: number; actorUserId?: number | null; conversationId: number; sourceMessageId?: number; llm?: LlmInvoker; channelContext?: { body?: string | null; externalMessageId?: string | null; occurredAt?: Date } }) {
   const db = await requireDb();
   const settings = await getSettings(db, input.storeId);
   if (!settings.enabled) throw new Error("بوت العملاء غير مفعّل. فعّله أولاً من مركز البوت.");
@@ -325,9 +331,10 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
     ? await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.sourceMessageId), eq(inboxMessages.conversationId, conversation.id), eq(inboxMessages.direction, "inbound"))).limit(1)
     : await db.select().from(inboxMessages).where(and(eq(inboxMessages.conversationId, conversation.id), eq(inboxMessages.direction, "inbound"))).orderBy(desc(inboxMessages.occurredAt), desc(inboxMessages.id)).limit(1);
   if (!sourceMessage) throw new Error("لا توجد رسالة عميل واردة صالحة لإنشاء مسودة رد.");
-  if (sourceMessage.source === "historical_sync") throw new Error("لا يشغّل Bot-H3 الرسائل التاريخية؛ استخدمي مسار المرشحات والمراجعة أولاً.");
-  const facts = await collectFacts(db, input.storeId, conversation.id, sourceMessage.body, sourceMessage.id);
-  const immediateHandoff = humanHandoffTerms.test(sourceMessage.body);
+  const channelSourceMessage = input.channelContext ? { ...sourceMessage, body: input.channelContext.body ?? sourceMessage.body ?? "", externalMessageId: input.channelContext.externalMessageId ?? sourceMessage.externalMessageId, occurredAt: input.channelContext.occurredAt ?? sourceMessage.occurredAt } : sourceMessage;
+  if (channelSourceMessage.source === "historical_sync") throw new Error("لا يشغّل Bot-H3 الرسائل التاريخية؛ استخدمي مسار المرشحات والمراجعة أولاً.");
+  const facts = await collectFacts(db, input.storeId, conversation.id, channelSourceMessage.body, channelSourceMessage.id);
+  const immediateHandoff = humanHandoffTerms.test(channelSourceMessage.body);
   const imageReason = imageHandoffReason(facts.imageAnalyses);
   if (immediateHandoff || imageReason) {
     const reason = immediateHandoff ? "طلب حساس يحتاج موظفاً مخولاً" : imageReason!;
@@ -347,16 +354,16 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
   }
   try {
     if (!preEscalationReason) {
-              const fastResult = await fastLlm({ model: settings.fastModel, messages: [{ role: "system", content: assistantPrompt({ facts, incoming: sourceMessage.body, stronger: false, dialect: settings.dialect, tone: settings.tone, operatorInstructions: settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
+      const fastResult = await fastLlm({ model: settings.fastModel, messages: [{ role: "system", content: assistantPrompt({ facts, incoming: channelSourceMessage.body, stronger: false, dialect: settings.dialect, tone: settings.tone, operatorInstructions: settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
       const parsed = parseStructuredReply(responseText(fastResult));
       if (!parsed.needsEscalation && parsed.confidence >= settings.minimumConfidence && parsed.reply) {
         const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "fast", status: "draft", model: fastResult.model || settings.fastModel, confidence: parsed.confidence, facts, replyDraft: parsed.reply, usage: fastResult.usage });
         const delivery = await maybeSendAutomaticReply({ db, settings, storeId: input.storeId, conversation, sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, actorUserId: input.actorUserId, route: "fast" });
         return { runId, route: "fast" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? null };
       }
-      return generateEscalatedDraft({ db, settings, facts, sourceMessage, conversationId: conversation.id, storeId: input.storeId, llm: escalationLlm, reason: parsed.escalationReason || "ثقة المسار السريع أقل من الحد" });
+        return generateEscalatedDraft({ db, settings, facts, sourceMessage: channelSourceMessage, conversationId: conversation.id, storeId: input.storeId, llm: escalationLlm, reason: parsed.escalationReason || "ثقة المسار السريع أقل من الحد" });
     }
-    return generateEscalatedDraft({ db, settings, facts, sourceMessage, conversationId: conversation.id, storeId: input.storeId, llm: escalationLlm, reason: preEscalationReason });
+    return generateEscalatedDraft({ db, settings, facts, sourceMessage: channelSourceMessage, conversationId: conversation.id, storeId: input.storeId, llm: escalationLlm, reason: preEscalationReason });
   } catch (error) {
     const message = error instanceof Error ? error.message : "تعذر إنشاء المسودة.";
     const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: preEscalationReason ? "escalated" : "fast", status: "failed", model: preEscalationReason ? settings.escalationModel : settings.fastModel, facts, errorSummary: message.slice(0, 500) });

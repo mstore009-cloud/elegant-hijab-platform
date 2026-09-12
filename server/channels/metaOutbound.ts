@@ -156,3 +156,66 @@ export async function sendMetaConversationMessage(input: { storeId: number; conv
     throw new Error(summary);
   }
 }
+
+/** Sends directly to Meta from a normalized channel event. Inbox projection is optional and best-effort. */
+export async function sendMetaDirectMessage(input: {
+  storeId: number;
+  channel: SupportedChannel;
+  providerAccountId: string;
+  recipientExternalId: string;
+  body: string;
+  sourceExternalMessageId?: string | null;
+  replyWindowOpenedAt?: Date | null;
+  idempotencyKey: string;
+  mode: Extract<SendMode, "bot_guarded">;
+  botRunId?: number | null;
+  projectionConversationId?: number | null;
+}, transport: MetaSendTransport = defaultTransport) {
+  const db = await getDb(); if (!db) throw new Error("قاعدة البيانات غير متاحة.");
+  const body = input.body.trim(); if (!body || body.length > 4000) throw new Error("نص الرسالة مطلوب وبحد أقصى 4000 حرف.");
+  const bodyBytes = Buffer.byteLength(body, "utf8");
+  if (input.channel === "instagram" && bodyBytes > 1000) throw new Error("رسالة Instagram تتجاوز حد 1000 بايت المسموح به.");
+  if (input.channel === "messenger" && bodyBytes > 2000) throw new Error("رسالة Messenger تتجاوز الحد الآمن المعتمد 2000 بايت.");
+  if (!input.replyWindowOpenedAt || input.replyWindowOpenedAt.getTime() < Date.now() - 24 * 60 * 60 * 1000) throw new Error("انتهت نافذة المحادثة الحرة البالغة 24 ساعة.");
+  const [account] = await db.select().from(channelAccounts).where(and(eq(channelAccounts.storeId, input.storeId), eq(channelAccounts.channel, input.channel), eq(channelAccounts.providerAccountId, input.providerAccountId))).limit(1);
+  if (!account || !["testing", "connected"].includes(account.connectionStatus)) throw new Error("القناة غير جاهزة للإرسال المباشر.");
+  const existing = await db.select().from(metaOutboundMessages).where(and(eq(metaOutboundMessages.storeId, input.storeId), eq(metaOutboundMessages.idempotencyKey, input.idempotencyKey))).limit(1);
+  if (existing[0]) return { outboxId: existing[0].id, status: existing[0].status, externalMessageId: existing[0].externalMessageId, duplicate: true as const, inboxMessageId: existing[0].inboxMessageId ?? null, projectionError: null };
+  let outboxId: number;
+  try {
+    const created = await db.insert(metaOutboundMessages).values({ storeId: input.storeId, channelAccountId: account.id, conversationId: input.projectionConversationId ?? null, channel: input.channel, recipientExternalId: input.recipientExternalId, idempotencyKey: input.idempotencyKey, mode: input.mode, body, botRunId: input.botRunId ?? null });
+    outboxId = Number(created[0].insertId);
+  } catch (error) {
+    if (!duplicateError(error)) throw error;
+    const [duplicate] = await db.select().from(metaOutboundMessages).where(and(eq(metaOutboundMessages.storeId, input.storeId), eq(metaOutboundMessages.idempotencyKey, input.idempotencyKey))).limit(1);
+    if (!duplicate) throw error;
+    return { outboxId: duplicate.id, status: duplicate.status, externalMessageId: duplicate.externalMessageId, duplicate: true as const, inboxMessageId: duplicate.inboxMessageId ?? null, projectionError: null };
+  }
+  await db.update(metaOutboundMessages).set({ status: "sending", errorCode: null, errorSummary: null }).where(eq(metaOutboundMessages.id, outboxId));
+  try {
+    const credential = await loadMetaCredential(input.storeId, account);
+    const delivered = await transport({ channel: input.channel, providerAccountId: credential.providerAccountId, recipientExternalId: input.recipientExternalId, body, accessToken: credential.accessToken });
+    await db.update(metaOutboundMessages).set({ status: "sent", externalMessageId: delivered.externalMessageId, sentAt: new Date() }).where(eq(metaOutboundMessages.id, outboxId));
+    await db.update(channelAccounts).set({ lastError: null }).where(eq(channelAccounts.id, account.id));
+    let inboxMessageId: number | null = null;
+    let projectionError: string | null = null;
+    if (input.projectionConversationId) {
+      try {
+        const createdMessage = await db.insert(inboxMessages).values({ conversationId: input.projectionConversationId, direction: "outbound", body, externalMessageId: delivered.externalMessageId, source: "outbound", deliveryStatus: "sent", deliveredAt: null });
+        inboxMessageId = Number(createdMessage[0].insertId);
+        await db.update(metaOutboundMessages).set({ inboxMessageId }).where(eq(metaOutboundMessages.id, outboxId));
+        await db.update(inboxConversations).set({ lastMessageAt: new Date(), status: "waiting_customer" }).where(eq(inboxConversations.id, input.projectionConversationId));
+        await db.insert(inboxConversationEvents).values({ storeId: input.storeId, conversationId: input.projectionConversationId, type: "message_recorded", toValue: "meta_direct_bot" });
+      } catch (projectionFailure) {
+        projectionError = (projectionFailure instanceof Error ? projectionFailure.message : "تعذر إسقاط الرد في Inbox.").slice(0, 500);
+      }
+    }
+    return { outboxId, status: "sent" as const, externalMessageId: delivered.externalMessageId, duplicate: false as const, inboxMessageId, projectionError };
+  } catch (error) {
+    const code = String((error as any)?.code ?? "SEND_FAILED").slice(0, 120);
+    const summary = (error instanceof Error ? error.message : "تعذر إرسال رسالة Meta.").slice(0, 500);
+    await db.update(metaOutboundMessages).set({ status: "failed", errorCode: code, errorSummary: summary }).where(eq(metaOutboundMessages.id, outboxId));
+    await db.update(channelAccounts).set({ lastError: summary }).where(eq(channelAccounts.id, account.id));
+    throw new Error(summary);
+  }
+}

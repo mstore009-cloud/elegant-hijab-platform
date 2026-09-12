@@ -4,7 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import { channelAccounts, customerBotRuns, inboxConversationEvents, inboxConversations, inboxMessages, metaAssets, metaConnectionCapabilities, metaConnections, metaOutboundMessages, stores, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { configureChannelAccount } from "./db";
-import { sendMetaCommentReply, sendMetaConversationMessage } from "./metaOutbound";
+import { sendMetaCommentReply, sendMetaConversationMessage, sendMetaDirectMessage } from "./metaOutbound";
 import { selectMetaAsset, upsertDiscoveredMetaAssets, upsertMetaConnection } from "../integrations/meta/db";
 
 const cleanupStoreIds: number[] = [];
@@ -83,6 +83,19 @@ describe("Meta manual outbound delivery", () => {
     const duplicate = await sendMetaConversationMessage({ storeId, conversationId, body: "أهلاً، أساعدك بالمعلومات المتاحة.", idempotencyKey, mode: "bot_guarded", actorUserId: owner.id, botRunId }, transport as any);
     expect(duplicate.duplicate).toBe(true);
     expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it("يرسل Bot مباشرة إلى Meta ثم يسقط الرد في Inbox دون جعل Inbox نقطة الإرسال", async () => {
+    const { db, owner, storeId } = await setup();
+    const created = await db.insert(inboxConversations).values({ storeId, channel: "messenger", externalConversationId: "messenger:recipient-direct", contactNameSnapshot: "عميلة مباشرة", status: "open", createdByUserId: owner.id });
+    const conversationId = Number(created[0].insertId);
+    await db.insert(inboxMessages).values({ conversationId, direction: "inbound", body: "رسالة وصلت من Meta", externalMessageId: "inbound-direct" });
+    const transport = vi.fn(async () => ({ externalMessageId: "external-direct" }));
+    const sent = await sendMetaDirectMessage({ storeId, channel: "messenger", providerAccountId: `page-send-${storeId}`, recipientExternalId: "recipient-direct", body: "رد مباشر من Bot", replyWindowOpenedAt: new Date(), idempotencyKey: `direct:${randomUUID()}`, mode: "bot_guarded", projectionConversationId: conversationId }, transport as any);
+    expect(sent).toMatchObject({ status: "sent", duplicate: false, externalMessageId: "external-direct", projectionError: null });
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({ channel: "messenger", recipientExternalId: "recipient-direct" }));
+    const [projected] = await db.select().from(inboxMessages).where(eq(inboxMessages.externalMessageId, "external-direct"));
+    expect(projected).toMatchObject({ conversationId, direction: "outbound", body: "رد مباشر من Bot" });
   });
 
   it("يرسل ردود التعليقات عبر comment_guarded لكل من Facebook وInstagram ويمنع التكرار", async () => {

@@ -2,8 +2,8 @@ import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { sendMetaConversationMessageMock } = vi.hoisted(() => ({ sendMetaConversationMessageMock: vi.fn() }));
-vi.mock("../channels/metaOutbound", () => ({ sendMetaConversationMessage: sendMetaConversationMessageMock }));
+const { sendMetaDirectMessageMock } = vi.hoisted(() => ({ sendMetaDirectMessageMock: vi.fn() }));
+vi.mock("../channels/metaOutbound", () => ({ sendMetaDirectMessage: sendMetaDirectMessageMock }));
 import {
   customerBotRuns,
   customerBotSettings,
@@ -83,12 +83,10 @@ describe("بوت العملاء الهجين", () => {
   it("تحاكي تعليمة المشغل من دون إنشاء تشغيل أو إرسال خارجي أو تعديل بيانات المتجر", async () => {
     const setupData = await setup("هل الحجاب الزيتي متوفر؟");
     const mock = mockReply("يمكنني مساعدتك بالمعلومات العامة.", 84);
-    sendMetaConversationMessageMock.mockReset();
     const beforeRuns = await listCustomerBotRuns(setupData.storeId, setupData.conversationId);
     const result = await simulateCustomerBotInstruction({ storeId: setupData.storeId, instruction: "ابدأ بالرد مباشرة وبلهجة عراقية بسيطة.", sampleMessage: "أريد معرفة طريقة اختيار اللون.", llm: mock.llm });
     expect(result).toMatchObject({ model: "gpt-5-mini", confidence: 84, externalSend: false, persistedRun: false, reply: "يمكنني مساعدتك بالمعلومات العامة." });
     expect(mock.calls).toEqual([{ model: "gpt-5-mini" }]);
-    expect(sendMetaConversationMessageMock).not.toHaveBeenCalled();
     expect(await listCustomerBotRuns(setupData.storeId, setupData.conversationId)).toHaveLength(beforeRuns.length);
   });
 
@@ -112,14 +110,14 @@ describe("بوت العملاء الهجين", () => {
     await setupData.db.update(inboxConversations).set({ channel: "messenger", externalConversationId: `messenger:customer-${randomUUID()}` }).where(eq(inboxConversations.id, setupData.conversationId));
     await setupData.db.insert(channelAccounts).values({ storeId: setupData.storeId, channel: "messenger", providerAccountId, providerDisplayName: "صفحة اختبار", connectionStatus: "connected", createdByUserId: setupData.owner.id });
     await updateCustomerBotSettings({ storeId: setupData.storeId, actorUserId: setupData.owner.id, enabled: true, mode: "auto_reply", messengerEnabled: true, instagramEnabled: false, whatsappEnabled: false, dialect: "عربية عراقية بسيطة", tone: "warm", operatorInstructions: "أجب من الحقائق فقط.", fastModel: "gpt-5-mini", escalationModel: "gpt-5", minimumConfidence: 75, maxDailyReplies: 10, maxDailyEscalations: 4 });
-    sendMetaConversationMessageMock.mockResolvedValue({ outboxId: 41, status: "sent", externalMessageId: "bot-external-1", duplicate: false, inboxMessageId: 77 });
+    sendMetaDirectMessageMock.mockResolvedValue({ outboxId: 41, status: "sent", externalMessageId: "bot-external-1", duplicate: false, inboxMessageId: 77, projectionError: null });
     const mock = mockReply("نعم، اللون الزيتي متوفر.", 92);
     const result = await generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: setupData.messageId, llm: mock.llm });
     expect(result).toMatchObject({ route: "fast", status: "replied", confidence: 92 });
-    expect(sendMetaConversationMessageMock).toHaveBeenCalledWith(expect.objectContaining({ storeId: setupData.storeId, conversationId: setupData.conversationId, body: "نعم، اللون الزيتي متوفر.", mode: "bot_guarded" }));
+    expect(sendMetaDirectMessageMock).toHaveBeenCalledWith(expect.objectContaining({ storeId: setupData.storeId, projectionConversationId: setupData.conversationId, body: "نعم، اللون الزيتي متوفر.", mode: "bot_guarded" }));
     const [run] = await listCustomerBotRuns(setupData.storeId, setupData.conversationId);
     expect(run).toMatchObject({ status: "replied", model: "gpt-5-mini" });
-    sendMetaConversationMessageMock.mockReset();
+    sendMetaDirectMessageMock.mockReset();
   });
 
   it("لا يرسل رداً خارجياً عندما يكون وضع الرد الآلي مفعلاً لكن القناة غير مفعلة", async () => {

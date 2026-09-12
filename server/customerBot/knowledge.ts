@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
-import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, inboxConversations, inboxMessages } from "../../drizzle/schema";
+import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, inboxConversations, inboxMessages, metaOutboundMessages, stores } from "../../drizzle/schema";
 import { getDb } from "../db";
 
 export const knowledgeKinds = ["faq", "policy", "style_guidance", "product_guidance"] as const;
@@ -112,6 +112,28 @@ export async function extractHistoricalKnowledgeCandidates(input: { storeId: num
     createdCandidates += 1;
   }
   return { scannedMessages: messages.length, candidatePairs: pairs.length, createdCandidates, skippedExisting };
+}
+
+/** Captures a native-channel employee echo as a reviewable draft; it never teaches the bot automatically. */
+export async function captureNativeChannelReply(input: { storeId: number; conversationId: number; messageId: number; channel: "whatsapp" | "instagram" | "messenger" }) {
+  const db = await requireDb();
+  const [outbound] = await db.select({ externalMessageId: inboxMessages.externalMessageId, body: inboxMessages.body }).from(inboxMessages).where(and(eq(inboxMessages.id, input.messageId), eq(inboxMessages.conversationId, input.conversationId), eq(inboxMessages.direction, "outbound"))).limit(1);
+  if (!outbound) return { created: false as const, reason: "outbound_not_found" as const };
+  if (outbound.externalMessageId) {
+    const [known] = await db.select({ id: metaOutboundMessages.id }).from(metaOutboundMessages).where(and(eq(metaOutboundMessages.storeId, input.storeId), eq(metaOutboundMessages.externalMessageId, outbound.externalMessageId))).limit(1);
+    if (known) return { created: false as const, reason: "platform_sent_message" as const };
+  }
+  const [question] = await db.select({ body: inboxMessages.body }).from(inboxMessages).where(and(eq(inboxMessages.conversationId, input.conversationId), eq(inboxMessages.direction, "inbound"), sql`${inboxMessages.id} < ${input.messageId}`)).orderBy(desc(inboxMessages.occurredAt), desc(inboxMessages.id)).limit(1);
+  const questionText = redactHistoricalText(question?.body ?? "");
+  const answerText = redactHistoricalText(outbound.body ?? "");
+  if (questionText.length < 3 || answerText.length < 3) return { created: false as const, reason: "insufficient_text" as const };
+  const body = `رسالة عميل من ${input.channel}:\n${questionText}\n\nرد موظف من التطبيق الأصلي:\n${answerText}\n\nملاحظة مراجعة: هذا مرشح أسلوبي مستخرج من رد موظف، ولا يستخدمه Bot-H3 قبل اعتماده يدويًا.`;
+  const [existing] = await db.select({ id: customerBotKnowledgeArticles.id }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, input.storeId), eq(customerBotKnowledgeArticles.source, "historical_candidate"), eq(customerBotKnowledgeArticles.body, body))).limit(1);
+  if (existing) return { created: false as const, reason: "duplicate" as const, articleId: existing.id };
+  const [store] = await db.select({ primaryOwnerUserId: stores.primaryOwnerUserId }).from(stores).where(eq(stores.id, input.storeId)).limit(1);
+  if (!store?.primaryOwnerUserId) return { created: false as const, reason: "no_store_owner" as const };
+  const result = await db.insert(customerBotKnowledgeArticles).values({ storeId: input.storeId, title: `مرشح رد موظف أصلي — ${input.channel}`, kind: "style_guidance", body, status: "draft", source: "historical_candidate", createdByUserId: store.primaryOwnerUserId });
+  return { created: true as const, articleId: Number(result[0].insertId), reason: "created" as const };
 }
 
 export async function listCustomerBotReviewQueue(storeId: number) {

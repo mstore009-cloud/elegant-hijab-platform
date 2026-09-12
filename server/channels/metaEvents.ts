@@ -6,6 +6,7 @@ import { ingestMetaLeadCapture } from "../crm/db";
 import { getMetaAssetAccessToken } from "../integrations/meta/db";
 import { getMetaRuntimeSettings } from "../integrations/meta/platformSettings";
 import { generateCustomerBotDraft } from "../customerBot/db";
+import { captureNativeChannelReply } from "../customerBot/knowledge";
 import { applyExternalDeliveryStatus, ingestExternalInboundMessage, type ExternalChannel, type ExternalMediaReference, type NormalizedInboundMessage, type NormalizedMessageMetadata } from "./db";
 import { storeInboundImageFromProvider } from "./media";
 
@@ -221,7 +222,10 @@ async function processReservedEvent(row: { id: number; storeId: number; metaAsse
       }
       if (event.source === "live_webhook" && event.direction !== "outbound" && ingested.accepted && !ingested.duplicate && ingested.storeId && ingested.conversationId && ingested.messageId) {
         if (event.senderExternalId) void hydrateMetaContactProfile({ storeId: ingested.storeId, channel: event.channel, providerAccountId: event.providerAccountId, externalProfileId: event.senderExternalId, conversationId: ingested.conversationId }).catch(error => console.warn("[Meta] تعذر إثراء ملف جهة الاتصال:", error));
-        void generateCustomerBotDraft({ storeId: ingested.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد الرسالة الواردة:", error));
+        void generateCustomerBotDraft({ storeId: ingested.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId, channelContext: { body: event.body, externalMessageId: event.externalMessageId, occurredAt: event.occurredAt } }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد الرسالة الواردة:", error));
+      }
+      if (event.source === "live_webhook" && event.direction === "outbound" && ingested.accepted && !ingested.duplicate && ingested.storeId && ingested.conversationId && ingested.messageId) {
+        await captureNativeChannelReply({ storeId: ingested.storeId, conversationId: ingested.conversationId, messageId: ingested.messageId, channel: event.channel });
       }
     } else if (event.kind === "reaction") {
       await ingestMetaReaction(db, row.storeId, event);
