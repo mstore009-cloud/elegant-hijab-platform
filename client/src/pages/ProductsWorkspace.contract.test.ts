@@ -51,6 +51,8 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("اعتماد المنتج");
     expect(source).toContain("جارٍ الاعتماد...");
     expect(source).toContain("activateProduct.mutate({ productId: detail.product.id })");
+    expect(source).toContain("activateProduct.mutate({ productId: product.id })");
+    expect(source).toContain("left-24 top-4 z-10");
     expect(source).toContain("productCompletion(product)");
     expect(source).toContain("اكتمال المنتج");
     expect(source).toContain("متغير");
