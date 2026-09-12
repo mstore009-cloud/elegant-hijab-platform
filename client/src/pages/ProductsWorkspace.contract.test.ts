@@ -39,4 +39,15 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("inventoryDrafts[variant.id]");
     expect(source).toContain("inventoryStatusLabel");
   });
+
+  it("يعرض الأرشيف ومؤشر اكتمال وملخص المتغيرات", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain('surface === "archived"');
+    expect(source).toContain(">الأرشيف ");
+    expect(source).toContain("trpc.products.archive.useMutation");
+    expect(source).toContain("trpc.products.restoreFromArchive.useMutation");
+    expect(source).toContain("productCompletion(product)");
+    expect(source).toContain("اكتمال المنتج");
+    expect(source).toContain("متغير");
+  });
 });
