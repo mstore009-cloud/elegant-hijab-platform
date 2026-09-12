@@ -7,7 +7,7 @@ describe("Customer Bot training center", () => {
   it("splits the crowded center into dedicated operational pages", () => {
     const source = read("CustomerBot.tsx");
     expect(source).toContain("مختبر المحادثة");
-    expect(source).toContain("مساعد الأوامر");
+    expect(source).toContain("مساعد التعليم");
     expect(source).toContain("المعرفة والتعلم");
     expect(source).toContain("الاختبارات والمسودات");
   });
@@ -33,6 +33,19 @@ describe("Customer Bot training center", () => {
     expect(source).toContain("فهم المساعد");
     expect(source).toContain("حفظ كمسودة تعليمية");
     expect(source).toContain("لا يُشغّل المساعد القنوات");
+  });
+
+  it("keeps command guidance inside the learning center with practical templates", () => {
+    const learning = read("CustomerBotLearning.tsx");
+    const nav = read("../components/customerBot/CustomerBotNav.tsx");
+    const library = read("../components/customerBot/TrainingCommandLibrary.tsx");
+    expect(learning).toContain("مساعد التعليم");
+    expect(learning).toContain("بطاقة معرفة جديدة");
+    expect(learning).toContain("assistant");
+    expect(nav).not.toContain('path: "/customer-bot/commands"');
+    expect(library).toContain("طريقة الكلام");
+    expect(library).toContain("خطوات البيع");
+    expect(library).toContain("معلومة ناقصة");
   });
 
   it("keeps live facts separate from RAG knowledge in the learning page", () => {

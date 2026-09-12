@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CustomerBotNav, SafetyNotice } from "@/components/customerBot/CustomerBotNav";
+import TrainingCommandLibrary from "@/components/customerBot/TrainingCommandLibrary";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,7 +16,7 @@ const statusLabels: Record<string, string> = { transcribed: "بانتظار ال
 
 function parseJson(value: string | null) { try { return value ? JSON.parse(value) : null; } catch { return null; } }
 
-export default function CustomerBotCommandAssistant() {
+export default function CustomerBotCommandAssistant({ embedded = false }: { embedded?: boolean }) {
   const profile = trpc.access.myProfile.useQuery();
   const canManage = profile.data?.permissions.includes("bot.manage") ?? false;
   const commands = trpc.customerBot.commandRequests.useQuery(undefined, { enabled: canManage });
@@ -92,9 +93,10 @@ export default function CustomerBotCommandAssistant() {
   if (profile.isLoading || (canManage && commands.isLoading)) return <div className="p-8 text-sm text-muted-foreground">جارٍ تحميل مساعد الأوامر…</div>;
   if (!canManage) return <div className="p-8 text-center">لا توجد صلاحية لإدارة مساعد الأوامر.</div>;
 
-  return <main dir="rtl" className="mx-auto max-w-6xl space-y-5 pb-10">
-    <CustomerBotNav title="مساعد إعداد البوت" description="اكتبي أو تحدثي بما تريدين، وسيشرح المساعد ما فهمه وأين سيحفظ التغيير. لا ينفذ شيئاً من دون مراجعتك وحفظه كمسودة." />
-    <SafetyNotice />
+  return <main dir="rtl" className={embedded ? "space-y-5" : "mx-auto max-w-6xl space-y-5 pb-10"}>
+    {!embedded ? <CustomerBotNav title="مساعد إعداد البوت" description="اكتبي أو تحدثي، أو اختاري قالباً من المكتبة، وسيشرح المساعد ما فهمه وأين سيحفظ التغيير. لا ينفذ شيئاً من دون مراجعتك وحفظه كمسودة." /> : null}
+    {!embedded ? <SafetyNotice /> : null}
+    <TrainingCommandLibrary onUseTemplate={template => { setText(template); toast.success("تم وضع القالب في المحرر. عدّليه ثم اضغطي فهم الأمر."); }} />
     <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <section className="rounded-2xl border border-[#e2e8e3] bg-white p-5 shadow-[0_10px_24px_rgba(41,63,53,0.05)]"><div className="flex items-start gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#f1ebfa] text-[#7048a5]"><WandSparkles className="h-5 w-5" /></span><div><h2 className="font-bold text-[#31483d]">قولي ما تريدين أن يتعلمه البوت</h2><p className="mt-1 text-sm leading-6 text-[#74817a]">مثال: «إذا سألت الزبونة عن الألوان بعد قراءة الكود، اقترح صور الألوان أولاً» أو «لا يذكر البوت أنه ذكاء اصطناعي».</p></div></div><Textarea value={text} onChange={event => setText(event.target.value)} className="mt-5 min-h-36 rounded-xl" placeholder="اكتبي أمرك بلغة طبيعية…" /><div className="mt-3 flex flex-wrap items-center gap-2"><Button disabled={!text.trim() || interpretText.isPending} onClick={() => interpretText.mutate({ text })} className="rounded-xl bg-[#1d5a4d] hover:bg-[#153f36]">{interpretText.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Send className="ml-2 h-4 w-4" />}فهم الأمر</Button><Button type="button" variant={recording ? "destructive" : "outline"} onClick={recording ? stopRecording : startRecording} disabled={interpretAudio.isPending} className="rounded-xl">{recording ? <MicOff className="ml-2 h-4 w-4" /> : <Mic className="ml-2 h-4 w-4" />}{recording ? "إيقاف وإرسال التسجيل" : interpretAudio.isPending ? "جارٍ تحويل الصوت…" : "تسجيل أمر صوتي"}</Button><label className="inline-flex h-9 cursor-pointer items-center rounded-xl border border-input bg-background px-3 text-xs font-medium hover:bg-accent"><input type="file" accept=".mp3,.wav,.m4a,.ogg,.webm,audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/ogg,audio/webm,audio/mp4,audio/m4a,audio/x-m4a" className="sr-only" onChange={event => { const file = event.target.files?.[0]; if (file) void sendAudio(file, file.name); }} /><FileAudio className="ml-1.5 h-3.5 w-3.5" />رفع تسجيل</label></div><p className="mt-3 rounded-xl bg-[#fffaf2] px-3 py-2 text-xs leading-5 text-[#8b6a35]">ستظهر نسخة النص المستخرج أولاً، ثم التفسير المقترح. لا يُشغّل المساعد القنوات ولا يغيّر السعر أو المخزون أو الطلب من أمر حر.</p></section>
       <aside className="rounded-2xl border border-[#e2e8e3] bg-white p-4 shadow-[0_10px_24px_rgba(41,63,53,0.05)]"><h2 className="font-bold text-[#31483d]">الأوامر الأخيرة</h2><div className="mt-3 max-h-[320px] space-y-2 overflow-auto">{commands.data?.length ? commands.data.map(command => <button key={command.id} onClick={() => selectCommand(command.id)} className={`w-full rounded-xl border p-3 text-right transition ${selectedCommand?.id === command.id ? "border-[#bcd6c5] bg-[#f4faf6]" : "border-[#ecefe9] hover:bg-muted/50"}`}><div className="flex items-center justify-between gap-2"><Badge className="bg-[#eff4f0] text-[#4a6255]">{command.inputType === "audio" ? "صوتي" : "كتابي"}</Badge><span className="text-[10px] text-muted-foreground">{statusLabels[command.status]}</span></div><p className="mt-2 line-clamp-2 text-xs leading-5 text-[#52645a]">{command.transcript || command.originalText || command.errorSummary || "لا يوجد نص"}</p></button>) : <p className="py-8 text-center text-xs text-muted-foreground">لم تسجلي أمراً بعد.</p>}</div></aside>

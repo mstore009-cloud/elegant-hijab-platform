@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
+import { useEffect } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import DashboardLayout from "./components/DashboardLayout";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -17,7 +18,6 @@ import CRM from "./pages/CRM";
 import Inbox from "./pages/Inbox";
 import CustomerBot from "./pages/CustomerBot";
 import CustomerBotPlayground from "./pages/CustomerBotPlayground";
-import CustomerBotCommandAssistant from "./pages/CustomerBotCommandAssistant";
 import CustomerBotLearning from "./pages/CustomerBotLearning";
 import CustomerBotTesting from "./pages/CustomerBotTesting";
 import CustomerBotSettings from "./pages/CustomerBotSettings";
@@ -50,7 +50,7 @@ function Router() {
       <Route path={"/loyalty"} component={Loyalty} />
       <Route path={"/inbox"} component={Inbox} />
       <Route path={"/customer-bot/playground"} component={CustomerBotPlayground} />
-      <Route path={"/customer-bot/commands"} component={CustomerBotCommandAssistant} />
+      <Route path={"/customer-bot/commands"} component={LegacyCustomerBotCommands} />
       <Route path={"/customer-bot/learning"} component={CustomerBotLearning} />
       <Route path={"/customer-bot/testing"} component={CustomerBotTesting} />
       <Route path={"/customer-bot/settings"} component={CustomerBotSettings} />
@@ -71,6 +71,12 @@ function Router() {
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+function LegacyCustomerBotCommands() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/customer-bot/learning?tab=assistant"); }, [setLocation]);
+  return <div className="p-8 text-sm text-muted-foreground">جارٍ فتح مساعد التعليم داخل المعرفة والتعلم…</div>;
 }
 
 // NOTE: About Theme

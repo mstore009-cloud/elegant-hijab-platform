@@ -2,12 +2,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CustomerBotNav, SafetyNotice } from "@/components/customerBot/CustomerBotNav";
 import { trpc } from "@/lib/trpc";
-import { BookOpenText, Bot, ClipboardCheck, MessageSquareText, Mic, Settings2 } from "lucide-react";
+import { BookOpenText, Bot, ClipboardCheck, MessageSquareText, Settings2 } from "lucide-react";
 import { useLocation } from "wouter";
 
 const paths = [
   { title: "مختبر المحادثة", description: "اختبري الرد كما تراه الزبونة، عدّلي الرد، ثم احفظي التعديل كمسودة تعليمية.", path: "/customer-bot/playground", icon: MessageSquareText, tone: "bg-[#eef7f2] text-[#1d5a4d]" },
-  { title: "مساعد الأوامر", description: "اكتبي أو سجّلي ما تريدينه، ثم راجعي أين سيُحفظ التغيير قبل تأكيده كمسودة.", path: "/customer-bot/commands", icon: Mic, tone: "bg-[#f6f0fb] text-[#7048a5]" },
+  { title: "مساعد التعليم", description: "اكتبي أو سجّلي ما تريدينه من داخل المعرفة والتعلم، ثم راجعي أين سيُحفظ التغيير قبل تأكيده كمسودة.", path: "/customer-bot/learning?tab=assistant", icon: BookOpenText, tone: "bg-[#f6f0fb] text-[#7048a5]" },
   { title: "المعرفة والتعلم", description: "راجعي بطاقات RAG وأمثلة اللهجة وردود الموظفين دون تحويل الحقائق المتغيرة إلى نصوص ثابتة.", path: "/customer-bot/learning", icon: BookOpenText, tone: "bg-[#fff5e8] text-[#a35d1e]" },
   { title: "الاختبارات والمسودات", description: "اعتمدي أو ارفضي اقتراحات التعلم، وراجعي الإجراءات وحالات الاختبار قبل النشر.", path: "/customer-bot/testing", icon: ClipboardCheck, tone: "bg-[#edf3fb] text-[#406a95]" },
 ];
@@ -27,7 +27,7 @@ export default function CustomerBot() {
   const mode = settings.data?.mode === "auto_reply" ? "رد مباشر مشروط" : "مسودة فقط";
   const summary = quality.data;
   return <main dir="rtl" className="mx-auto max-w-6xl space-y-5 pb-10">
-    <CustomerBotNav title="مركز تدريب Bot العملاء" description="كل مهمة في مكانها: الإعدادات في صفحة مستقلة، التدريب في مكتبة، التجربة في مختبر آمن، والأوامر في مساعد يشرح التغيير قبل حفظه." action={<Button onClick={() => setLocation("/customer-bot/settings")} variant="outline" className="rounded-xl border-[#d4ddd7] bg-white"><Settings2 className="ml-2 h-4 w-4" />إعدادات التشغيل</Button>} />
+    <CustomerBotNav title="مركز تدريب Bot العملاء" description="كل مهمة في مكانها: الإعدادات في صفحة مستقلة، المعرفة والتعلم كمركز موحد، والتجربة في مختبر آمن." action={<Button onClick={() => setLocation("/customer-bot/settings")} variant="outline" className="rounded-xl border-[#d4ddd7] bg-white"><Settings2 className="ml-2 h-4 w-4" />إعدادات التشغيل</Button>} />
     <SafetyNotice />
     <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <Metric label="حالة التشغيل" value={operational ? mode : "متوقف"} note={operational ? "تُدار القنوات من إعدادات التشغيل" : "يمكن التدريب والاختبار وهو متوقف"} />

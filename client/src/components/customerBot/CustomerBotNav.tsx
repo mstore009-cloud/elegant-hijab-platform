@@ -1,12 +1,11 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Bot, BookOpenText, ClipboardCheck, MessageSquareText, Mic, Settings2, Sparkles } from "lucide-react";
+import { Bot, BookOpenText, ClipboardCheck, MessageSquareText, Settings2, Sparkles } from "lucide-react";
 import { useLocation } from "wouter";
 
 const items = [
   { path: "/customer-bot", label: "نظرة عامة", icon: Bot },
   { path: "/customer-bot/playground", label: "مختبر المحادثة", icon: MessageSquareText },
-  { path: "/customer-bot/commands", label: "مساعد الأوامر", icon: Mic },
   { path: "/customer-bot/learning", label: "المعرفة والتعلم", icon: BookOpenText },
   { path: "/customer-bot/testing", label: "الاختبارات والمسودات", icon: ClipboardCheck },
   { path: "/customer-bot/settings", label: "إعدادات التشغيل", icon: Settings2 },
@@ -27,7 +26,7 @@ export function CustomerBotNav({ title, description, action }: { title: string; 
       <nav aria-label="أقسام مركز البوت" className="mt-5 flex gap-2 overflow-x-auto pb-1">
         {items.map(item => {
           const Icon = item.icon;
-          const active = location === item.path;
+          const active = location.split("?")[0] === item.path;
           return <Button key={item.path} type="button" size="sm" variant={active ? "default" : "outline"} onClick={() => setLocation(item.path)} className={active ? "shrink-0 rounded-xl bg-[#1d5a4d] text-white hover:bg-[#153f36]" : "shrink-0 rounded-xl border-[#d9e3dc] bg-white/80 text-[#496154] hover:bg-[#eef5f0]"}>
             <Icon className="ml-1.5 h-3.5 w-3.5" />{item.label}
           </Button>;
