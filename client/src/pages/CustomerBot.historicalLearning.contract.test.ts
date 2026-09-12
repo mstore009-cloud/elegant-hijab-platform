@@ -26,6 +26,10 @@ describe("Customer Bot training center", () => {
     const source = read("CustomerBotCommandAssistant.tsx");
     expect(source).toContain("customerBot.createTextCommand.useMutation");
     expect(source).toContain("customerBot.createAudioCommand.useMutation");
+    expect(source).toContain("editedTranscript");
+    expect(source).toContain("عدّليه قبل الحفظ");
+    expect(source).toContain("حفظ كبطاقة معرفة");
+    expect(source).toContain('category: "knowledge"');
     expect(source).toContain("فهم المساعد");
     expect(source).toContain("حفظ كمسودة تعليمية");
     expect(source).toContain("لا يُشغّل المساعد القنوات");
