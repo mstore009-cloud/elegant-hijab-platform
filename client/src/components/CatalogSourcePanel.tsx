@@ -38,7 +38,7 @@ export function CatalogSourcePanel({ canConfigure }: { canConfigure: boolean }) 
   const selection = trpc.integrations.catalogSelectionStatus.useQuery();
   const syncStatus = trpc.catalogSync.status.useQuery();
   const groups = trpc.integrations.catalogGroups.useQuery(undefined, { enabled: selection.data?.status === "catalog_selected" });
-  const [treeOpen, setTreeOpen] = useState(false);
+  const [treeOpen, setTreeOpen] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerPath, setPickerPath] = useState<FolderOption[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<string>("");

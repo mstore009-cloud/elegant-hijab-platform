@@ -12,9 +12,9 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain(">المسودات ");
   });
 
-  it("يبقي أدوات OneDrive وMeta Catalog مطوية إلى أن يفتحها المستخدم", () => {
+  it("يظهر OneDrive والمعاينة الانتقائية مباشرة مع إبقاء Meta قابلًا للفتح", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
-    expect(source).toContain("const [oneDrivePanelOpen, setOneDrivePanelOpen] = useState(false)");
+    expect(source).toContain("const [oneDrivePanelOpen, setOneDrivePanelOpen] = useState(true)");
     expect(source).toContain("const [metaCatalogPanelOpen, setMetaCatalogPanelOpen] = useState(false)");
     expect(source).toContain(">OneDrive<");
     expect(source).toContain(">Meta Catalog<");

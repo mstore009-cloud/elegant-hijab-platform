@@ -80,7 +80,7 @@ export default function Products() {
   const [metaSyncFilter, setMetaSyncFilter] = useState<MetaSyncFilter>("all");
   const [selectedMetaProductIds, setSelectedMetaProductIds] = useState<number[]>([]);
   const [bulkSyncFeedback, setBulkSyncFeedback] = useState<string | null>(null);
-  const [oneDrivePanelOpen, setOneDrivePanelOpen] = useState(false);
+  const [oneDrivePanelOpen, setOneDrivePanelOpen] = useState(true);
   const [metaCatalogPanelOpen, setMetaCatalogPanelOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedPrimaryCategory, setSelectedPrimaryCategory] = useState<string | null>(null);
