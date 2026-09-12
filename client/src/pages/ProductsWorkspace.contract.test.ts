@@ -48,6 +48,9 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("trpc.products.restoreFromArchive.useMutation");
     expect(source).toContain("استعادة كمسودة</button>");
     expect(source).toContain("left-4 top-4 z-20");
+    expect(source).toContain("اعتماد المنتج");
+    expect(source).toContain("جارٍ الاعتماد...");
+    expect(source).toContain("activateProduct.mutate({ productId: detail.product.id })");
     expect(source).toContain("productCompletion(product)");
     expect(source).toContain("اكتمال المنتج");
     expect(source).toContain("متغير");
