@@ -89,6 +89,33 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("sortedProducts");
   });
 
+  it("يعرض بطاقة آخر حركة موحدة للمنتج", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("function productActivity");
+    expect(source).toContain("آخر حركة");
+    expect(source).toContain("productActivity(product)");
+    expect(source).toContain("تعديل السعر");
+  });
+
+  it("يوفر فلاتر سريعة للنواقص التشغيلية", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain('type OperationalMissingFilter = "all" | "any" | "price" | "description" | "media" | "colors" | "inventory"');
+    expect(source).toContain("operationalMissingFlags");
+    expect(source).toContain("النواقص التشغيلية:");
+    expect(source).toContain("الوسائط");
+    expect(source).toContain("الألوان");
+  });
+
+  it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("addDetailMedia");
+    expect(source).toContain("detail-upload-color");
+    expect(source).toContain("اسحب الوسائط هنا أو اختر ملفات");
+    expect(source).toContain("uploadManualMedia.mutateAsync");
+    expect(source).toContain("assignMediaColor.mutateAsync");
+    expect(source).toContain("فيديو MP4/WebM");
+  });
+
   it("يوضح الحفظ كمسودة ويوجه إلى الحقل الناقص مع شريط حفظ ثابت", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("حفظ كمسودة");
