@@ -20,7 +20,7 @@ export async function listProductsWithPrimaryOperationalMedia(storeId: number) {
     db.select().from(products).where(eq(products.storeId, storeId)).orderBy(desc(products.updatedAt)),
     db.select().from(productMedia).orderBy(productMedia.sortOrder),
     db.select().from(catalogFolderImports).where(eq(catalogFolderImports.storeId, storeId)),
-    db.select({ id: productVariants.id, productId: productVariants.productId, availability: productVariants.availability, inventoryQuantity: productVariants.inventoryQuantity }).from(productVariants).innerJoin(products, eq(products.id, productVariants.productId)).where(eq(products.storeId, storeId)),
+    db.select({ id: productVariants.id, productId: productVariants.productId, colorName: productVariants.colorName, sizeLabel: productVariants.sizeLabel, availability: productVariants.availability, inventoryQuantity: productVariants.inventoryQuantity }).from(productVariants).innerJoin(products, eq(products.id, productVariants.productId)).where(eq(products.storeId, storeId)),
   ]);
   const primaryMediaByProductId = new Map<number, typeof mediaList[number]>();
   for (const media of mediaList) {

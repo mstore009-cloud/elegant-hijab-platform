@@ -122,6 +122,10 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("تنبيهات المنتجات");
     expect(source).toContain("مركز العمل");
     expect(source).toContain("مخزون منخفض");
+    expect(source).toContain('view === "out_of_stock" && product.variants.length > 0 && product.variants.every(variant => variant.availability === "out_of_stock")');
+    expect(source).toContain("function outOfStockVariantLabels");
+    expect(source).toContain("variant.sizeLabel");
+    expect(source).toContain("نفد:");
     expect(source).toContain('surface !== "archived"');
     expect(source).toContain("workViewCounts.metaStale");
     expect(source).toContain("النتائج أدناه تخص هذا التنبيه فقط");
