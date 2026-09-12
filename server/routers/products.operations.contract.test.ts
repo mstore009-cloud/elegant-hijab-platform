@@ -32,5 +32,8 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(routerSource).toContain(")).min(0).max(250)");
     expect(dbSource).toContain("addManualProductVideo");
     expect(dbSource).toContain('mediaType: "video"');
+    expect(routerSource).toContain("reviewMediaCount");
+    expect(routerSource).toContain("reviewMediaPreviews");
+    expect(routerSource).toContain("!media.variantId && !media.colorVerified");
   });
 });

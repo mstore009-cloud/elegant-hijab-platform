@@ -107,8 +107,15 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain('surface !== "archived"');
     expect(source).toContain("workViewCounts.metaStale");
     expect(source).toContain("النتائج أدناه تخص هذا التنبيه فقط");
-    expect(source).toContain("const mediaReview = activeProducts.filter(product => operationalMissingFlags(product).media)");
-    expect(source).toContain("const colorReview = activeProducts.filter(product => operationalMissingFlags(product).colors)");
+    expect(source).toContain("const workProducts = (products.data ?? []).filter(product => product.status !== \"archived\")");
+    expect(source).toContain("mediaReview: workProducts.filter(product => workViewMatches(product, \"media_review\")).length");
+    expect(source).toContain("colorReview: workProducts.filter(product => workViewMatches(product, \"color_review\")).length");
+    expect(source).toContain("function workViewMatches");
+    expect(source).toContain("const workViewProducts = useMemo");
+    expect(source).toContain("عرض النتائج");
+    expect(source).toContain("فتح الأول");
+    expect(source).toContain("صور تحتاج ربطًا بلون");
+    expect(source).toContain("reviewMediaPreviews");
   });
 
   it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {

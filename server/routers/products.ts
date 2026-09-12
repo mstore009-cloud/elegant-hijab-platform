@@ -96,6 +96,8 @@ export const productsRouter = router({
     const categoryPathById = new Map(categoryTree.map(category => [category.id, category.displayPath]));
     return Promise.all(productList.map(async ({ product, primaryMedia, missingFields, variants }) => {
       const readiness = await getProductReviewReadiness(product.id);
+      const reviewMedia = (await getProductMedia(product.id)).filter(media => media.mediaType === "image" && !media.variantId && !media.colorVerified);
+      const reviewMediaPreviews = await Promise.all(reviewMedia.filter(media => Boolean(media.storageKey)).slice(0, 4).map(async media => ({ mediaId: media.id, dataUrl: (await storageGet(media.storageKey!)).url, originalFileName: media.originalFileName ?? "صورة تحتاج مراجعة" })));
       return ({
       ...presentProductForViewer({ ...product, category: product.categoryId ? categoryPathById.get(product.categoryId) ?? product.category : product.category }, canViewFinancials),
       updatedAt: product.updatedAt,
@@ -107,6 +109,8 @@ export const productsRouter = router({
       primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
       missingFields,
       variants,
+      reviewMediaCount: reviewMedia.length,
+      reviewMediaPreviews,
       isReadyForActivation: readiness.ready,
       readinessReasons: readiness.reasons,
     });
