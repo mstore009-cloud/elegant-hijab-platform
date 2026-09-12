@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { recordInitialProductFinancialValues } from "../financials/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
@@ -94,7 +94,7 @@ export const productsRouter = router({
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
     const [productList, categoryTree] = await Promise.all([listProductsWithPrimaryOperationalMedia(storeId), listProductCategoryTree(storeId)]);
     const categoryPathById = new Map(categoryTree.map(category => [category.id, category.displayPath]));
-    return Promise.all(productList.map(async ({ product, primaryMedia, missingFields }) => ({
+    return Promise.all(productList.map(async ({ product, primaryMedia, missingFields, variants }) => ({
       ...presentProductForViewer({ ...product, category: product.categoryId ? categoryPathById.get(product.categoryId) ?? product.category : product.category }, canViewFinancials),
       updatedAt: product.updatedAt,
       lastMetaCatalogChangeAt: product.lastMetaCatalogChangeAt,
@@ -104,6 +104,7 @@ export const productsRouter = router({
       primaryImageUrl: primaryMedia?.storageKey ? (await storageGet(primaryMedia.storageKey)).url : null,
       primaryImageAlt: primaryMedia ? `صورة ${product.name}` : null,
       missingFields,
+      variants,
     })));
   }),
   categories: router({
@@ -148,6 +149,12 @@ export const productsRouter = router({
         message: item.product.status === "active" ? "المنتج نشط في الكتالوج." : item.reviewReadiness.ready ? "المنتج مكتمل وجاهز لاعتماد النشر." : "المنتج غير قابل للنشر قبل إكمال عناصر الجهوزية الظاهرة أدناه.",
       },
     };
+  }),
+  operations: protectedProcedure.input(z.object({ productId: z.number().int().positive(), limit: z.number().int().min(1).max(100).optional() })).query(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.inventory.update");
+    const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
+    await requireProductInOperationalStore(ctx, input.productId);
+    return listProductOperations({ storeId, productId: input.productId, limit: input.limit, includeSensitive: await viewerFinancialAccess(ctx.user) });
   }),
   mediaPreviews: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).query(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");
@@ -354,6 +361,16 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
     const result = await excludeProductMediaFromColorReview({ ...input, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId);
+    return result;
+  }),
+  restoreMediaToColorReview: protectedProcedure.input(z.object({
+    productId: z.number().int().positive(),
+    mediaIds: z.array(z.number().int().positive()).min(1).max(100),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    await requireProductInOperationalStore(ctx, input.productId);
+    const result = await restoreProductMediaToColorReview({ ...input, actorUserId: ctx.user.id });
     await queueProductMetaSync(ctx, input.productId);
     return result;
   }),

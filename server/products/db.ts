@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { catalogFolderImports, contentPostMedia, contentPosts, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products } from "../../drizzle/schema";
+import { catalogFolderImports, contentPostMedia, contentPosts, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { normalizeApprovedColorNames, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { planOperationalReferenceDetach } from "./operationalMediaLifecycle";
@@ -16,10 +16,11 @@ export async function listProducts(storeId: number) {
 export async function listProductsWithPrimaryOperationalMedia(storeId: number) {
   const db = await getDb();
   if (!db) return [];
-  const [productList, mediaList, folderImports] = await Promise.all([
+  const [productList, mediaList, folderImports, variantList] = await Promise.all([
     db.select().from(products).where(eq(products.storeId, storeId)).orderBy(desc(products.updatedAt)),
     db.select().from(productMedia).orderBy(productMedia.sortOrder),
     db.select().from(catalogFolderImports).where(eq(catalogFolderImports.storeId, storeId)),
+    db.select({ id: productVariants.id, productId: productVariants.productId, availability: productVariants.availability, inventoryQuantity: productVariants.inventoryQuantity }).from(productVariants).innerJoin(products, eq(products.id, productVariants.productId)).where(eq(products.storeId, storeId)),
   ]);
   const primaryMediaByProductId = new Map<number, typeof mediaList[number]>();
   for (const media of mediaList) {
@@ -27,10 +28,43 @@ export async function listProductsWithPrimaryOperationalMedia(storeId: number) {
     primaryMediaByProductId.set(media.productId, media);
   }
   const missingByProductId = new Map(folderImports.filter(entry => entry.linkedProductId).map(entry => [entry.linkedProductId!, parseMissingFields(entry.missingFields)]));
+  const variantsByProductId = new Map<number, typeof variantList>();
+  for (const variant of variantList) variantsByProductId.set(variant.productId, [...(variantsByProductId.get(variant.productId) ?? []), variant]);
   return productList.map(product => {
     const missingFields = [...(missingByProductId.get(product.id) ?? [])];
-    return { product, primaryMedia: primaryMediaByProductId.get(product.id) ?? null, missingFields };
+    return { product, primaryMedia: primaryMediaByProductId.get(product.id) ?? null, missingFields, variants: variantsByProductId.get(product.id) ?? [] };
   });
+}
+
+function operationChanges(value: string, includeSensitive: boolean) {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (includeSensitive) return parsed;
+    return Object.fromEntries(Object.entries(parsed).map(([key, entry]) => (/cost|margin|financial|هامش|تكلفة/i.test(key) ? [key, "محجوب حسب الصلاحية"] : [key, entry])));
+  } catch {
+    return { summary: value };
+  }
+}
+
+export async function listProductOperations(input: { storeId: number; productId: number; limit?: number; includeSensitive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    id: productOperations.id,
+    actorUserId: productOperations.actorUserId,
+    actorName: users.name,
+    actorEmail: users.email,
+    source: productOperations.source,
+    action: productOperations.action,
+    changes: productOperations.changes,
+    createdAt: productOperations.createdAt,
+  }).from(productOperations)
+    .innerJoin(products, eq(products.id, productOperations.productId))
+    .leftJoin(users, eq(users.id, productOperations.actorUserId))
+    .where(and(eq(productOperations.productId, input.productId), eq(products.storeId, input.storeId)))
+    .orderBy(desc(productOperations.createdAt), desc(productOperations.id))
+    .limit(Math.min(Math.max(input.limit ?? 30, 1), 100));
+  return rows.map(row => ({ ...row, actorLabel: row.actorName ?? row.actorEmail ?? "النظام", changes: operationChanges(row.changes, input.includeSensitive ?? false) }));
 }
 
 export function parseMissingFields(value: string | null) {
@@ -457,6 +491,23 @@ export async function excludeProductMediaFromColorReview(input: { productId: num
   });
   await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
   return { excludedMediaIds: uniqueMediaIds };
+}
+
+export async function restoreProductMediaToColorReview(input: { productId: number; mediaIds: number[]; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const uniqueMediaIds = Array.from(new Set(input.mediaIds));
+  if (uniqueMediaIds.length === 0) throw new Error("اختر صورة واحدة على الأقل لإعادتها إلى مراجعة اللون.");
+  const matching = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId));
+  const mediaById = new Map(matching.map(item => [item.id, item]));
+  if (uniqueMediaIds.some(mediaId => !mediaById.has(mediaId))) throw new Error("تتضمن الصور المحددة صورة لا تنتمي إلى هذا المنتج.");
+  if (uniqueMediaIds.some(mediaId => mediaById.get(mediaId)?.variantId)) throw new Error("افصل الصورة عن لونها قبل إعادتها للمراجعة.");
+  await db.transaction(async tx => {
+    for (const mediaId of uniqueMediaIds) await tx.update(productMedia).set({ colorVerified: false }).where(eq(productMedia.id, mediaId));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "media_color_review_restored", changes: JSON.stringify({ mediaIds: uniqueMediaIds }) });
+  });
+  await refreshProductReviewStatus({ productId: input.productId, actorUserId: input.actorUserId });
+  return { restoredMediaIds: uniqueMediaIds };
 }
 
 export async function saveProductInventory(input: { productId: number; quantities: Array<{ variantId: number; inventoryQuantity: number }>; actorUserId: number; source?: "products_ui" | "whatsapp" }) {

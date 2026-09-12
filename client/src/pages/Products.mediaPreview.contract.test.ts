@@ -21,6 +21,13 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("trpc.products.saveColorInventory.useMutation");
     expect(source).toContain("إضافة صور");
     expect(source).toContain("trpc.products.saveInventory.useMutation");
+    expect(source).toContain("trpc.products.operations.useQuery");
+    expect(source).toContain("سجل عمليات المنتج");
+    expect(source).toContain("trpc.products.excludeMediaFromColorReview.useMutation");
+    expect(source).toContain("trpc.products.restoreMediaToColorReview.useMutation");
+    expect(source).toContain("استبعاد المحدد من مراجعة اللون");
+    expect(source).toContain("إعادة المحدد إلى مراجعة اللون");
+    expect(source).toContain("حالة المخزون:");
     expect(source).toContain("detachMedia");
     expect(source).toContain("trpc.products.deleteColor.useMutation");
     expect(source).toContain("trpc.products.deletePermanently.useMutation");
@@ -51,7 +58,7 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("جاهز للتنشيط والتفعيل");
     expect(source).toContain("مسودة تحتاج إكمالًا");
     expect(source).toContain("تنشيط وتفعيل");
-    expect(source).not.toContain("حفظ المخزون");
+    expect(source).toContain("حفظ مخزون المتغيرات");
     expect(source).toContain("syncStatus.data?.isRunning");
     expect(source).toContain("formatElapsed(catalogElapsedMs)");
     expect(source).toContain("lastRunStage === \"failed\"");
