@@ -97,13 +97,16 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("تعديل السعر");
   });
 
-  it("يوفر فلاتر سريعة للنواقص التشغيلية", () => {
+  it("يعرض مركز عمل تفاعليًا بدل أشرطة الفلاتر المتداخلة ويخفيه عن الأرشيف", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
-    expect(source).toContain('type OperationalMissingFilter = "all" | "any" | "price" | "description" | "media" | "colors" | "inventory"');
+    expect(source).toContain('type WorkView = "all" | "completion" | "low_stock" | "out_of_stock" | "media_review" | "color_review" | "meta_sync" | "meta_stale"');
     expect(source).toContain("operationalMissingFlags");
-    expect(source).toContain("النواقص التشغيلية:");
-    expect(source).toContain("الوسائط");
-    expect(source).toContain("الألوان");
+    expect(source).toContain("تنبيهات المنتجات");
+    expect(source).toContain("مركز العمل");
+    expect(source).toContain("مخزون منخفض");
+    expect(source).toContain('surface !== "archived"');
+    expect(source).toContain("workViewCounts.metaStale");
+    expect(source).toContain("النتائج أدناه تخص هذا التنبيه فقط");
   });
 
   it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {
@@ -142,5 +145,14 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("صور وفيديوهات المنتج");
     expect(source).not.toContain("createColorName");
     expect(source).not.toContain("createQuantity");
+  });
+
+  it("يعزل أزرار الحفظ عن الإرسال الضمني وانتشار النقر", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("event?.preventDefault(); event?.stopPropagation();");
+    expect(source).toContain('type="button" onClick={saveDetails}');
+    expect(source).toContain('type="button" onClick={saveInventoryMatrix}');
+    expect(source).toContain("saveColorDetails(colorName, event)");
+    expect(source).toContain("submitManualProduct();");
   });
 });

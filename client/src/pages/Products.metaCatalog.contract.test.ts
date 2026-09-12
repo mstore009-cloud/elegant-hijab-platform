@@ -19,11 +19,12 @@ describe("Products Meta Catalog export contract", () => {
     expect(source).not.toContain("exportMetaCatalog.mutate");
   });
 
-  it("يعرض فلاتر حالة المزامنة مع عدّادات واضحة", () => {
-    expect(source).toContain("MetaSyncFilter");
-    expect(source).toContain("حالة مزامنة Meta:");
-    expect(source).toContain('"لم تتم"');
-    expect(source).toContain('"متأخرة"');
+  it("يعرض تنبيهات حالة المزامنة مع عدّادات واضحة", () => {
+    expect(source).toContain("WorkView");
+    expect(source).toContain("مركز العمل");
+    expect(source).toContain("مزامنة Meta متأخرة");
+    expect(source).toContain("workViewCounts.metaSync");
+    expect(source).toContain("workViewCounts.metaStale");
     expect(source).toContain("isMetaSyncStale");
     expect(source).toContain("metaSyncNeedsRefresh");
     expect(source).toContain("تحتاج مزامنة Meta");

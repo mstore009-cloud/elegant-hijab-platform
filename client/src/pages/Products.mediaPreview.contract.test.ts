@@ -28,7 +28,7 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("trpc.products.restoreMediaToColorReview.useMutation");
     expect(source).toContain("استبعاد المحدد من مراجعة اللون");
     expect(source).toContain("إعادة المحدد إلى مراجعة اللون");
-    expect(source).toContain("حالة المخزون:");
+    expect(source).toContain("مخزون منخفض");
     expect(source).toContain("detachMedia");
     expect(source).toContain("trpc.products.deleteColor.useMutation");
     expect(source).toContain("trpc.products.deletePermanently.useMutation");
