@@ -22,4 +22,13 @@ describe("public Meta legal pages", () => {
     expect(page).toContain("تعليمات حذف البيانات");
     expect(page).not.toContain("facebook.com/");
   });
+
+  it("loads dashboard pages on demand instead of bundling them into the entry chunk", () => {
+    const app = readFileSync(resolve(process.cwd(), "client/src/App.tsx"), "utf8");
+
+    expect(app).toContain('import { lazy, Suspense, useEffect } from "react"');
+    expect(app).toContain('const Products = lazy(() => import("@/pages/Products"));');
+    expect(app).toContain('const CustomerBotLearning = lazy(() => import("@/pages/CustomerBotLearning"));');
+    expect(app).toContain("<Suspense fallback={<PageLoading />}>");
+  });
 });

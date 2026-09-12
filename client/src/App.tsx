@@ -1,36 +1,41 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import DashboardLayout from "./components/DashboardLayout";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import AccessControl from "./pages/AccessControl";
-import ContentPosts from "./pages/ContentPosts";
-import OperationsOverview from "./pages/OperationsOverview";
-import Products from "./pages/Products";
-import Storefront from "./pages/Storefront";
-import Orders from "./pages/Orders";
-import StoreSettings from "./pages/StoreSettings";
-import OneDriveSettings from "./pages/OneDriveSettings";
-import CRM from "./pages/CRM";
-import Inbox from "./pages/Inbox";
-import CustomerBot from "./pages/CustomerBot";
-import CustomerBotPlayground from "./pages/CustomerBotPlayground";
-import CustomerBotLearning from "./pages/CustomerBotLearning";
-import CustomerBotTesting from "./pages/CustomerBotTesting";
-import CustomerBotSettings from "./pages/CustomerBotSettings";
-import Marketing from "./pages/Marketing";
-import Analytics from "./pages/Analytics";
-import Loyalty from "./pages/Loyalty";
-import Notifications from "./pages/Notifications";
-import EmployeeBot from "./pages/EmployeeBot";
-import Financials from "./pages/Financials";
-import MetaConnections from "./pages/MetaConnections";
-import MetaPlatformSettings from "./pages/MetaPlatformSettings";
-import PublicLegal from "./pages/PublicLegal";
-import AiPlatformSettings from "./pages/AiPlatformSettings";
+
+const NotFound = lazy(() => import("@/pages/NotFound"));
+const AccessControl = lazy(() => import("@/pages/AccessControl"));
+const ContentPosts = lazy(() => import("@/pages/ContentPosts"));
+const OperationsOverview = lazy(() => import("@/pages/OperationsOverview"));
+const Products = lazy(() => import("@/pages/Products"));
+const Storefront = lazy(() => import("@/pages/Storefront"));
+const Orders = lazy(() => import("@/pages/Orders"));
+const StoreSettings = lazy(() => import("@/pages/StoreSettings"));
+const OneDriveSettings = lazy(() => import("@/pages/OneDriveSettings"));
+const CRM = lazy(() => import("@/pages/CRM"));
+const Inbox = lazy(() => import("@/pages/Inbox"));
+const CustomerBot = lazy(() => import("@/pages/CustomerBot"));
+const CustomerBotPlayground = lazy(() => import("@/pages/CustomerBotPlayground"));
+const CustomerBotLearning = lazy(() => import("@/pages/CustomerBotLearning"));
+const CustomerBotTesting = lazy(() => import("@/pages/CustomerBotTesting"));
+const CustomerBotSettings = lazy(() => import("@/pages/CustomerBotSettings"));
+const Marketing = lazy(() => import("@/pages/Marketing"));
+const Analytics = lazy(() => import("@/pages/Analytics"));
+const Loyalty = lazy(() => import("@/pages/Loyalty"));
+const Notifications = lazy(() => import("@/pages/Notifications"));
+const EmployeeBot = lazy(() => import("@/pages/EmployeeBot"));
+const Financials = lazy(() => import("@/pages/Financials"));
+const MetaConnections = lazy(() => import("@/pages/MetaConnections"));
+const MetaPlatformSettings = lazy(() => import("@/pages/MetaPlatformSettings"));
+const PublicLegal = lazy(() => import("@/pages/PublicLegal"));
+const AiPlatformSettings = lazy(() => import("@/pages/AiPlatformSettings"));
+
+function PageLoading() {
+  return <div className="grid min-h-[40vh] place-items-center p-8 text-sm text-muted-foreground">جارٍ تحميل الصفحة…</div>;
+}
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -93,7 +98,7 @@ function App() {
       >
         <TooltipProvider>
           <Toaster />
-          <PublicOrDashboard />
+          <Suspense fallback={<PageLoading />}><PublicOrDashboard /></Suspense>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
