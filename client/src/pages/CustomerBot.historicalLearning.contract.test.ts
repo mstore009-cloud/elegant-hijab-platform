@@ -28,4 +28,14 @@ describe("CustomerBot historical learning review flow", () => {
     expect(source).toContain("historicalChannels");
     expect(source).toContain("channels: historicalChannels");
   });
+
+  it("keeps style, response choices, and order drafts visible in the platform interface", () => {
+    const source = readFileSync(new URL("./CustomerBot.tsx", import.meta.url), "utf8");
+    expect(source).toContain("تدريب البوت وأسلوب البيع");
+    expect(source).toContain("RAG داخلي ومراجعة بشرية");
+    expect(source).toContain("طريقة عرض المنتج");
+    expect(source).toContain("مسودات تثبيت الطلب");
+    expect(source).toContain("customerBot.createOrderFromDraft.useMutation");
+    expect(source).toContain("لا يخصم البوت مخزوناً ولا ينشئ طلباً نهائياً");
+  });
 });

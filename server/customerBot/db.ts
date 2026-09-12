@@ -11,6 +11,8 @@ import {
   orders,
   productVariants,
   products,
+  productMedia,
+  metaCatalogProductEnrichments,
   storeSettings,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
@@ -19,9 +21,15 @@ import { notifyEmployee, notifyPermissionHolders } from "../notifications/db";
 import { listCustomerImageFacts, type CustomerImageFacts } from "./imageAnalysis";
 import { sendMetaCommentReply, sendMetaDirectMessage } from "../channels/metaOutbound";
 import { createAiTaskInvoker } from "../ai/taskInvoker";
+import { absoluteMetaCatalogStorageUrl } from "../integrations/meta/catalogExportDb";
+import { createCustomerBotOrderDraft } from "./orderDrafts";
 
 export const botModes = ["draft_only", "auto_reply"] as const;
 export type BotMode = (typeof botModes)[number];
+
+export const botActionTypes = ["none", "send_product_images", "send_product_card", "order_summary", "notify_human"] as const;
+export type BotActionType = (typeof botActionTypes)[number];
+export type BotActionDecision = { type: BotActionType; productCode: string | null; colorName: string | null; quantity: number | null; caption: string | null; reason: string | null };
 
 const orderStatusLabels: Record<string, string> = {
   new: "طلب جديد",
@@ -48,7 +56,7 @@ type LlmInvoker = (params: InvokeParams) => Promise<InvokeResult>;
 export type BotFacts = {
   store: { currencyCode: string; defaultDeliveryFee: string; freeDeliveryEnabled: boolean; freeDeliveryThreshold: string | null };
   conversation: { id: number; subject: string | null; channel: string; customerName: string | null; order: { orderNumber: string; status: string; statusLabel: string; total: string } | null };
-  products: Array<{ productCode: string; name: string; category: string; sellingPrice: string; description: string | null; colors: Array<{ colorName: string; sizes: Array<{ size: string | null; available: boolean }> }> }>;
+  products: Array<{ productCode: string; name: string; category: string; sellingPrice: string; description: string | null; productLink: string | null; imageUrls: string[]; colors: Array<{ colorName: string; imageUrls: string[]; sizes: Array<{ size: string | null; available: boolean }> }> }>;
   knowledge: Array<{ id: number; title: string; kind: string; body: string }>;
   recentMessages: Array<{ direction: "inbound" | "outbound"; body: string }>;
   imageAnalyses: CustomerImageFacts[];
@@ -92,13 +100,26 @@ function imageHandoffReason(imageAnalyses: CustomerImageFacts[]) {
 
 function parseStructuredReply(value: string) {
   try {
-    const parsed = JSON.parse(value) as { reply?: unknown; confidence?: unknown; needsEscalation?: unknown; escalationReason?: unknown };
+    const parsed = JSON.parse(value) as { reply?: unknown; confidence?: unknown; needsEscalation?: unknown; escalationReason?: unknown; action?: unknown; productCode?: unknown; colorName?: unknown; quantity?: unknown; actionCaption?: unknown };
     const reply = typeof parsed.reply === "string" ? parsed.reply.trim().slice(0, 1800) : "";
     const confidence = typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence) ? Math.max(0, Math.min(100, Math.round(parsed.confidence))) : 0;
-    return { reply, confidence, needsEscalation: parsed.needsEscalation === true, escalationReason: typeof parsed.escalationReason === "string" ? parsed.escalationReason.slice(0, 120) : null };
+    const action = typeof parsed.action === "string" && (botActionTypes as readonly string[]).includes(parsed.action) ? parsed.action as BotActionType : "none";
+    return { reply, confidence, needsEscalation: parsed.needsEscalation === true, escalationReason: typeof parsed.escalationReason === "string" ? parsed.escalationReason.slice(0, 120) : null, action: { type: action, productCode: typeof parsed.productCode === "string" ? parsed.productCode.trim().slice(0, 80) : null, colorName: typeof parsed.colorName === "string" ? parsed.colorName.trim().slice(0, 100) : null, quantity: typeof parsed.quantity === "number" && Number.isFinite(parsed.quantity) ? Math.min(20, Math.max(1, Math.round(parsed.quantity))) : null, caption: typeof parsed.actionCaption === "string" ? parsed.actionCaption.trim().slice(0, 500) : null, reason: typeof parsed.escalationReason === "string" ? parsed.escalationReason.slice(0, 120) : null } satisfies BotActionDecision };
   } catch {
-    return { reply: "", confidence: 0, needsEscalation: true, escalationReason: "تعذر التحقق من صيغة الرد" };
+    return { reply: "", confidence: 0, needsEscalation: true, escalationReason: "تعذر التحقق من صيغة الرد", action: { type: "notify_human" as const, productCode: null, colorName: null, quantity: null, caption: null, reason: "تعذر التحقق من صيغة الرد" } };
   }
+}
+
+function applyProductResponsePolicy(action: BotActionDecision, settings: any, facts: BotFacts): BotActionDecision {
+  if (action.type !== "send_product_images" && action.type !== "send_product_card") return action;
+  const product = action.productCode ? facts.products.find(item => item.productCode === action.productCode) : facts.products[0];
+  if (!product) return { ...action, type: "none", reason: "لا يوجد منتج حي مطابق لقرار الإجراء" };
+  if (settings.productResponseMode === "ask_first") return { ...action, type: "none", productCode: product.productCode, reason: "إعداد المتجر يطلب سؤال العميل قبل إرسال الوسائط" };
+  if (settings.productResponseMode === "images") return { ...action, type: "send_product_images", productCode: product.productCode };
+  if (settings.productResponseMode === "product_card") return { ...action, type: "send_product_card", productCode: product.productCode };
+  if (action.type === "send_product_images" && !product.imageUrls.length) return { ...action, type: product.productLink ? "send_product_card" : "none", productCode: product.productCode, reason: "لا توجد صورة تشغيلية متاحة؛ استُخدم البديل الآمن" };
+  if (action.type === "send_product_card" && !product.productLink) return { ...action, type: product.imageUrls.length ? "send_product_images" : "none", productCode: product.productCode, reason: "لا يوجد رابط منتج؛ استُخدم البديل الآمن" };
+  return { ...action, productCode: product.productCode };
 }
 
 async function getSettings(db: any, storeId: number) {
@@ -136,60 +157,77 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
     db.select({ direction: inboxMessages.direction, body: inboxMessages.body }).from(inboxMessages).where(and(eq(inboxMessages.conversationId, conversation.id), or(eq(inboxMessages.direction, "inbound"), eq(inboxMessages.direction, "outbound"))!)).orderBy(desc(inboxMessages.occurredAt), desc(inboxMessages.id)).limit(6),
   ]);
   const terms = extractTerms(sourceBody);
-  const productFilters = terms.flatMap(term => [like(products.name, `%${term}%`), like(products.productCode, `%${term}%`), like(products.category, `%${term}%`)]);
+  const imageAnalyses = await listCustomerImageFacts(storeId, sourceMessageId);
+  const imageProductCodes = Array.from(new Set(imageAnalyses.flatMap(analysis => analysis.matches.map(match => match.productCode))));
+  const productFilters = [...imageProductCodes.map(code => eq(products.productCode, code)), ...terms.flatMap(term => [like(products.name, `%${term}%`), like(products.productCode, `%${term}%`), like(products.category, `%${term}%`)])];
   const knowledgeFilters = terms.flatMap(term => [like(customerBotKnowledgeArticles.title, `%${term}%`), like(customerBotKnowledgeArticles.body, `%${term}%`)]);
   type SafeProduct = { id: number; productCode: string; name: string; category: string; sellingPrice: string; description: string | null };
-  type SafeVariant = { productId: number; colorName: string; sizeLabel: string; inventoryQuantity: number; availability: "available" | "low_stock" | "out_of_stock" };
+  type SafeVariant = { id: number; productId: number; colorName: string; sizeLabel: string; inventoryQuantity: number; availability: "available" | "low_stock" | "out_of_stock" };
   const matchingProducts: SafeProduct[] = productFilters.length
     ? await db.select({ id: products.id, productCode: products.productCode, name: products.name, category: products.category, sellingPrice: products.sellingPrice, description: products.description }).from(products).where(and(eq(products.storeId, storeId), eq(products.status, "active"), or(...productFilters)!)).orderBy(desc(products.updatedAt)).limit(5)
     : [];
   const variants: SafeVariant[] = matchingProducts.length
-    ? await db.select({ productId: productVariants.productId, colorName: productVariants.colorName, sizeLabel: productVariants.sizeLabel, inventoryQuantity: productVariants.inventoryQuantity, availability: productVariants.availability }).from(productVariants).where(inArray(productVariants.productId, matchingProducts.map(product => product.id)))
+    ? await db.select({ id: productVariants.id, productId: productVariants.productId, colorName: productVariants.colorName, sizeLabel: productVariants.sizeLabel, inventoryQuantity: productVariants.inventoryQuantity, availability: productVariants.availability }).from(productVariants).where(inArray(productVariants.productId, matchingProducts.map(product => product.id)))
     : [];
   const approvedKnowledge: Array<{ id: number; title: string; kind: string; body: string }> = knowledgeFilters.length
     ? await db.select({ id: customerBotKnowledgeArticles.id, title: customerBotKnowledgeArticles.title, kind: customerBotKnowledgeArticles.kind, body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "approved"), or(...knowledgeFilters)!)).orderBy(desc(customerBotKnowledgeArticles.updatedAt)).limit(5)
-    : [];
+    : await db.select({ id: customerBotKnowledgeArticles.id, title: customerBotKnowledgeArticles.title, kind: customerBotKnowledgeArticles.kind, body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "approved"))).orderBy(desc(customerBotKnowledgeArticles.updatedAt)).limit(3);
+  const [mediaRows, enrichmentRows] = matchingProducts.length
+    ? await Promise.all([
+      db.select({ productId: productMedia.productId, variantId: productMedia.variantId, storageKey: productMedia.storageKey, mediaType: productMedia.mediaType, sortOrder: productMedia.sortOrder }).from(productMedia).where(and(inArray(productMedia.productId, matchingProducts.map(product => product.id)), eq(productMedia.mediaType, "image"))).orderBy(productMedia.sortOrder),
+      db.select({ productId: metaCatalogProductEnrichments.productId, productLink: metaCatalogProductEnrichments.productLink }).from(metaCatalogProductEnrichments).where(and(eq(metaCatalogProductEnrichments.storeId, storeId), inArray(metaCatalogProductEnrichments.productId, matchingProducts.map(product => product.id)))),
+    ])
+    : [[], []];
   const [linkedOrder] = conversation.orderId
     ? await db.select({ orderNumber: orders.orderNumber, status: orders.status, total: orders.total }).from(orders).where(and(eq(orders.storeId, storeId), eq(orders.id, conversation.orderId))).limit(1)
     : [];
-  const imageAnalyses = await listCustomerImageFacts(storeId, sourceMessageId);
+  const enrichedProducts = await Promise.all(matchingProducts.map(async product => {
+      const colorGroups = new Map<string, { colorName: string; imageUrls: string[]; sizes: Array<{ size: string | null; available: boolean }> }>();
+      variants.filter(variant => variant.productId === product.id).forEach(variant => {
+        if (!colorGroups.has(variant.colorName)) colorGroups.set(variant.colorName, { colorName: variant.colorName, imageUrls: [], sizes: [] });
+        colorGroups.get(variant.colorName)!.sizes.push({ size: variant.sizeLabel || null, available: variant.inventoryQuantity > 0 && variant.availability !== "out_of_stock" });
+      });
+      const productMediaRows = mediaRows.filter((media: any) => media.productId === product.id).slice(0, 4);
+      const imageUrls = (await Promise.all(productMediaRows.map((media: any) => absoluteMetaCatalogStorageUrl(media.storageKey)))).filter((url): url is string => Boolean(url));
+      for (const media of productMediaRows) {
+        const variant = variants.find(candidate => candidate.id === media.variantId);
+        const target = variant ? colorGroups.get(variant.colorName) : null;
+        const url = await absoluteMetaCatalogStorageUrl(media.storageKey);
+        if (target && url) target.imageUrls.push(url);
+      }
+      return { ...product, productLink: enrichmentRows.find((row: any) => row.productId === product.id)?.productLink ?? null, imageUrls, colors: Array.from(colorGroups.values()) };
+    }));
   return {
     store: { currencyCode: store?.currencyCode ?? "IQD", defaultDeliveryFee: store?.defaultDeliveryFee ?? "0.00", freeDeliveryEnabled: store?.freeDeliveryEnabled ?? false, freeDeliveryThreshold: store?.freeDeliveryThreshold ?? null },
     conversation: { id: conversation.id, subject: conversation.subject, channel: conversation.channel, customerName: conversation.contactNameSnapshot, order: linkedOrder ? { ...linkedOrder, statusLabel: orderStatusLabels[linkedOrder.status] ?? linkedOrder.status } : null },
-    products: matchingProducts.map(product => {
-      const colorGroups = new Map<string, { colorName: string; sizes: Array<{ size: string | null; available: boolean }> }>();
-      variants.filter(variant => variant.productId === product.id).forEach(variant => {
-        if (!colorGroups.has(variant.colorName)) colorGroups.set(variant.colorName, { colorName: variant.colorName, sizes: [] });
-        colorGroups.get(variant.colorName)!.sizes.push({ size: variant.sizeLabel || null, available: variant.inventoryQuantity > 0 && variant.availability !== "out_of_stock" });
-      });
-      return { ...product, colors: Array.from(colorGroups.values()) };
-    }),
+    products: enrichedProducts,
     knowledge: approvedKnowledge,
     recentMessages: messages.reverse().map((message: { direction: "inbound" | "outbound"; body: string }) => ({ direction: message.direction, body: message.body })),
     imageAnalyses,
   };
 }
 
-function assistantPrompt(input: { facts: BotFacts; incoming: string; stronger: boolean; dialect: string; tone: "warm" | "professional" | "concise"; operatorInstructions: string | null }) {
+function assistantPrompt(input: { facts: BotFacts; incoming: string; stronger: boolean; dialect: string; tone: "warm" | "professional" | "concise"; operatorInstructions: string | null; templates?: Record<string, string | null>; productResponseMode?: string }) {
   return [
     "أنت مساعد مبيعات عربي لمتجر حجابات. اكتب جواباً طبيعياً موجزاً للعميلة.",
     `اللهجة المطلوبة: ${input.dialect}. نبرة الرد: ${input.tone}.`,
     input.operatorInstructions ? `تعليمات المشغل المعتمدة: ${input.operatorInstructions}` : "لا توجد تعليمات إضافية من المشغل.",
+    `قواعد عرض المنتج من الواجهة: ${input.productResponseMode ?? "smart"}. القوالب الاختيارية: ${JSON.stringify(input.templates ?? {})}. استخدم القالب كمرجع نبرة فقط، ولا تستبدل الحقائق الحية به.`,
     "استخدم الحقائق المرفقة فقط. لا تخترع سعراً أو لوناً أو توفرًا أو خصماً. حقائق المنتجات والتوصيل الحية مقدمة على أي بطاقة معرفة. إذا وُجد تحليل صورة، صِغه كاقتراح مرئي لا كتطابق مؤكد، ولا تذكر رابط الصورة أو مفتاح تخزينها أو تفاصيل النظام. لا تذكر أسماء النماذج أو التحويل الداخلي أو محتوى الملاحظات الداخلية.",
     "لا توافق على تعديل سعر أو مخزون أو طلب أو خصم أو إلغاء أو إرجاع؛ يجب أن تطلب متابعة الموظف في هذه الحالات.",
     `أمثلة الأسلوب العراقي المعتمدة، للاقتداء بالنبرة فقط وعدم نسخ الحقائق منها:\n${iraqiStyleExamples}`,
     input.stronger ? "هذه حالة مركبة؛ ساعد في المقارنة بوضوح، لكن اعتمد حصراً على المنتجات المرفقة." : "هذه محاولة المسار السريع؛ إذا لم تكف الحقائق فاطلب توضيحاً ولا تخمّن.",
-    "أعد JSON فقط بالشكل: {\"reply\": string, \"confidence\": number من 0 إلى 100, \"needsEscalation\": boolean, \"escalationReason\": string أو null}.",
+    "اختر إجراءً واحداً فقط عند الحاجة: none أو send_product_images أو send_product_card أو order_summary أو notify_human. لا تستخدم order_summary إلا إذا كانت بيانات الطلب مكتملة في الحقائق. لا تستخدم notify_human للحالات الحساسة فقط؛ استخدمه عندما تحتاج الحالة فعلاً تدخلاً. أعد JSON فقط بالشكل: {\"reply\": string, \"confidence\": number من 0 إلى 100, \"needsEscalation\": boolean, \"escalationReason\": string أو null, \"action\": string, \"productCode\": string أو null, \"colorName\": string أو null, \"quantity\": number أو null, \"actionCaption\": string أو null}.",
     `حقائق المتجر والمحادثة: ${JSON.stringify(input.facts)}`,
     `رسالة العميل الحالية: ${input.incoming}`,
   ].join("\n\n");
 }
 
-async function createRun(db: any, input: { storeId: number; conversationId: number; sourceMessageId: number; route: "fast" | "escalated" | "human_handoff"; status: "draft" | "handoff" | "failed" | "replied"; model?: string | null; confidence?: number | null; escalationReason?: string | null; facts: BotFacts; replyDraft?: string | null; errorSummary?: string | null; usage?: InvokeResult["usage"] }) {
+async function createRun(db: any, input: { storeId: number; conversationId: number; sourceMessageId: number; route: "fast" | "escalated" | "human_handoff"; status: "draft" | "handoff" | "failed" | "replied"; model?: string | null; confidence?: number | null; escalationReason?: string | null; facts: BotFacts; replyDraft?: string | null; action?: BotActionDecision | null; errorSummary?: string | null; usage?: InvokeResult["usage"] }) {
   const result = await db.insert(customerBotRuns).values({
     storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessageId,
     route: input.route, status: input.status, model: input.model ?? null, confidence: input.confidence ?? null,
-    escalationReason: input.escalationReason ?? null, factsSnapshot: JSON.stringify(input.facts), replyDraft: input.replyDraft ?? null,
+    escalationReason: input.escalationReason ?? null, factsSnapshot: JSON.stringify(input.facts), replyDraft: input.replyDraft ?? null, actionDecisionJson: input.action ? JSON.stringify(input.action) : null,
     errorSummary: input.errorSummary ?? null, promptTokens: input.usage?.prompt_tokens ?? null, completionTokens: input.usage?.completion_tokens ?? null,
   });
   const runId = Number(result[0].insertId);
@@ -201,7 +239,7 @@ export async function getCustomerBotSettings(storeId: number) {
   return getSettings(await requireDb(), storeId);
 }
 
-export async function updateCustomerBotSettings(input: { storeId: number; actorUserId: number; enabled: boolean; mode: BotMode; messengerEnabled: boolean; instagramEnabled: boolean; whatsappEnabled: boolean; dialect: string; tone: "warm" | "professional" | "concise"; operatorInstructions: string | null; fastModel: string; escalationModel: string; minimumConfidence: number; maxDailyReplies: number; maxDailyEscalations: number }) {
+export async function updateCustomerBotSettings(input: { storeId: number; actorUserId: number; enabled: boolean; mode: BotMode; messengerEnabled: boolean; instagramEnabled: boolean; whatsappEnabled: boolean; dialect: string; tone: "warm" | "professional" | "concise"; operatorInstructions: string | null; welcomeTemplate?: string | null; priceReplyTemplate?: string | null; colorOfferTemplate?: string | null; productCardTemplate?: string | null; orderSummaryTemplate?: string | null; confirmationTemplate?: string | null; humanWaitingTemplate?: string | null; productResponseMode?: "smart" | "images" | "product_card" | "ask_first"; learningEnabled?: boolean; learningReviewDays?: number; fastModel: string; escalationModel: string; minimumConfidence: number; maxDailyReplies: number; maxDailyEscalations: number }) {
   const db = await requireDb();
   await getSettings(db, input.storeId);
   await db.update(customerBotSettings).set({
@@ -213,6 +251,16 @@ export async function updateCustomerBotSettings(input: { storeId: number; actorU
     dialect: input.dialect,
     tone: input.tone,
     operatorInstructions: input.operatorInstructions,
+    welcomeTemplate: input.welcomeTemplate ?? null,
+    priceReplyTemplate: input.priceReplyTemplate ?? null,
+    colorOfferTemplate: input.colorOfferTemplate ?? null,
+    productCardTemplate: input.productCardTemplate ?? null,
+    orderSummaryTemplate: input.orderSummaryTemplate ?? null,
+    confirmationTemplate: input.confirmationTemplate ?? null,
+    humanWaitingTemplate: input.humanWaitingTemplate ?? null,
+    productResponseMode: input.productResponseMode ?? "smart",
+    learningEnabled: input.learningEnabled ?? true,
+    learningReviewDays: input.learningReviewDays ?? 14,
     fastModel: input.fastModel,
     escalationModel: input.escalationModel,
     minimumConfidence: input.minimumConfidence,
@@ -254,7 +302,7 @@ function commentTargetFromMessage(message: any) {
   return null;
 }
 
-async function maybeSendAutomaticReply(input: { db: any; settings: any; storeId: number; conversation: any; sourceMessage: any; runId: number; body: string; confidence: number; actorUserId?: number | null; route: "fast" | "escalated" }) {
+async function maybeSendAutomaticReply(input: { db: any; settings: any; storeId: number; conversation: any; sourceMessage: any; runId: number; body: string; confidence: number; actorUserId?: number | null; route: "fast" | "escalated"; facts: BotFacts; action?: BotActionDecision | null }) {
   if (input.settings.mode !== "auto_reply" || !input.settings.enabled || !channelIsEnabled(input.settings, input.conversation.channel)) return { status: "draft" as const, sent: false as const };
   try {
     const commentTarget = commentTargetFromMessage(input.sourceMessage);
@@ -271,7 +319,12 @@ async function maybeSendAutomaticReply(input: { db: any; settings: any; storeId:
         ? input.conversation.externalConversationId.slice(prefix.length)
         : "";
       if (!account?.providerAccountId || !recipientExternalId) throw new Error("لا يمكن تحديد مستلم القناة الأصلية لرد Bot.");
-      await sendMetaDirectMessage({ storeId: input.storeId, channel: input.conversation.channel, providerAccountId: account.providerAccountId, recipientExternalId, body: input.body, sourceExternalMessageId: input.sourceMessage.externalMessageId ?? null, replyWindowOpenedAt: input.sourceMessage.occurredAt ?? null, idempotencyKey: `bot:${input.runId}`, mode: "bot_guarded", botRunId: input.runId, projectionConversationId: input.conversation.id });
+      const product = input.action?.productCode ? input.facts.products.find(item => item.productCode === input.action?.productCode) : input.facts.products[0];
+      const productLink = input.action?.type === "send_product_card" ? product?.productLink : null;
+      const selectedColor = input.action?.colorName ? product?.colors.find(color => color.colorName === input.action?.colorName) : null;
+      const mediaUrl = input.action?.type === "send_product_images" ? selectedColor?.imageUrls[0] ?? product?.imageUrls[0] ?? null : null;
+      const body = productLink && !input.body.includes(productLink) ? `${input.body}\n${productLink}` : input.body;
+      await sendMetaDirectMessage({ storeId: input.storeId, channel: input.conversation.channel, providerAccountId: account.providerAccountId, recipientExternalId, body, mediaUrl, mediaType: mediaUrl ? "image" : null, sourceExternalMessageId: input.sourceMessage.externalMessageId ?? null, replyWindowOpenedAt: input.sourceMessage.occurredAt ?? null, idempotencyKey: `bot:${input.runId}`, mode: "bot_guarded", botRunId: input.runId, projectionConversationId: input.conversation.id });
     }
     await input.db.update(customerBotRuns).set({ status: "replied" }).where(and(eq(customerBotRuns.id, input.runId), eq(customerBotRuns.storeId, input.storeId)));
     return { status: "replied" as const, sent: true as const };
@@ -362,11 +415,13 @@ export async function generateCustomerBotDraft(input: { storeId: number; actorUs
   }
   try {
     if (!preEscalationReason) {
-      const fastResult = await fastLlm({ model: settings.fastModel, messages: [{ role: "system", content: assistantPrompt({ facts, incoming: channelSourceMessage.body, stronger: false, dialect: settings.dialect, tone: settings.tone, operatorInstructions: settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
+      const fastResult = await fastLlm({ model: settings.fastModel, messages: [{ role: "system", content: assistantPrompt({ facts, incoming: channelSourceMessage.body, stronger: false, dialect: settings.dialect, tone: settings.tone, operatorInstructions: settings.operatorInstructions, productResponseMode: settings.productResponseMode, templates: { welcome: settings.welcomeTemplate, price: settings.priceReplyTemplate, colors: settings.colorOfferTemplate, card: settings.productCardTemplate, orderSummary: settings.orderSummaryTemplate, confirmation: settings.confirmationTemplate, humanWaiting: settings.humanWaitingTemplate } }) }], outputSchema: { name: "customer_assistant_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] }, action: { type: "string", enum: [...botActionTypes] }, productCode: { type: ["string", "null"] }, colorName: { type: ["string", "null"] }, quantity: { type: ["integer", "null"] }, actionCaption: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason", "action", "productCode", "colorName", "quantity", "actionCaption"], additionalProperties: false } } });
       const parsed = parseStructuredReply(responseText(fastResult));
-      if (!parsed.needsEscalation && parsed.confidence >= settings.minimumConfidence && parsed.reply) {
-        const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "fast", status: "draft", model: fastResult.model || settings.fastModel, confidence: parsed.confidence, facts, replyDraft: parsed.reply, usage: fastResult.usage });
-        const delivery = await maybeSendAutomaticReply({ db, settings, storeId: input.storeId, conversation, sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, actorUserId: input.actorUserId, route: "fast" });
+      const action = applyProductResponsePolicy(parsed.action, settings, facts);
+      if (!parsed.needsEscalation && action.type !== "notify_human" && parsed.confidence >= settings.minimumConfidence && parsed.reply) {
+        const runId = await createRun(db, { storeId: input.storeId, conversationId: conversation.id, sourceMessageId: sourceMessage.id, route: "fast", status: "draft", model: fastResult.model || settings.fastModel, confidence: parsed.confidence, facts, replyDraft: parsed.reply, action, usage: fastResult.usage });
+        if (action.type === "order_summary") await createCustomerBotOrderDraft({ storeId: input.storeId, conversationId: conversation.id, botRunId: runId, facts, action });
+        const delivery = await maybeSendAutomaticReply({ db, settings, storeId: input.storeId, conversation, sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, actorUserId: input.actorUserId, route: "fast", facts, action });
         return { runId, route: "fast" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? null };
       }
         return generateEscalatedDraft({ db, settings, facts, sourceMessage: channelSourceMessage, conversationId: conversation.id, storeId: input.storeId, llm: escalationLlm, reason: parsed.escalationReason || "ثقة المسار السريع أقل من الحد" });
@@ -387,16 +442,18 @@ async function generateEscalatedDraft(input: { db: any; settings: any; facts: Bo
     await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason: "تجاوز حد التصعيد اليومي" });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: null, escalationReason: "تجاوز حد التصعيد اليومي" };
   }
-  const result = await input.llm({ model: input.settings.escalationModel, messages: [{ role: "system", content: assistantPrompt({ facts: input.facts, incoming: input.sourceMessage.body, stronger: true, dialect: input.settings.dialect, tone: input.settings.tone, operatorInstructions: input.settings.operatorInstructions }) }], outputSchema: { name: "customer_assistant_escalated_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason"], additionalProperties: false } } });
+  const result = await input.llm({ model: input.settings.escalationModel, messages: [{ role: "system", content: assistantPrompt({ facts: input.facts, incoming: input.sourceMessage.body, stronger: true, dialect: input.settings.dialect, tone: input.settings.tone, operatorInstructions: input.settings.operatorInstructions, productResponseMode: input.settings.productResponseMode, templates: { welcome: input.settings.welcomeTemplate, price: input.settings.priceReplyTemplate, colors: input.settings.colorOfferTemplate, card: input.settings.productCardTemplate, orderSummary: input.settings.orderSummaryTemplate, confirmation: input.settings.confirmationTemplate, humanWaiting: input.settings.humanWaitingTemplate } }) }], outputSchema: { name: "customer_assistant_escalated_reply", strict: true, schema: { type: "object", properties: { reply: { type: "string" }, confidence: { type: "integer" }, needsEscalation: { type: "boolean" }, escalationReason: { type: ["string", "null"] }, action: { type: "string", enum: [...botActionTypes] }, productCode: { type: ["string", "null"] }, colorName: { type: ["string", "null"] }, quantity: { type: ["integer", "null"] }, actionCaption: { type: ["string", "null"] } }, required: ["reply", "confidence", "needsEscalation", "escalationReason", "action", "productCode", "colorName", "quantity", "actionCaption"], additionalProperties: false } } });
   const parsed = parseStructuredReply(responseText(result));
-  if (parsed.needsEscalation || parsed.confidence < input.settings.minimumConfidence || !parsed.reply) {
+  const action = applyProductResponsePolicy(parsed.action, input.settings, input.facts);
+  if (parsed.needsEscalation || action.type === "notify_human" || parsed.confidence < input.settings.minimumConfidence || !parsed.reply) {
     const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "human_handoff", status: "handoff", model: result.model || input.settings.escalationModel, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason, facts: input.facts, usage: result.usage });
     const conversation = await getScopedConversation(input.db, input.storeId, input.conversationId);
     await notifyHumanHandoffSafely({ storeId: input.storeId, conversation, reason: parsed.escalationReason || input.reason });
     return { runId, route: "human_handoff" as const, status: "handoff" as const, replyDraft: null, confidence: parsed.confidence, escalationReason: parsed.escalationReason || input.reason };
   }
-  const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "escalated", status: "draft", model: result.model || input.settings.escalationModel, confidence: parsed.confidence, escalationReason: input.reason, facts: input.facts, replyDraft: parsed.reply, usage: result.usage });
+  const runId = await createRun(input.db, { storeId: input.storeId, conversationId: input.conversationId, sourceMessageId: input.sourceMessage.id, route: "escalated", status: "draft", model: result.model || input.settings.escalationModel, confidence: parsed.confidence, escalationReason: input.reason, facts: input.facts, replyDraft: parsed.reply, action, usage: result.usage });
+  if (action.type === "order_summary") await createCustomerBotOrderDraft({ storeId: input.storeId, conversationId: input.conversationId, botRunId: runId, facts: input.facts, action });
   const conversation = await getScopedConversation(input.db, input.storeId, input.conversationId);
-  const delivery = await maybeSendAutomaticReply({ db: input.db, settings: input.settings, storeId: input.storeId, conversation, sourceMessage: input.sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, route: "escalated" });
+  const delivery = await maybeSendAutomaticReply({ db: input.db, settings: input.settings, storeId: input.storeId, conversation, sourceMessage: input.sourceMessage, runId, body: parsed.reply, confidence: parsed.confidence, route: "escalated", facts: input.facts, action });
   return { runId, route: "escalated" as const, status: delivery.status, replyDraft: parsed.reply, confidence: parsed.confidence, escalationReason: delivery.error ?? input.reason };
 }

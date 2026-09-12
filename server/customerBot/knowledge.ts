@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
-import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, inboxConversations, inboxMessages, metaOutboundMessages, stores } from "../../drizzle/schema";
+import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, customerBotSettings, inboxConversations, inboxMessages, metaOutboundMessages, stores } from "../../drizzle/schema";
 import { getDb } from "../db";
 
 export const knowledgeKinds = ["faq", "policy", "style_guidance", "product_guidance"] as const;
@@ -67,7 +67,7 @@ function candidateKind(question: string): KnowledgeKind {
   return /توصيل|شحن|استبدال|إرجاع|دفع|طلب|سياسة|عنوان/i.test(question) ? "policy" : "faq";
 }
 
-export async function extractHistoricalKnowledgeCandidates(input: { storeId: number; actorUserId: number; channels?: Array<"whatsapp" | "instagram" | "messenger">; limit?: number }) {
+export async function extractHistoricalKnowledgeCandidates(input: { storeId: number; actorUserId: number; channels?: Array<"whatsapp" | "instagram" | "messenger">; limit?: number; since?: Date | null }) {
   const db = await requireDb();
   const limit = Math.min(Math.max(input.limit ?? 30, 1), 100);
   const channelFilter = input.channels?.length ? or(...input.channels.map(channel => eq(inboxConversations.channel, channel))) : undefined;
@@ -79,7 +79,7 @@ export async function extractHistoricalKnowledgeCandidates(input: { storeId: num
     occurredAt: inboxMessages.occurredAt,
     channel: inboxConversations.channel,
     subject: inboxConversations.subject,
-  }).from(inboxMessages).innerJoin(inboxConversations, eq(inboxMessages.conversationId, inboxConversations.id)).where(and(eq(inboxConversations.storeId, input.storeId), eq(inboxMessages.source, "historical_sync"), or(eq(inboxMessages.direction, "inbound"), eq(inboxMessages.direction, "outbound")), channelFilter)).orderBy(asc(inboxMessages.conversationId), asc(inboxMessages.occurredAt), asc(inboxMessages.id)).limit(limit * 8);
+  }).from(inboxMessages).innerJoin(inboxConversations, eq(inboxMessages.conversationId, inboxConversations.id)).where(and(eq(inboxConversations.storeId, input.storeId), eq(inboxMessages.source, "historical_sync"), or(eq(inboxMessages.direction, "inbound"), eq(inboxMessages.direction, "outbound")), input.since ? gte(inboxMessages.occurredAt, input.since) : undefined, channelFilter)).orderBy(asc(inboxMessages.conversationId), asc(inboxMessages.occurredAt), asc(inboxMessages.id)).limit(limit * 8);
 
   const nextOutbound = new Map<number, typeof messages[number]>();
   const pendingInbound = new Map<number, typeof messages[number]>();
@@ -117,6 +117,8 @@ export async function extractHistoricalKnowledgeCandidates(input: { storeId: num
 /** Captures a native-channel employee echo as a reviewable draft; it never teaches the bot automatically. */
 export async function captureNativeChannelReply(input: { storeId: number; conversationId: number; messageId: number; channel: "whatsapp" | "instagram" | "messenger" }) {
   const db = await requireDb();
+  const [settings] = await db.select({ learningEnabled: customerBotSettings.learningEnabled }).from(customerBotSettings).where(eq(customerBotSettings.storeId, input.storeId)).limit(1);
+  if (settings && !settings.learningEnabled) return { created: false as const, reason: "learning_disabled" as const };
   const [outbound] = await db.select({ externalMessageId: inboxMessages.externalMessageId, body: inboxMessages.body }).from(inboxMessages).where(and(eq(inboxMessages.id, input.messageId), eq(inboxMessages.conversationId, input.conversationId), eq(inboxMessages.direction, "outbound"))).limit(1);
   if (!outbound) return { created: false as const, reason: "outbound_not_found" as const };
   if (outbound.externalMessageId) {

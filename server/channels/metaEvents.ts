@@ -222,7 +222,9 @@ async function processReservedEvent(row: { id: number; storeId: number; metaAsse
       }
       if (event.source === "live_webhook" && event.direction !== "outbound" && ingested.accepted && !ingested.duplicate && ingested.storeId && ingested.conversationId && ingested.messageId) {
         if (event.senderExternalId) void hydrateMetaContactProfile({ storeId: ingested.storeId, channel: event.channel, providerAccountId: event.providerAccountId, externalProfileId: event.senderExternalId, conversationId: ingested.conversationId }).catch(error => console.warn("[Meta] تعذر إثراء ملف جهة الاتصال:", error));
-        void generateCustomerBotDraft({ storeId: ingested.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId, channelContext: { body: event.body, externalMessageId: event.externalMessageId, occurredAt: event.occurredAt } }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد الرسالة الواردة:", error));
+        const [botSettings] = await db.select({ enabled: customerBotSettings.enabled, messengerEnabled: customerBotSettings.messengerEnabled, instagramEnabled: customerBotSettings.instagramEnabled, whatsappEnabled: customerBotSettings.whatsappEnabled }).from(customerBotSettings).where(eq(customerBotSettings.storeId, ingested.storeId)).limit(1);
+        const channelEnabled = event.channel === "messenger" ? botSettings?.messengerEnabled : event.channel === "instagram" ? botSettings?.instagramEnabled : botSettings?.whatsappEnabled;
+        if (botSettings?.enabled && channelEnabled) void generateCustomerBotDraft({ storeId: ingested.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId, channelContext: { body: event.body, externalMessageId: event.externalMessageId, occurredAt: event.occurredAt } }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد الرسالة الواردة:", error));
       }
       if (event.source === "live_webhook" && event.direction === "outbound" && ingested.accepted && !ingested.duplicate && ingested.storeId && ingested.conversationId && ingested.messageId) {
         await captureNativeChannelReply({ storeId: ingested.storeId, conversationId: ingested.conversationId, messageId: ingested.messageId, channel: event.channel });
@@ -232,8 +234,9 @@ async function processReservedEvent(row: { id: number; storeId: number; metaAsse
     } else if (event.kind === "comment" || event.kind === "mention") {
       const ingested = await ingestMetaBusinessEvent(db, row.storeId, event as BusinessEvent & { kind: "comment" | "mention" });
       if (!ingested.duplicate && ingested.conversationId && ingested.messageId) {
-        const [botSettings] = await db.select({ enabled: customerBotSettings.enabled }).from(customerBotSettings).where(eq(customerBotSettings.storeId, row.storeId)).limit(1);
-        if (botSettings?.enabled) void generateCustomerBotDraft({ storeId: row.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد تعليق Meta:", error));
+        const [botSettings] = await db.select({ enabled: customerBotSettings.enabled, messengerEnabled: customerBotSettings.messengerEnabled, instagramEnabled: customerBotSettings.instagramEnabled }).from(customerBotSettings).where(eq(customerBotSettings.storeId, row.storeId)).limit(1);
+        const channelEnabled = event.channel === "messenger" ? botSettings?.messengerEnabled : botSettings?.instagramEnabled;
+        if (botSettings?.enabled && channelEnabled) void generateCustomerBotDraft({ storeId: row.storeId, conversationId: ingested.conversationId, sourceMessageId: ingested.messageId }).catch(error => console.warn("[CustomerBot] تعذر تشغيل البوت بعد تعليق Meta:", error));
       }
     } else if (event.kind === "lead") {
       const lead = await hydrateLeadFromGraph(row, event as BusinessEvent & { kind: "lead" });

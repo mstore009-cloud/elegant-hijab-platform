@@ -6,6 +6,7 @@ const { sendMetaDirectMessageMock } = vi.hoisted(() => ({ sendMetaDirectMessageM
 vi.mock("../channels/metaOutbound", () => ({ sendMetaDirectMessage: sendMetaDirectMessageMock }));
 import {
   customerBotRuns,
+  customerBotOrderDrafts,
   customerBotSettings,
   channelAccounts,
   customerBotUsageCounters,
@@ -32,6 +33,7 @@ afterEach(async () => {
   if (!db) return;
   for (const cleanup of cleanups.splice(0)) {
     for (const conversationId of cleanup.conversationIds) {
+      await db.delete(customerBotOrderDrafts).where(eq(customerBotOrderDrafts.conversationId, conversationId));
       await db.delete(customerBotRuns).where(eq(customerBotRuns.conversationId, conversationId));
       await db.delete(inboxConversationEvents).where(eq(inboxConversationEvents.conversationId, conversationId));
       await db.delete(inboxMessages).where(eq(inboxMessages.conversationId, conversationId));
@@ -50,6 +52,7 @@ afterEach(async () => {
     await db.delete(customerBotSettings).where(eq(customerBotSettings.storeId, cleanup.storeId));
     await db.delete(stores).where(eq(stores.id, cleanup.storeId));
   }
+  sendMetaDirectMessageMock.mockReset();
 });
 
 async function setup(message: string) {
@@ -68,13 +71,13 @@ async function setup(message: string) {
   return { db, owner, storeId, productId, conversationId: conversation.conversationId, messageId: incoming.messageId };
 }
 
-function mockReply(reply: string, confidence = 90, needsEscalation = false) {
+function mockReply(reply: string, confidence = 90, needsEscalation = false, action: Record<string, unknown> = {}) {
   const calls: Array<{ model?: string }> = [];
   return {
     calls,
     llm: async (input: any) => {
       calls.push({ model: input.model });
-      return { id: "mock", created: 0, model: input.model, choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ reply, confidence, needsEscalation, escalationReason: null }) }, finish_reason: "stop" }], usage: { prompt_tokens: 12, completion_tokens: 18, total_tokens: 30 } };
+      return { id: "mock", created: 0, model: input.model, choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ reply, confidence, needsEscalation, escalationReason: null, action: "none", productCode: null, colorName: null, quantity: null, actionCaption: null, ...action }) }, finish_reason: "stop" }], usage: { prompt_tokens: 12, completion_tokens: 18, total_tokens: 30 } };
     },
   };
 }
@@ -102,6 +105,28 @@ describe("بوت العملاء الهجين", () => {
     expect(run.factsSnapshot).toContain("18000.00");
     expect(run.factsSnapshot).toContain("زيتي");
     expect(run.factsSnapshot).not.toContain("costPrice");
+  });
+
+  it("يرفض قرار عرض صور يحمل كود منتج غير حي ولا يرسله في وضع المسودة", async () => {
+    const setupData = await setup("أرسلي لي ألوان الحجاب الزيتي.");
+    const mock = mockReply("أكيد، هذه ألوانه المتوفرة.", 91, false, { action: "send_product_images", productCode: "BOT-INVALID" });
+    const result = await generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: setupData.messageId, llm: mock.llm });
+    expect(result).toMatchObject({ route: "fast", status: "draft" });
+    const [run] = await listCustomerBotRuns(setupData.storeId, setupData.conversationId);
+    expect(run.actionDecisionJson).toContain('"type":"none"');
+    expect(run.actionDecisionJson).toContain("لا يوجد منتج حي");
+    expect(sendMetaDirectMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("ينشئ مسودة طلب مراجعة ولا ينشئ طلباً نهائياً من قرار النموذج", async () => {
+    const setupData = await setup("أريد تثبيت الحجاب الزيتي.");
+    const [product] = await setupData.db.select({ productCode: products.productCode }).from(products).where(eq(products.id, setupData.productId));
+    const mock = mockReply("أجهز لج ملخص الطلب حتى نتأكد من التفاصيل.", 93, false, { action: "order_summary", productCode: product.productCode, colorName: "زيتي", quantity: 1 });
+    const result = await generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: setupData.messageId, llm: mock.llm });
+    expect(result).toMatchObject({ route: "fast", status: "draft" });
+    const drafts = await setupData.db.select().from(customerBotOrderDrafts).where(eq(customerBotOrderDrafts.conversationId, setupData.conversationId));
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]?.status).toBe("collecting");
   });
 
   it("يرسل الرد الواثق عبر بوابة Meta في وضع bot_guarded عندما تكون القناة مفعلة", async () => {

@@ -8,7 +8,7 @@ import { decryptMetaToken, metaAssetTokenContext, metaConnectionTokenContext } f
 
 type SupportedChannel = "whatsapp" | "instagram" | "messenger";
 type SendMode = "manual" | "bot_guarded" | "comment_guarded";
-export type MetaSendTransport = (input: { channel: SupportedChannel; providerAccountId: string; recipientExternalId: string; body: string; accessToken: string }) => Promise<{ externalMessageId: string }>;
+export type MetaSendTransport = (input: { channel: SupportedChannel; providerAccountId: string; recipientExternalId: string; body: string; accessToken: string; mediaUrl?: string | null; mediaType?: "image" | "video" | "document" | null }) => Promise<{ externalMessageId: string }>;
 export type MetaCommentReplyTransport = (input: { channel: Extract<SupportedChannel, "messenger" | "instagram">; providerAccountId: string; commentExternalId: string; body: string; accessToken: string }) => Promise<{ externalMessageId: string }>;
 
 function duplicateError(error: unknown): boolean {
@@ -34,8 +34,8 @@ async function defaultTransport(input: Parameters<MetaSendTransport>[0]) {
   const runtime = await getMetaRuntimeSettings();
   const endpoint = `https://graph.facebook.com/${runtime.graphApiVersion}/${input.providerAccountId}/messages`;
   const payload = input.channel === "whatsapp"
-    ? { messaging_product: "whatsapp", to: input.recipientExternalId, type: "text", text: { preview_url: false, body: input.body } }
-    : { recipient: { id: input.recipientExternalId }, messaging_type: input.channel === "messenger" ? "RESPONSE" : undefined, message: { text: input.body } };
+    ? input.mediaUrl ? { messaging_product: "whatsapp", to: input.recipientExternalId, type: input.mediaType === "video" ? "video" : "image", [input.mediaType === "video" ? "video" : "image"]: { link: input.mediaUrl, caption: input.body || undefined } } : { messaging_product: "whatsapp", to: input.recipientExternalId, type: "text", text: { preview_url: false, body: input.body } }
+    : { recipient: { id: input.recipientExternalId }, messaging_type: input.channel === "messenger" ? "RESPONSE" : undefined, message: input.mediaUrl ? { attachment: { type: input.mediaType === "video" ? "video" : "image", payload: { url: input.mediaUrl, is_reusable: false } } } : { text: input.body } };
   const response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${input.accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   const json = await response.json().catch(() => ({})) as any;
   if (!response.ok) throw Object.assign(new Error(json?.error?.message || `رفضت Meta الإرسال (${response.status}).`), { code: json?.error?.code ? String(json.error.code) : `HTTP_${response.status}` });
@@ -164,6 +164,8 @@ export async function sendMetaDirectMessage(input: {
   providerAccountId: string;
   recipientExternalId: string;
   body: string;
+  mediaUrl?: string | null;
+  mediaType?: "image" | "video" | "document" | null;
   sourceExternalMessageId?: string | null;
   replyWindowOpenedAt?: Date | null;
   idempotencyKey: string;
@@ -183,7 +185,7 @@ export async function sendMetaDirectMessage(input: {
   if (existing[0]) return { outboxId: existing[0].id, status: existing[0].status, externalMessageId: existing[0].externalMessageId, duplicate: true as const, inboxMessageId: existing[0].inboxMessageId ?? null, projectionError: null };
   let outboxId: number;
   try {
-    const created = await db.insert(metaOutboundMessages).values({ storeId: input.storeId, channelAccountId: account.id, conversationId: input.projectionConversationId ?? null, channel: input.channel, recipientExternalId: input.recipientExternalId, idempotencyKey: input.idempotencyKey, mode: input.mode, body, botRunId: input.botRunId ?? null });
+    const created = await db.insert(metaOutboundMessages).values({ storeId: input.storeId, channelAccountId: account.id, conversationId: input.projectionConversationId ?? null, channel: input.channel, recipientExternalId: input.recipientExternalId, idempotencyKey: input.idempotencyKey, mode: input.mode, body, mediaUrl: input.mediaUrl ?? null, mediaType: input.mediaType ?? null, botRunId: input.botRunId ?? null });
     outboxId = Number(created[0].insertId);
   } catch (error) {
     if (!duplicateError(error)) throw error;
@@ -194,14 +196,14 @@ export async function sendMetaDirectMessage(input: {
   await db.update(metaOutboundMessages).set({ status: "sending", errorCode: null, errorSummary: null }).where(eq(metaOutboundMessages.id, outboxId));
   try {
     const credential = await loadMetaCredential(input.storeId, account);
-    const delivered = await transport({ channel: input.channel, providerAccountId: credential.providerAccountId, recipientExternalId: input.recipientExternalId, body, accessToken: credential.accessToken });
+    const delivered = await transport({ channel: input.channel, providerAccountId: credential.providerAccountId, recipientExternalId: input.recipientExternalId, body, accessToken: credential.accessToken, mediaUrl: input.mediaUrl ?? null, mediaType: input.mediaType ?? null });
     await db.update(metaOutboundMessages).set({ status: "sent", externalMessageId: delivered.externalMessageId, sentAt: new Date() }).where(eq(metaOutboundMessages.id, outboxId));
     await db.update(channelAccounts).set({ lastError: null }).where(eq(channelAccounts.id, account.id));
     let inboxMessageId: number | null = null;
     let projectionError: string | null = null;
     if (input.projectionConversationId) {
       try {
-        const createdMessage = await db.insert(inboxMessages).values({ conversationId: input.projectionConversationId, direction: "outbound", body, externalMessageId: delivered.externalMessageId, source: "outbound", deliveryStatus: "sent", deliveredAt: null });
+        const createdMessage = await db.insert(inboxMessages).values({ conversationId: input.projectionConversationId, direction: "outbound", body, metadataJson: JSON.stringify({ messageType: input.mediaUrl ? input.mediaType ?? "image" : "text", mediaUrl: input.mediaUrl ?? null }), externalMessageId: delivered.externalMessageId, source: "outbound", deliveryStatus: "sent", deliveredAt: null });
         inboxMessageId = Number(createdMessage[0].insertId);
         await db.update(metaOutboundMessages).set({ inboxMessageId }).where(eq(metaOutboundMessages.id, outboxId));
         await db.update(inboxConversations).set({ lastMessageAt: new Date(), status: "waiting_customer" }).where(eq(inboxConversations.id, input.projectionConversationId));

@@ -98,6 +98,20 @@ describe("Meta manual outbound delivery", () => {
     expect(projected).toMatchObject({ conversationId, direction: "outbound", body: "رد مباشر من Bot" });
   });
 
+  it("يرسل صورة منتج مباشرة مع سجل تدقيق وإسقاط واضح في Inbox", async () => {
+    const { db, owner, storeId } = await setup();
+    const created = await db.insert(inboxConversations).values({ storeId, channel: "whatsapp", externalConversationId: "whatsapp:recipient-image", contactNameSnapshot: "عميلة صورة", status: "open", createdByUserId: owner.id });
+    const conversationId = Number(created[0].insertId);
+    const transport = vi.fn(async () => ({ externalMessageId: "external-image" }));
+    const sent = await sendMetaDirectMessage({ storeId, channel: "whatsapp", providerAccountId: `phone-send-${storeId}`, recipientExternalId: "recipient-image", body: "هذه ألوان المنتج المتوفرة.", mediaUrl: "https://example.com/product-color.jpg", mediaType: "image", replyWindowOpenedAt: new Date(), idempotencyKey: `image:${randomUUID()}`, mode: "bot_guarded", projectionConversationId: conversationId }, transport as any);
+    expect(sent).toMatchObject({ status: "sent", externalMessageId: "external-image" });
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({ mediaUrl: "https://example.com/product-color.jpg", mediaType: "image" }));
+    const [outbox] = await db.select().from(metaOutboundMessages).where(eq(metaOutboundMessages.externalMessageId, "external-image"));
+    expect(outbox).toMatchObject({ mediaUrl: "https://example.com/product-color.jpg", mediaType: "image" });
+    const [projected] = await db.select().from(inboxMessages).where(eq(inboxMessages.externalMessageId, "external-image"));
+    expect(projected.metadataJson).toContain("product-color.jpg");
+  });
+
   it("يرسل ردود التعليقات عبر comment_guarded لكل من Facebook وInstagram ويمنع التكرار", async () => {
     const { db, owner, storeId } = await setup();
     const transports = new Map<string, ReturnType<typeof vi.fn>>();

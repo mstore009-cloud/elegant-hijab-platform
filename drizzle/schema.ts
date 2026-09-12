@@ -876,6 +876,8 @@ export const metaOutboundMessages = mysqlTable(
     idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
     mode: mysqlEnum("mode", ["manual", "bot_guarded", "comment_guarded"]).notNull(),
     body: text("body").notNull(),
+    mediaUrl: varchar("mediaUrl", { length: 2048 }),
+    mediaType: mysqlEnum("mediaType", ["image", "video", "document"]),
     status: mysqlEnum("status", ["queued", "sending", "sent", "failed", "blocked"]).default("queued").notNull(),
     externalMessageId: varchar("externalMessageId", { length: 255 }),
     actorUserId: int("actorUserId").references(() => users.id),
@@ -1009,6 +1011,16 @@ export const customerBotSettings = mysqlTable(
     dialect: varchar("dialect", { length: 80 }).default("عراقي").notNull(),
     tone: mysqlEnum("tone", ["warm", "professional", "concise"]).default("warm").notNull(),
     operatorInstructions: text("operatorInstructions"),
+    welcomeTemplate: text("welcomeTemplate"),
+    priceReplyTemplate: text("priceReplyTemplate"),
+    colorOfferTemplate: text("colorOfferTemplate"),
+    productCardTemplate: text("productCardTemplate"),
+    orderSummaryTemplate: text("orderSummaryTemplate"),
+    confirmationTemplate: text("confirmationTemplate"),
+    humanWaitingTemplate: text("humanWaitingTemplate"),
+    productResponseMode: mysqlEnum("productResponseMode", ["smart", "images", "product_card", "ask_first"]).default("smart").notNull(),
+    learningEnabled: boolean("learningEnabled").default(true).notNull(),
+    learningReviewDays: int("learningReviewDays").default(14).notNull(),
     fastModel: varchar("fastModel", { length: 80 }).default("gpt-5-mini").notNull(),
     escalationModel: varchar("escalationModel", { length: 80 }).default("gpt-5").notNull(),
     minimumConfidence: int("minimumConfidence").default(75).notNull(),
@@ -1035,6 +1047,7 @@ export const customerBotRuns = mysqlTable(
     escalationReason: varchar("escalationReason", { length: 120 }),
     factsSnapshot: text("factsSnapshot"),
     replyDraft: text("replyDraft"),
+    actionDecisionJson: text("actionDecisionJson"),
     errorSummary: varchar("errorSummary", { length: 500 }),
     promptTokens: int("promptTokens"),
     completionTokens: int("completionTokens"),
@@ -1144,6 +1157,57 @@ export const customerBotKnowledgeGaps = mysqlTable(
   ],
 );
 
+/** A reviewable commercial draft. It never deducts stock or creates a final order by itself. */
+export const customerBotOrderDrafts = mysqlTable(
+  "customer_bot_order_drafts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    conversationId: int("conversationId").notNull().references(() => inboxConversations.id),
+    botRunId: int("botRunId").references(() => customerBotRuns.id),
+    customerId: int("customerId").references(() => customerProfiles.id),
+    status: mysqlEnum("status", ["collecting", "awaiting_confirmation", "review_required", "archived"]).default("collecting").notNull(),
+    itemsJson: text("itemsJson").notNull(),
+    customerName: varchar("customerName", { length: 160 }),
+    customerPhone: varchar("customerPhone", { length: 40 }),
+    governorate: varchar("governorate", { length: 120 }),
+    address: text("address"),
+    subtotal: decimal("subtotal", { precision: 12, scale: 2 }),
+    deliveryFee: decimal("deliveryFee", { precision: 12, scale: 2 }),
+    total: decimal("total", { precision: 12, scale: 2 }),
+    currencyCode: varchar("currencyCode", { length: 8 }).default("IQD").notNull(),
+    summaryText: text("summaryText"),
+    missingFieldsJson: text("missingFieldsJson"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    index("bot_order_draft_store_status_idx").on(table.storeId, table.status, table.updatedAt),
+    index("bot_order_draft_conversation_idx").on(table.storeId, table.conversationId),
+    index("bot_order_draft_run_idx").on(table.botRunId),
+  ],
+);
+
+/** Uploaded text or audio used to prepare a reviewable style candidate; it never trains the bot automatically. */
+export const customerBotTrainingAssets = mysqlTable(
+  "customer_bot_training_assets",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    storeId: int("storeId").notNull().references(() => stores.id),
+    kind: mysqlEnum("kind", ["text", "audio"]).notNull(),
+    status: mysqlEnum("status", ["ready", "failed"]).default("ready").notNull(),
+    storageKey: varchar("storageKey", { length: 512 }).notNull(),
+    originalFileName: varchar("originalFileName", { length: 255 }).notNull(),
+    mimeType: varchar("mimeType", { length: 120 }).notNull(),
+    byteSize: int("byteSize").notNull(),
+    transcript: text("transcript"),
+    errorSummary: varchar("errorSummary", { length: 500 }),
+    createdByUserId: int("createdByUserId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("bot_training_asset_store_time_idx").on(table.storeId, table.createdAt)],
+);
+
 export type CustomerProfile = typeof customerProfiles.$inferSelect;
 export type InboxConversation = typeof inboxConversations.$inferSelect;
 export type InboxMessage = typeof inboxMessages.$inferSelect;
@@ -1152,6 +1216,8 @@ export type CustomerBotRun = typeof customerBotRuns.$inferSelect;
 export type CustomerBotKnowledgeArticle = typeof customerBotKnowledgeArticles.$inferSelect;
 export type CustomerBotRunReview = typeof customerBotRunReviews.$inferSelect;
 export type CustomerBotKnowledgeGap = typeof customerBotKnowledgeGaps.$inferSelect;
+export type CustomerBotOrderDraft = typeof customerBotOrderDrafts.$inferSelect;
+export type CustomerBotTrainingAsset = typeof customerBotTrainingAssets.$inferSelect;
 
 /** Customer request created from the public store or future staff/WhatsApp channels. */
 export const orders = mysqlTable(

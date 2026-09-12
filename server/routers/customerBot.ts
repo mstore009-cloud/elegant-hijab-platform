@@ -7,6 +7,8 @@ import { listLLMModels } from "../_core/llm";
 import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, simulateCustomerBotInstruction, updateCustomerBotSettings } from "../customerBot/db";
 import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, teachCustomerBotFromReviewedRun, updateCustomerBotKnowledge } from "../customerBot/knowledge";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
+import { archiveCustomerBotOrderDraft, createFinalOrderFromCustomerBotDraft, listCustomerBotOrderDrafts } from "../customerBot/orderDrafts";
+import { createStyleCandidateFromTrainingAsset, listCustomerBotTrainingAssets, uploadCustomerBotTrainingAsset } from "../customerBot/training";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
@@ -23,6 +25,16 @@ const settingsInput = z.object({
   dialect: z.string().trim().min(2).max(80),
   tone: z.enum(["warm", "professional", "concise"]),
   operatorInstructions: z.string().trim().max(12000).nullable(),
+  welcomeTemplate: z.string().trim().max(1000).nullable(),
+  priceReplyTemplate: z.string().trim().max(1000).nullable(),
+  colorOfferTemplate: z.string().trim().max(1000).nullable(),
+  productCardTemplate: z.string().trim().max(1000).nullable(),
+  orderSummaryTemplate: z.string().trim().max(1500).nullable(),
+  confirmationTemplate: z.string().trim().max(1000).nullable(),
+  humanWaitingTemplate: z.string().trim().max(1000).nullable(),
+  productResponseMode: z.enum(["smart", "images", "product_card", "ask_first"]),
+  learningEnabled: z.boolean(),
+  learningReviewDays: z.number().int().min(1).max(90),
   fastModel: z.string().trim().min(1).max(80),
   escalationModel: z.string().trim().min(1).max(80),
   minimumConfidence: z.number().int().min(1).max(100),
@@ -50,6 +62,33 @@ export const customerBotRouter = router({
     return settings;
   }),
   runs: protectedProcedure.input(z.object({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => listCustomerBotRuns((await requireStore(ctx, "inbox.read")).id, input.conversationId)),
+  orderDrafts: protectedProcedure.query(async ({ ctx }) => listCustomerBotOrderDrafts((await requireStore(ctx, "bot.manage")).id)),
+  trainingAssets: protectedProcedure.query(async ({ ctx }) => listCustomerBotTrainingAssets((await requireStore(ctx, "bot.manage")).id)),
+  uploadTrainingAsset: protectedProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(3).max(120), base64: z.string().min(4).max(23_000_000) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const asset = await uploadCustomerBotTrainingAsset({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_training_asset", entityId: asset.id, action: "bot.training_asset_uploaded", summary: `رُفع مصدر تدريب ${asset.kind === "audio" ? "صوتي" : "نصي"} للمراجعة.` });
+    return asset;
+  }),
+  createStyleCandidateFromAsset: protectedProcedure.input(z.object({ assetId: z.number().int().positive(), title: z.string().trim().min(3).max(240).optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await createStyleCandidateFromTrainingAsset({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_training_asset", entityId: input.assetId, action: "bot.training_candidate_created", summary: "حُوّل مصدر تدريب إلى بطاقة أسلوب مسودة تنتظر الاعتماد." });
+    return result;
+  }),
+  archiveOrderDraft: protectedProcedure.input(z.object({ draftId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await archiveCustomerBotOrderDraft({ storeId: store.id, draftId: input.draftId });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_order_draft", entityId: input.draftId, action: "bot.order_draft_archived", summary: "أُرشفت مسودة طلب بوت غير نهائية." });
+    return result;
+  }),
+  createOrderFromDraft: protectedProcedure.input(z.object({ draftId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    await assertPermission(ctx.user, "orders.confirm", store.id);
+    const result = await createFinalOrderFromCustomerBotDraft({ storeId: store.id, draftId: input.draftId, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "order", entityId: result.orderId, action: "bot.order_draft_approved", summary: `حوّل الموظف مسودة Bot-H3 #${input.draftId} إلى طلب ${result.orderNumber}.` });
+    return result;
+  }),
   simulateInstruction: protectedProcedure.input(z.object({ instruction: z.string().trim().min(3).max(12000), sampleMessage: z.string().trim().min(2).max(1200) })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.manage");
     const result = await simulateCustomerBotInstruction({ ...input, storeId: store.id });
@@ -90,7 +129,10 @@ export const customerBotRouter = router({
   knowledge: protectedProcedure.input(z.object({ status: z.enum(knowledgeStatuses).optional() }).optional()).query(async ({ ctx, input }) => listCustomerBotKnowledge((await requireStore(ctx, "bot.manage")).id, input?.status)),
   extractHistoricalCandidates: protectedProcedure.input(z.object({ channels: z.array(z.enum(["whatsapp", "instagram", "messenger"])).min(1).optional(), limit: z.number().int().min(1).max(100).optional() }).optional()).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.manage");
-    const result = await extractHistoricalKnowledgeCandidates({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    const settings = await getCustomerBotSettings(store.id);
+    if (!settings.learningEnabled) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "التعلم المراقب معطل من إعدادات البوت." });
+    const since = new Date(Date.now() - settings.learningReviewDays * 24 * 60 * 60 * 1000);
+    const result = await extractHistoricalKnowledgeCandidates({ ...input, storeId: store.id, actorUserId: ctx.user.id, since });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_knowledge", entityId: store.id, action: "bot.historical_candidates_extracted", summary: `تم فحص ${result.scannedMessages} رسالة تاريخية وإنشاء ${result.createdCandidates} مرشح معرفة للمراجعة.` });
     return result;
   }),
