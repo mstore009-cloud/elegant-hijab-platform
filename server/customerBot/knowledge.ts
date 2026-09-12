@@ -225,3 +225,29 @@ export async function getCustomerBotQualitySummary(storeId: number) {
   ]);
   return { reviewed: Number(reviewed[0]?.count ?? 0), approvedAsIs: Number(approvedAsIs[0]?.count ?? 0), approvedEdited: Number(approvedEdited[0]?.count ?? 0), rejected: Number(rejected[0]?.count ?? 0), handoffs: Number(handoffs[0]?.count ?? 0), openGaps: Number(openGaps[0]?.count ?? 0) };
 }
+
+export async function getCustomerBotQualityComparison(storeId: number) {
+  const db = await requireDb();
+  const [summary, approvedKnowledge, sourceRuns, reviewedWithKnowledge, approvedAsIsWithKnowledgeQuery, editedWithKnowledge, rejectedWithKnowledge] = await Promise.all([
+    getCustomerBotQualitySummary(storeId),
+    db.select({ count: sql<number>`count(*)` }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "approved"))),
+    db.select({ count: sql<number>`count(distinct ${customerBotRunKnowledgeSources.runId})` }).from(customerBotRunKnowledgeSources).where(eq(customerBotRunKnowledgeSources.storeId, storeId)),
+    db.select({ count: sql<number>`count(distinct ${customerBotRunReviews.runId})` }).from(customerBotRunReviews).innerJoin(customerBotRunKnowledgeSources, and(eq(customerBotRunKnowledgeSources.runId, customerBotRunReviews.runId), eq(customerBotRunKnowledgeSources.storeId, storeId))).where(eq(customerBotRunReviews.storeId, storeId)),
+    db.select({ count: sql<number>`count(distinct ${customerBotRunReviews.runId})` }).from(customerBotRunReviews).innerJoin(customerBotRunKnowledgeSources, and(eq(customerBotRunKnowledgeSources.runId, customerBotRunReviews.runId), eq(customerBotRunKnowledgeSources.storeId, storeId))).where(and(eq(customerBotRunReviews.storeId, storeId), eq(customerBotRunReviews.outcome, "approved_as_is"))),
+    db.select({ count: sql<number>`count(distinct ${customerBotRunReviews.runId})` }).from(customerBotRunReviews).innerJoin(customerBotRunKnowledgeSources, and(eq(customerBotRunKnowledgeSources.runId, customerBotRunReviews.runId), eq(customerBotRunKnowledgeSources.storeId, storeId))).where(and(eq(customerBotRunReviews.storeId, storeId), eq(customerBotRunReviews.outcome, "approved_edited"))),
+    db.select({ count: sql<number>`count(distinct ${customerBotRunReviews.runId})` }).from(customerBotRunReviews).innerJoin(customerBotRunKnowledgeSources, and(eq(customerBotRunKnowledgeSources.runId, customerBotRunReviews.runId), eq(customerBotRunKnowledgeSources.storeId, storeId))).where(and(eq(customerBotRunReviews.storeId, storeId), eq(customerBotRunReviews.outcome, "rejected"))),
+  ]);
+  const reviewedWithApprovedKnowledgeCount = Number(reviewedWithKnowledge[0]?.count ?? 0);
+  const approvedAsIsWithKnowledgeCount = Number(approvedAsIsWithKnowledgeQuery[0]?.count ?? 0);
+  return {
+    ...summary,
+    approvedKnowledge: Number(approvedKnowledge[0]?.count ?? 0),
+    runsWithApprovedKnowledge: Number(sourceRuns[0]?.count ?? 0),
+    reviewedWithApprovedKnowledge: reviewedWithApprovedKnowledgeCount,
+    approvedAsIsWithKnowledge: approvedAsIsWithKnowledgeCount,
+    editedWithKnowledge: Number(editedWithKnowledge[0]?.count ?? 0),
+    rejectedWithKnowledge: Number(rejectedWithKnowledge[0]?.count ?? 0),
+    knowledgeCoverageRate: summary.reviewed ? Math.round((reviewedWithApprovedKnowledgeCount / summary.reviewed) * 100) : 0,
+    knowledgeAlignmentRate: reviewedWithApprovedKnowledgeCount ? Math.round((approvedAsIsWithKnowledgeCount / reviewedWithApprovedKnowledgeCount) * 100) : 0,
+  };
+}

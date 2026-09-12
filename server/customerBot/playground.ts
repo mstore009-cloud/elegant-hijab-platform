@@ -339,6 +339,28 @@ export async function listPlaybooks(storeId: number) {
   return db.select().from(customerBotPlaybooks).where(eq(customerBotPlaybooks.storeId, storeId)).orderBy(desc(customerBotPlaybooks.updatedAt)).limit(100);
 }
 
+export async function createPlaybookDraft(input: { storeId: number; actorUserId: number; title: string; trigger: string; steps: string[]; guardrails: string[] }) {
+  const db = await requireDb();
+  const title = input.title.trim().slice(0, 240);
+  const trigger = input.trigger.trim().slice(0, 2000);
+  const steps = input.steps.map(step => step.trim().slice(0, 2000)).filter(Boolean).slice(0, 12);
+  const guardrails = input.guardrails.map(rule => rule.trim().slice(0, 1000)).filter(Boolean).slice(0, 12);
+  if (title.length < 3) throw new Error("اكتبي عنواناً واضحاً لإجراء البيع.");
+  if (trigger.length < 3) throw new Error("حددي متى يبدأ إجراء البيع.");
+  if (!steps.length) throw new Error("أضيفي خطوة واحدة على الأقل لإجراء البيع.");
+  const result = await db.insert(customerBotPlaybooks).values({
+    storeId: input.storeId,
+    title,
+    triggerJson: JSON.stringify({ trigger }),
+    stepsJson: JSON.stringify(steps.map((instruction, index) => ({ order: index + 1, instruction }))),
+    guardrailsJson: JSON.stringify(guardrails),
+    status: "draft",
+    createdByUserId: input.actorUserId,
+  });
+  const [playbook] = await db.select().from(customerBotPlaybooks).where(eq(customerBotPlaybooks.id, Number(result[0].insertId))).limit(1);
+  return playbook;
+}
+
 export async function listTestCases(storeId: number) {
   const db = await requireDb();
   return db.select().from(customerBotTestCases).where(eq(customerBotTestCases.storeId, storeId)).orderBy(desc(customerBotTestCases.updatedAt)).limit(100);

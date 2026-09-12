@@ -5,11 +5,11 @@ import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { listLLMModels } from "../_core/llm";
 import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, simulateCustomerBotInstruction, updateCustomerBotSettings } from "../customerBot/db";
-import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, teachCustomerBotFromReviewedRun, updateCustomerBotKnowledge } from "../customerBot/knowledge";
+import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualityComparison, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, teachCustomerBotFromReviewedRun, updateCustomerBotKnowledge } from "../customerBot/knowledge";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 import { archiveCustomerBotOrderDraft, createFinalOrderFromCustomerBotDraft, listCustomerBotOrderDrafts } from "../customerBot/orderDrafts";
 import { createStyleCandidateFromTrainingAsset, listCustomerBotTrainingAssets, uploadCustomerBotTrainingAsset } from "../customerBot/training";
-import { createAudioCommandRequest, createLearningProposal, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus } from "../customerBot/playground";
+import { createAudioCommandRequest, createLearningProposal, createPlaybookDraft, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus } from "../customerBot/playground";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
@@ -130,6 +130,12 @@ export const customerBotRouter = router({
   }),
   behaviorCards: protectedProcedure.query(async ({ ctx }) => listBehaviorCards((await requireStore(ctx, "bot.manage")).id)),
   playbooks: protectedProcedure.query(async ({ ctx }) => listPlaybooks((await requireStore(ctx, "bot.manage")).id)),
+  createPlaybookDraft: protectedProcedure.input(z.object({ title: z.string().trim().min(3).max(240), trigger: z.string().trim().min(3).max(2000), steps: z.array(z.string().trim().min(1).max(2000)).min(1).max(12), guardrails: z.array(z.string().trim().min(1).max(1000)).max(12) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const playbook = await createPlaybookDraft({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_playbook", entityId: playbook.id, action: "bot.playbook_draft_created", summary: "أُنشئت مسودة إجراء بيع من المحرر المرئي وتنتظر المراجعة." });
+    return playbook;
+  }),
   testCases: protectedProcedure.query(async ({ ctx }) => listTestCases((await requireStore(ctx, "bot.manage")).id)),
   setBehaviorCardStatus: protectedProcedure.input(z.object({ cardId: z.number().int().positive(), status: z.enum(["approved", "archived"]) })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.knowledge.approve");
@@ -186,6 +192,7 @@ export const customerBotRouter = router({
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_run", entityId: input.runId, action: "bot.draft_dismissed", summary: "رُفضت مسودة البوت قبل اعتمادها أو إرسالها." });
   }),
   qualitySummary: protectedProcedure.query(async ({ ctx }) => getCustomerBotQualitySummary((await requireStore(ctx, "bot.manage")).id)),
+  qualityComparison: protectedProcedure.query(async ({ ctx }) => getCustomerBotQualityComparison((await requireStore(ctx, "bot.manage")).id)),
   reviewQueue: protectedProcedure.query(async ({ ctx }) => listCustomerBotReviewQueue((await requireStore(ctx, "bot.manage")).id)),
   teachFromReview: protectedProcedure.input(z.object({ runId: z.number().int().positive(), title: z.string().trim().min(3).max(240).optional(), kind: z.enum(["faq", "policy", "style_guidance"]).optional(), body: z.string().trim().min(12).max(1800).optional() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.manage");

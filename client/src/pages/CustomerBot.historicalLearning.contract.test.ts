@@ -54,4 +54,27 @@ describe("Customer Bot training center", () => {
     expect(source).toContain("بيانات المنصة الحية");
     expect(source).toContain("لا يتعلم البوت مباشرة من الملف");
   });
+
+  it("adds a visual sales playbook editor with draft-only safety", () => {
+    const source = read("CustomerBotLearning.tsx");
+    expect(source).toContain("محرر إجراءات البيع");
+    expect(source).toContain("customerBot.createPlaybookDraft.useMutation");
+    expect(source).toContain("حفظ كمسودة للمراجعة");
+    expect(source).toContain("لا يصبح الإجراء قابلاً للاستخدام قبل اعتماده");
+  });
+
+  it("adds searchable filters for knowledge and review drafts", () => {
+    const source = read("CustomerBotLearning.tsx");
+    expect(source).toContain("ابحثي بالعنوان أو النص");
+    expect(source).toContain("ابحثي في عنوان أو نص المسودة");
+    expect(source).toContain("عرض {filtered.length} من");
+  });
+
+  it("adds a pre-live quality comparison dashboard", () => {
+    const source = read("CustomerBotLearning.tsx");
+    expect(source).toContain("جودة الردود");
+    expect(source).toContain("qualityComparison");
+    expect(source).toContain("تغطية المعرفة");
+    expect(source).toContain("تطابق الرد مع المعرفة");
+  });
 });
