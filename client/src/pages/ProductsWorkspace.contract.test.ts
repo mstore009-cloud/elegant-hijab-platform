@@ -35,10 +35,22 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("مصفوفة المخزون: اللون × القياس");
     expect(source).toContain("(detail.product.sizeLabels ?? []).length > 0");
+    expect(source).toContain("function ColorCard({ colorName, quantity, media, variants, sizeLabels, onOpen }");
+    expect(source).toContain("const hasSizes = sizeLabels.length > 0");
+    expect(source).toContain("مخزون ${colorName} حسب القياس");
+    expect(source).toContain("{hasSizes && <div className=\"mt-3 grid grid-cols-2 gap-2\"");
+    expect(source).toContain("productSizes");
     expect(source).toContain("trpc.products.saveInventory.useMutation");
     expect(source).toContain("حفظ مخزون المتغيرات");
     expect(source).toContain("inventoryDrafts[variant.id]");
     expect(source).toContain("inventoryStatusLabel");
+  });
+
+  it("لا يعرض أي اعتبار للقياس عندما لا توجد قياسات للمنتج", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("{productSizes.length > 0 && <p><span className=\"text-[#74817a]\">القياسات:");
+    expect(source).toContain("sizeLabels={productSizes}");
+    expect(source).toContain("{hasSizes ? \"إجمالي القطع\" : \"قطعة\"}");
   });
 
   it("يعرض الأرشيف ومؤشر اكتمال وملخص المتغيرات", () => {
