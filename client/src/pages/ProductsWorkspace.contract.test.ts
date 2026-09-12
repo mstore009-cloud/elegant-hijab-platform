@@ -31,9 +31,10 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain('status: "draft"');
   });
 
-  it("يعرض مصفوفة اللون والقياس ويحفظ كل متغير عبر saveInventory", () => {
+  it("يعرض مصفوفة اللون والقياس ويحفظ كل متغير عبر saveInventory عند وجود قياسات", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("مصفوفة المخزون: اللون × القياس");
+    expect(source).toContain("(detail.product.sizeLabels ?? []).length > 0");
     expect(source).toContain("trpc.products.saveInventory.useMutation");
     expect(source).toContain("حفظ مخزون المتغيرات");
     expect(source).toContain("inventoryDrafts[variant.id]");
@@ -99,15 +100,20 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("openProductCompletion(product.id, product.readinessReasons?.[0])");
   });
 
-  it("يوسع الإدخال اليدوي بالسعر السابق والقياسات والصورة الأولى", () => {
+  it("يدعم القياسات الاختيارية ورفع الصور والفيديوهات مع تحليل اللون التلقائي", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("createPreviousPrice");
     expect(source).toContain("createSizes");
-    expect(source).toContain("createImageFile");
+    expect(source).toContain("createMediaFiles");
     expect(source).toContain("sizeLabels: sizes");
-    expect(source).toContain("uploadImage.mutateAsync");
+    expect(source).toContain("uploadManualMedia.mutateAsync");
+    expect(source).toContain("acceptCreateMedia");
+    expect(source).toContain("video/mp4");
+    expect(source).toContain("variants: []");
     expect(source).toContain("السعر السابق");
     expect(source).toContain("القياسات");
-    expect(source).toContain("الصورة الأولى");
+    expect(source).toContain("صور وفيديوهات المنتج");
+    expect(source).not.toContain("createColorName");
+    expect(source).not.toContain("createQuantity");
   });
 });

@@ -616,6 +616,23 @@ export async function addManualProductImage(input: { productId: number; fileName
   return { mediaId: result, storageKey: uploaded.key, format: "webp" as const };
 }
 
+export async function addManualProductVideo(input: { productId: number; fileName: string; mimeType: string; bytes: Buffer; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select({ id: products.id }).from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-") || "video";
+  const uploaded = await storagePut("products/" + input.productId + "/manual/" + Date.now() + "-" + safeName, input.bytes, input.mimeType);
+  const existingMedia = await db.select({ id: productMedia.id }).from(productMedia).where(eq(productMedia.productId, input.productId));
+  const created = await db.transaction(async tx => {
+    const result = await tx.insert(productMedia).values({ productId: input.productId, source: "manual", mediaType: "video", originalUrl: null, storageKey: uploaded.key, operationalMetadata: JSON.stringify({ source: "manual_product_upload", mimeType: input.mimeType }), originalFileName: input.fileName, colorVerified: true, sortOrder: existingMedia.length });
+    const mediaId = Number(result[0].insertId);
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "manual_video_added", changes: JSON.stringify({ mediaId, fileName: input.fileName, mimeType: input.mimeType }) });
+    return mediaId;
+  });
+  return { mediaId: created, storageKey: uploaded.key, format: input.mimeType };
+}
+
 export async function getProductMedia(productId: number) {
   const db = await getDb();
   if (!db) return [];

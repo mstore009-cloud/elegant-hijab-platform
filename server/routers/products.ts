@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { activateReadyProduct, archiveProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductReviewReadiness, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreArchivedProduct, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, archiveProduct, addManualProductImage, addManualProductVideo, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductReviewReadiness, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreArchivedProduct, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { recordInitialProductFinancialValues } from "../financials/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
@@ -264,7 +264,7 @@ export const productsRouter = router({
       colorName: z.string().trim().min(1).max(100),
       sizeLabel: z.string().trim().max(80).optional(),
       inventoryQuantity: z.number().int().min(0).max(100000),
-    })).min(1).max(250),
+    })).min(0).max(250),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.create");
     const storeId = requireOperationalStoreId(ctx.operationalStore?.id);
@@ -491,6 +491,18 @@ export const productsRouter = router({
           ? { status: "analysis_failed" as const, message: colorAnalysisError }
           : { status: "review_pending" as const },
     };
+  }),
+  uploadManualMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive(), fileName: z.string().trim().min(1).max(255), mimeType: z.string().regex(/^(image\/(jpeg|png|webp)|video\/(mp4|webm|quicktime))$/), base64Data: z.string().min(1) })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    await requireProductInOperationalStore(ctx, input.productId);
+    const bytes = Buffer.from(input.base64Data, "base64");
+    if (bytes.length === 0 || bytes.length > 100 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "حجم الوسيط يجب أن يكون بين 1 بايت و100 ميغابايت." });
+    if (input.mimeType.startsWith("video/")) { const uploaded = await addManualProductVideo({ productId: input.productId, fileName: input.fileName, mimeType: input.mimeType, bytes, actorUserId: ctx.user.id }); await queueProductMetaSync(ctx, input.productId, { changeType: "image", isInternalOnly: false }); return { ...uploaded, mediaType: "video" as const }; }
+    const uploaded = await addManualProductImage({ productId: input.productId, fileName: input.fileName, bytes, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId, { changeType: "image", isInternalOnly: false });
+    let colorAnalysis: Awaited<ReturnType<typeof generateAutomaticColorSuggestion>> = null;
+    try { colorAnalysis = await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: ctx.user.id, source: "products_ui", mediaIds: [uploaded.mediaId] }); } catch { /* تظهر الصورة للمراجعة اليدوية إذا تعذر التحليل */ }
+    return { ...uploaded, mediaType: "image" as const, colorAnalysis: colorAnalysis ? { status: "suggestion_ready" as const, operationId: colorAnalysis.operationId } : { status: "review_pending" as const } };
   }),
   detachMedia: protectedProcedure.input(z.object({
     productId: z.number().int().positive(),

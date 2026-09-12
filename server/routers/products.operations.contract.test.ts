@@ -26,5 +26,11 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(routerSource).not.toContain('status: z.enum(["draft", "needs_review", "ready", "archived"]).optional(),');
     expect(routerSource).toContain("sizeLabels: z.array(z.string().trim().min(1).max(80)).max(30).optional()");
     expect(dbSource).toContain("sizeLabels: input.sizeLabels?.length ? JSON.stringify(input.sizeLabels) : null");
+    expect(routerSource).toContain("uploadManualMedia: protectedProcedure");
+    expect(routerSource).toContain("video\\/(mp4|webm|quicktime)");
+    expect(routerSource).toContain("generateAutomaticColorSuggestion");
+    expect(routerSource).toContain(")).min(0).max(250)");
+    expect(dbSource).toContain("addManualProductVideo");
+    expect(dbSource).toContain('mediaType: "video"');
   });
 });
