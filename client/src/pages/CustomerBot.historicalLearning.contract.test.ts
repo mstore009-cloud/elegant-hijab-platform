@@ -90,4 +90,16 @@ describe("Customer Bot training center", () => {
     expect(source).toContain("runTestCaseBatch");
     expect(source).toContain("تشغيل حالات الاختبار المعتمدة");
   });
+
+  it("lazy-loads the active learning tab instead of blocking on every section", () => {
+    const learning = read("CustomerBotLearning.tsx");
+    const assistant = read("CustomerBotCommandAssistant.tsx");
+    expect(learning).toContain('activeTab === "cards"');
+    expect(learning).toContain('activeTab === "behavior"');
+    expect(learning).toContain('activeTab === "quality"');
+    expect(learning).toContain("staleTime: 60_000");
+    expect(learning).toContain("canManageOverride={canManage}");
+    expect(assistant).toContain("canManageOverride");
+    expect(assistant).toContain("enabled: canManageOverride === undefined");
+  });
 });

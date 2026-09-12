@@ -34,13 +34,14 @@ export default function CustomerBotLearning() {
   const profile = trpc.access.myProfile.useQuery();
   const canManage = profile.data?.permissions.includes("bot.manage") ?? false;
   const canApprove = profile.data?.permissions.includes("bot.knowledge.approve") ?? false;
-  const knowledge = trpc.customerBot.knowledge.useQuery(undefined, { enabled: canManage });
-  const behavior = trpc.customerBot.behaviorCards.useQuery(undefined, { enabled: canManage });
-  const playbooks = trpc.customerBot.playbooks.useQuery(undefined, { enabled: canManage });
-  const assets = trpc.customerBot.trainingAssets.useQuery(undefined, { enabled: canManage });
-  const proposals = trpc.customerBot.learningProposals.useQuery(undefined, { enabled: canManage });
-  const quality = trpc.customerBot.qualityComparison.useQuery(undefined, { enabled: canManage });
-  const testCases = trpc.customerBot.testCases.useQuery(undefined, { enabled: canManage });
+  const queryOptions = { staleTime: 60_000 };
+  const knowledge = trpc.customerBot.knowledge.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "cards" });
+  const behavior = trpc.customerBot.behaviorCards.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "behavior" });
+  const playbooks = trpc.customerBot.playbooks.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "sales" });
+  const assets = trpc.customerBot.trainingAssets.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "sources" });
+  const proposals = trpc.customerBot.learningProposals.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "drafts" });
+  const quality = trpc.customerBot.qualityComparison.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "quality" });
+  const testCases = trpc.customerBot.testCases.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "quality" });
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<"faq" | "policy" | "style_guidance" | "product_guidance">("style_guidance");
@@ -56,14 +57,15 @@ export default function CustomerBotLearning() {
   function navigateTab(tab: TabId) { setLocation(`/customer-bot/learning${tab === "cards" ? "" : `?tab=${tab}`}`); }
   async function uploadFile(file: File | null) { if (!file) return; if (file.size > 16 * 1024 * 1024) { toast.error("الحد الأقصى 16 ميغابايت."); return; } const allowed = ["text/plain", "text/markdown", "application/json", "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/ogg", "audio/webm", "audio/mp4", "audio/m4a"]; if (!allowed.includes(file.type)) { toast.error("ارفعي TXT أو MD أو JSON أو ملفاً صوتياً مدعوماً."); return; } const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ""; bytes.forEach(value => { binary += String.fromCharCode(value); }); upload.mutate({ fileName: file.name, mimeType: file.type, base64: btoa(binary) }); }
 
-  if (profile.isLoading || (canManage && (knowledge.isLoading || behavior.isLoading || playbooks.isLoading))) return <div className="p-8 text-sm text-muted-foreground">جارٍ تحميل المعرفة…</div>;
+  const activeTabLoading = activeTab === "cards" ? knowledge.isLoading : activeTab === "behavior" ? behavior.isLoading : activeTab === "sales" ? playbooks.isLoading : activeTab === "sources" ? assets.isLoading : activeTab === "drafts" ? proposals.isLoading : activeTab === "quality" ? quality.isLoading || testCases.isLoading : false;
+  if (profile.isLoading || (canManage && activeTabLoading)) return <div className="p-8 text-sm text-muted-foreground">جارٍ تحميل القسم…</div>;
   if (!canManage) return <div className="p-8 text-center">لا توجد صلاحية لإدارة معرفة البوت.</div>;
   return <main dir="rtl" className="mx-auto max-w-6xl space-y-5 pb-10">
     <CustomerBotNav title="المعرفة والتعلم" description="المكان الموحد لتغذية البوت: أضيفي بطاقة بسيطة، استخدمي مساعد التعليم، ابنِي إجراء بيع مرئياً، ثم راجعي الجودة قبل الاعتماد." action={<Button onClick={() => { setOpen(true); navigateTab("cards"); }} className="rounded-xl bg-[#1d5a4d] hover:bg-[#153f36]"><Plus className="ml-2 h-4 w-4" />بطاقة معرفة جديدة</Button>} />
     <SafetyNotice />
     <nav aria-label="أدوات المعرفة والتعلم" className="grid gap-2 rounded-2xl border border-[#e2e8e3] bg-white p-2 shadow-[0_8px_20px_rgba(41,63,53,0.04)] sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">{tabs.map(tab => { const Icon = tab.icon; const active = activeTab === tab.id; return <Button key={tab.id} type="button" variant={active ? "default" : "ghost"} onClick={() => navigateTab(tab.id)} className={`h-auto justify-start rounded-xl px-3 py-3 text-right ${active ? "bg-[#1d5a4d] text-white hover:bg-[#153f36]" : "text-[#52675a] hover:bg-[#f3f8f4]"}`}><Icon className="ml-2 h-4 w-4 shrink-0" /><span><span className="block text-xs font-bold">{tab.label}</span><span className={`mt-0.5 block text-[10px] ${active ? "text-white/75" : "text-[#849189]"}`}>{tab.hint}</span></span></Button>; })}</nav>
     {activeTab === "cards" ? <KnowledgePanel knowledge={knowledge.data ?? []} canApprove={canApprove} changeStatus={changeStatus} /> : null}
-    {activeTab === "assistant" ? <CustomerBotCommandAssistant embedded /> : null}
+    {activeTab === "assistant" ? <CustomerBotCommandAssistant embedded canManageOverride={canManage} /> : null}
     {activeTab === "behavior" ? <BehaviorPanel behavior={behavior.data ?? []} /> : null}
     {activeTab === "sales" ? <SalesPlaybookPanel playbooks={playbooks.data ?? []} canApprove={canApprove} changeStatus={changePlaybookStatus} /> : null}
     {activeTab === "sources" ? <SourcesPanel assets={assets.data ?? []} upload={upload} createStyle={createStyle} uploadFile={uploadFile} /> : null}

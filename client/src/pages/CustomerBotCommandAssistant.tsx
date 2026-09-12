@@ -16,9 +16,9 @@ const statusLabels: Record<string, string> = { transcribed: "بانتظار ال
 
 function parseJson(value: string | null) { try { return value ? JSON.parse(value) : null; } catch { return null; } }
 
-export default function CustomerBotCommandAssistant({ embedded = false }: { embedded?: boolean }) {
-  const profile = trpc.access.myProfile.useQuery();
-  const canManage = profile.data?.permissions.includes("bot.manage") ?? false;
+export default function CustomerBotCommandAssistant({ embedded = false, canManageOverride }: { embedded?: boolean; canManageOverride?: boolean }) {
+  const profile = trpc.access.myProfile.useQuery(undefined, { enabled: canManageOverride === undefined, staleTime: 60_000 });
+  const canManage = canManageOverride ?? (profile.data?.permissions.includes("bot.manage") ?? false);
   const commands = trpc.customerBot.commandRequests.useQuery(undefined, { enabled: canManage });
   const [text, setText] = useState("");
   const [recording, setRecording] = useState(false);
