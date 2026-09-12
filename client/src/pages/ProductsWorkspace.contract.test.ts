@@ -73,7 +73,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("isReadyForActivation");
     expect(source).toContain("أكمل المنتج");
-    expect(source).toContain("openProductCompletion(product.id)");
+    expect(source).toContain("openProductCompletion(product.id, product.readinessReasons?.[0])");
     expect(source).toContain("scrollIntoView({ behavior: \"smooth\", block: \"start\" })");
   });
 
@@ -86,5 +86,16 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("الأقل مخزونًا");
     expect(source).toContain("productLastActivity");
     expect(source).toContain("sortedProducts");
+  });
+
+  it("يوضح الحفظ كمسودة ويوجه إلى الحقل الناقص مع شريط حفظ ثابت", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("حفظ كمسودة");
+    expect(source).toContain("لن يتغير وضع النشر");
+    expect(source).toContain("الحفظ هنا لا ينشر المنتج");
+    expect(source).toContain("data-completion-field=\"price\"");
+    expect(source).toContain("data-completion-field=\"inventory\"");
+    expect(source).toContain("readinessReasonLabel");
+    expect(source).toContain("openProductCompletion(product.id, product.readinessReasons?.[0])");
   });
 });

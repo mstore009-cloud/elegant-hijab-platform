@@ -22,5 +22,7 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(routerSource).toContain("getProductReviewReadiness");
     expect(dbSource).toContain("product_archived");
     expect(dbSource).toContain("product_restored_from_archive");
+    expect(routerSource).toContain("updateDetails: protectedProcedure.input");
+    expect(routerSource).not.toContain('status: z.enum(["draft", "needs_review", "ready", "archived"]).optional(),');
   });
 });

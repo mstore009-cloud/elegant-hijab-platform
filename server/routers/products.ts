@@ -301,7 +301,6 @@ export const productsRouter = router({
     previousPrice: moneyString.nullable().optional(),
     sizeLabels: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
     categoryId: z.number().int().positive().nullable().optional(),
-    status: z.enum(["draft", "needs_review", "ready", "archived"]).optional(),
   })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     const { product: currentProduct } = await requireProductInOperationalStore(ctx, input.productId);
