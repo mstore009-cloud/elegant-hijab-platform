@@ -63,6 +63,10 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("confirmSizeClear");
     expect(source).toContain("regenerateSizeMatrix");
     expect(source).toContain("إعادة توليد مصفوفة اللون × القياس");
+    expect(source).toContain("sizeTemplateProducts");
+    expect(source).toContain("copySizesFromProduct");
+    expect(source).toContain("نسخ قياسات من منتج آخر");
+    expect(source).toContain("سيتم نسخ أسماء القياسات فقط");
   });
 
   it("يعرض الأرشيف ومؤشر جاهزية التفعيل وملخص المخزون المستقل", () => {
