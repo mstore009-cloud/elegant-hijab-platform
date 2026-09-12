@@ -435,6 +435,51 @@ export const productsRouter = router({
     if (!generated) throw new TRPCError({ code: "BAD_REQUEST", message: "لا توجد صور جديدة أو غير مسندة تحتاج إلى تحليل." });
     return generated;
   }),
+  generateAutomaticColorSuggestionsMany: protectedProcedure.input(z.object({
+    productIds: z.array(z.number().int().positive()).min(1).max(100),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const productIds = Array.from(new Set(input.productIds));
+    const generated: number[] = [];
+    const skipped: Array<{ productId: number; reason: string }> = [];
+    for (const productId of productIds) {
+      try {
+        await requireProductInOperationalStore(ctx, productId);
+        const result = await generateAutomaticColorSuggestion({ productId, actorUserId: ctx.user.id });
+        if (result) generated.push(productId);
+        else skipped.push({ productId, reason: "لا توجد صور جديدة أو غير مسندة تحتاج إلى تحليل." });
+      } catch (error) {
+        skipped.push({ productId, reason: error instanceof Error ? error.message : "تعذر تحليل ألوان المنتج." });
+      }
+    }
+    return { generatedProductIds: generated, skipped };
+  }),
+  assignUnlinkedMediaToColorMany: protectedProcedure.input(z.object({
+    productIds: z.array(z.number().int().positive()).min(1).max(100),
+    colorName: z.string().trim().min(1).max(100),
+  })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    const productIds = Array.from(new Set(input.productIds));
+    const assigned: Array<{ productId: number; mediaCount: number }> = [];
+    const skipped: Array<{ productId: number; reason: string }> = [];
+    for (const productId of productIds) {
+      try {
+        await requireProductInOperationalStore(ctx, productId);
+        await addProductColor({ productId, colorName: input.colorName, actorUserId: ctx.user.id });
+        const unlinkedImages = (await getProductMedia(productId)).filter(media => media.mediaType === "image" && !media.variantId && !media.colorVerified);
+        for (const media of unlinkedImages) await assignProductMediaColor({ productId, mediaId: media.id, colorName: input.colorName, actorUserId: ctx.user.id });
+        if (unlinkedImages.length) {
+          await queueProductMetaSync(ctx, productId, { changeType: "image", isInternalOnly: false });
+          assigned.push({ productId, mediaCount: unlinkedImages.length });
+        } else {
+          skipped.push({ productId, reason: "لا توجد صور غير مسندة إلى لون." });
+        }
+      } catch (error) {
+        skipped.push({ productId, reason: error instanceof Error ? error.message : "تعذر ربط صور المنتج باللون." });
+      }
+    }
+    return { assigned, skipped, totalMediaCount: assigned.reduce((total, item) => total + item.mediaCount, 0) };
+  }),
   reviewAutomaticColorSuggestion: protectedProcedure.input(z.object({ productId: z.number().int().positive(), suggestionOperationId: z.number().int().positive(), decision: z.enum(["accepted", "rejected"]) })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);

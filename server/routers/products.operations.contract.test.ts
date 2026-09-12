@@ -29,6 +29,9 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(routerSource).toContain("uploadManualMedia: protectedProcedure");
     expect(routerSource).toContain("video\\/(mp4|webm|quicktime)");
     expect(routerSource).toContain("generateAutomaticColorSuggestion");
+    expect(routerSource).toContain("generateAutomaticColorSuggestionsMany");
+    expect(routerSource).toContain("assignUnlinkedMediaToColorMany");
+    expect(routerSource).toContain("totalMediaCount");
     expect(routerSource).toContain(")).min(0).max(250)");
     expect(dbSource).toContain("addManualProductVideo");
     expect(dbSource).toContain('mediaType: "video"');
