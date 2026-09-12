@@ -98,4 +98,16 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("readinessReasonLabel");
     expect(source).toContain("openProductCompletion(product.id, product.readinessReasons?.[0])");
   });
+
+  it("يوسع الإدخال اليدوي بالسعر السابق والقياسات والصورة الأولى", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("createPreviousPrice");
+    expect(source).toContain("createSizes");
+    expect(source).toContain("createImageFile");
+    expect(source).toContain("sizeLabels: sizes");
+    expect(source).toContain("uploadImage.mutateAsync");
+    expect(source).toContain("السعر السابق");
+    expect(source).toContain("القياسات");
+    expect(source).toContain("الصورة الأولى");
+  });
 });

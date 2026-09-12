@@ -655,6 +655,7 @@ export async function createProduct(input: {
   name: string;
   category?: string;
   description?: string;
+  sizeLabels?: string[];
   material?: string | null;
   status: "draft" | "needs_review" | "ready" | "active" | "archived";
   sellingPrice: string;
@@ -672,6 +673,7 @@ export async function createProduct(input: {
     name: input.name,
     category: input.category ?? null,
     description: input.description ?? null,
+    sizeLabels: input.sizeLabels?.length ? JSON.stringify(input.sizeLabels) : null,
     material: input.material ?? null,
     status: input.status,
     sellingPrice: input.sellingPrice,

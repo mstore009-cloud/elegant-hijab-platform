@@ -254,6 +254,7 @@ export const productsRouter = router({
     category: z.string().trim().max(120).optional(),
     categoryId: z.number().int().positive().optional(),
     description: z.string().trim().max(4000).optional(),
+    sizeLabels: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
     status: productStatus.default("draft"),
     sellingPrice: moneyString,
     previousPrice: moneyString.optional(),
