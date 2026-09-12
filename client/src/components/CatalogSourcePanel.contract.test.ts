@@ -25,5 +25,10 @@ describe("عقد لوحة مصدر OneDrive داخل المنتجات", () => {
     expect(source).toContain("الخامة: قطن تركي");
     expect(source).toContain("الخامة غير مكتوبة في product.txt");
     expect(source).toContain('cronExpression: "0 */10 * * * *"');
+    expect(source).toContain("trpc.integrations.createSelectedCatalogDrafts.useMutation");
+    expect(source).toContain("selectedDraftIds");
+    expect(source).toContain("تحديد كل الجاهز");
+    expect(source).toContain("إنشاء مسودة");
+    expect(source).toContain("نتيجة إنشاء المسودات المحددة");
   });
 });
