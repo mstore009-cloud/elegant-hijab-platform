@@ -76,4 +76,15 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("openProductCompletion(product.id)");
     expect(source).toContain("scrollIntoView({ behavior: \"smooth\", block: \"start\" })");
   });
+
+  it("يوفر فرزًا تشغيليًا حسب آخر تعديل والنواقص والمخزون", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain('type ProductSort = "updated" | "missing" | "inventory"');
+    expect(source).toContain('id="product-sort"');
+    expect(source).toContain("الأحدث تعديلًا");
+    expect(source).toContain("الأكثر نقصًا");
+    expect(source).toContain("الأقل مخزونًا");
+    expect(source).toContain("productLastActivity");
+    expect(source).toContain("sortedProducts");
+  });
 });
