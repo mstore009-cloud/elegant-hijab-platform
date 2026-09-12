@@ -136,6 +136,32 @@ export async function activateReadyProduct(input: { productId: number; actorUser
   return { status: "active" as const };
 }
 
+export async function archiveProduct(input: { productId: number; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select({ id: products.id, status: products.status }).from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  if (product.status === "archived") return { status: "archived" as const };
+  await db.transaction(async tx => {
+    await tx.update(products).set({ status: "archived" }).where(eq(products.id, input.productId));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "product_archived", changes: JSON.stringify({ priorStatus: product.status }) });
+  });
+  return { status: "archived" as const, priorStatus: product.status };
+}
+
+export async function restoreArchivedProduct(input: { productId: number; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [product] = await db.select({ id: products.id, status: products.status }).from(products).where(eq(products.id, input.productId)).limit(1);
+  if (!product) throw new Error("المنتج غير موجود.");
+  if (product.status !== "archived") return { status: product.status };
+  await db.transaction(async tx => {
+    await tx.update(products).set({ status: "draft" }).where(eq(products.id, input.productId));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "product_restored_from_archive", changes: JSON.stringify({ nextStatus: "draft" }) });
+  });
+  return { status: "draft" as const, message: "أُعيد المنتج كمسودة؛ راجعه ثم فعّله عند الجاهزية." };
+}
+
 export function isPublicProductStatus(status: string) {
   return status === "active";
 }
