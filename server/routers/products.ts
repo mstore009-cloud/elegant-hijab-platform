@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { assertPermission } from "../access/authorization";
 import { getEmployeePermissionCodesForUser } from "../access/db";
 import { canViewSensitiveFinancialData } from "../access/permissions";
-import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, updateProductDetails, updateVariantInventory } from "../products/db";
+import { activateReadyProduct, addManualProductImage, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, createImportJob, createProduct, deleteProductColor, detachProductMediaReference, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getCatalogProductFolderId, getProductForVariantInStore, getProductMedia, getProductWithVariants, getPublicStoreProduct, listImportJobs, listProductOperations, listProductsWithPrimaryOperationalMedia, listPublicProducts, permanentlyDeleteProduct, recordAutomaticColorSuggestionDecision, refreshProductReviewStatus, renameProductColor, restoreProductMediaToColorReview, saveProductColorInventory, saveProductInventory, setPrimaryProductMedia, updateProductDetails, updateVariantInventory } from "../products/db";
 import { presentProductForViewer } from "../products/financialVisibility";
 import { recordInitialProductFinancialValues } from "../financials/db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
@@ -162,11 +162,13 @@ export const productsRouter = router({
     const media = await getProductMedia(input.productId);
     const oneDriveMedia = media.filter(entry => entry.source === "onedrive" && entry.originalFileName);
     const variantById = new Map(item.variants.map(variant => [variant.id, variant]));
+    const primaryImageId = media.find(entry => entry.mediaType === "image")?.id ?? null;
     const storedPreviews = await Promise.all(media
       .filter(entry => Boolean(entry.storageKey))
       .map(async entry => ({
         mediaId: entry.id,
         mediaType: entry.mediaType,
+        isPrimary: entry.id === primaryImageId,
         playbackReady: true,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
         colorReviewState: entry.variantId ? "assigned" as const : entry.colorVerified ? "excluded" as const : "unconfirmed" as const,
@@ -202,6 +204,7 @@ export const productsRouter = router({
       return {
         mediaId: entry.id,
         mediaType: "image" as const,
+        isPrimary: entry.id === primaryImageId,
         playbackReady: true,
         colorName: variantById.get(entry.variantId ?? -1)?.colorName ?? "",
         colorReviewState: entry.variantId ? "assigned" as const : entry.colorVerified ? "excluded" as const : "unconfirmed" as const,
@@ -212,6 +215,13 @@ export const productsRouter = router({
       };
     }));
     return [...storedPreviews, ...unavailableVideos, ...temporaryPreviews];
+  }),
+  setPrimaryMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive(), mediaId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+    await assertPermission(ctx.user, "products.edit");
+    await requireProductInOperationalStore(ctx, input.productId);
+    const result = await setPrimaryProductMedia({ ...input, actorUserId: ctx.user.id });
+    await queueProductMetaSync(ctx, input.productId, { changeType: "image", isInternalOnly: false });
+    return result;
   }),
   generateOperationalMedia: protectedProcedure.input(z.object({ productId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
     await assertPermission(ctx.user, "products.inventory.update");

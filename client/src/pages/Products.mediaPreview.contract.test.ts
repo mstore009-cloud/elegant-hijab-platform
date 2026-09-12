@@ -25,6 +25,11 @@ describe("عقد بطاقات الألوان وتعديل المنتج", () => {
     expect(source).toContain("سجل عمليات المنتج");
     expect(source).toContain("trpc.products.excludeMediaFromColorReview.useMutation");
     expect(source).toContain("trpc.products.restoreMediaToColorReview.useMutation");
+    expect(source).toContain("trpc.products.setPrimaryMedia.useMutation");
+    expect(source).toContain("تعيين كأساسية");
+    expect(source).toContain("الصورة الأساسية");
+    expect(source).toContain("trpc.metaCatalog.sourceUpdate.useQuery");
+    expect(source).toContain("تعارض أو تحديث من OneDrive يحتاج مراجعة");
     expect(source).toContain("استبعاد المحدد من مراجعة اللون");
     expect(source).toContain("إعادة المحدد إلى مراجعة اللون");
     expect(source).toContain("حالة المخزون:");
