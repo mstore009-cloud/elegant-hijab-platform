@@ -39,6 +39,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("const hasSizes = sizeLabels.length > 0");
     expect(source).toContain("مخزون ${colorName} حسب القياس");
     expect(source).toContain("{hasSizes && <div className=\"mt-3 grid grid-cols-2 gap-2\"");
+    expect(source).toContain('const sizeStatus = sizeQuantity <= 0 ? "out_of_stock" : sizeQuantity <= 3 ? "low_stock" : "available"');
+    expect(source).toContain("inventoryStatusLabel(sizeStatus)");
+    expect(source).toContain("inventoryStatusClass(sizeStatus)");
+    expect(source).toContain('bg-[#2f9e62]');
+    expect(source).toContain('bg-[#d99528]');
+    expect(source).toContain('bg-[#d35445]');
     expect(source).toContain("productSizes");
     expect(source).toContain("trpc.products.saveInventory.useMutation");
     expect(source).toContain("حفظ مخزون المتغيرات");
