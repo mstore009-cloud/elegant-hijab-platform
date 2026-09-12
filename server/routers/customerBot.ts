@@ -9,7 +9,7 @@ import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHisto
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 import { archiveCustomerBotOrderDraft, createFinalOrderFromCustomerBotDraft, listCustomerBotOrderDrafts } from "../customerBot/orderDrafts";
 import { createStyleCandidateFromTrainingAsset, listCustomerBotTrainingAssets, uploadCustomerBotTrainingAsset } from "../customerBot/training";
-import { createAudioCommandRequest, createLearningProposal, createPlaybookDraft, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus } from "../customerBot/playground";
+import { createAudioCommandRequest, createLearningProposal, createPlaybookDraft, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, runTestCaseBatch, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus } from "../customerBot/playground";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
@@ -137,6 +137,12 @@ export const customerBotRouter = router({
     return playbook;
   }),
   testCases: protectedProcedure.query(async ({ ctx }) => listTestCases((await requireStore(ctx, "bot.manage")).id)),
+  runTestCaseBatch: protectedProcedure.input(z.object({ testCaseIds: z.array(z.number().int().positive()).max(30).optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await runTestCaseBatch({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_test_batch", entityId: result.sessionId, action: "bot.test_batch_run", summary: `شُغلت ${result.total} حالة اختبار معتمدة: نجحت ${result.passed} وفشلت ${result.failed}.` });
+    return result;
+  }),
   setBehaviorCardStatus: protectedProcedure.input(z.object({ cardId: z.number().int().positive(), status: z.enum(["approved", "archived"]) })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.knowledge.approve");
     const card = await setBehaviorCardStatus({ storeId: store.id, actorUserId: ctx.user.id, ...input });

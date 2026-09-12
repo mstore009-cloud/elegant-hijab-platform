@@ -77,4 +77,17 @@ describe("Customer Bot training center", () => {
     expect(source).toContain("تغطية المعرفة");
     expect(source).toContain("تطابق الرد مع المعرفة");
   });
+
+  it("offers ready sales templates and quality alerts with test batch execution", () => {
+    const source = read("CustomerBotLearning.tsx");
+    expect(source).toContain("قوالب جاهزة");
+    expect(source).toContain("الرد على سؤال السعر");
+    expect(source).toContain("اقتراح ألوان المنتج");
+    expect(source).toContain("حساب التوصيل");
+    expect(source).toContain("ملخص وتثبيت الطلب");
+    expect(source).toContain("نسبة الردود المعدلة مرتفعة");
+    expect(source).toContain("فجوات المعرفة تتزايد");
+    expect(source).toContain("runTestCaseBatch");
+    expect(source).toContain("تشغيل حالات الاختبار المعتمدة");
+  });
 });

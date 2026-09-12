@@ -366,6 +366,46 @@ export async function listTestCases(storeId: number) {
   return db.select().from(customerBotTestCases).where(eq(customerBotTestCases.storeId, storeId)).orderBy(desc(customerBotTestCases.updatedAt)).limit(100);
 }
 
+function testCasePrompt(inputJson: string) {
+  const parsed = safeJson<any>(inputJson, {});
+  if (typeof parsed === "string") return parsed.trim();
+  return typeof parsed.prompt === "string" ? parsed.prompt.trim() : typeof parsed.message === "string" ? parsed.message.trim() : typeof parsed.input === "string" ? parsed.input.trim() : "";
+}
+
+function testCaseMatches(expectedJson: string | null, reply: string, actionJson: string | null) {
+  const expected = safeJson<any>(expectedJson ?? "{}", {});
+  const action = safeJson<any>(actionJson ?? "{}", {});
+  const expectedText = typeof expected.expected === "string" ? expected.expected : typeof expected.replyContains === "string" ? expected.replyContains : null;
+  const textMatches = !expectedText || reply.toLowerCase().includes(expectedText.toLowerCase());
+  const actionMatches = !expected.action || action.type === expected.action;
+  const escalationMatches = typeof expected.needsEscalation !== "boolean" || action.needsEscalation === expected.needsEscalation;
+  return textMatches && actionMatches && escalationMatches;
+}
+
+export async function runTestCaseBatch(input: { storeId: number; actorUserId: number; testCaseIds?: number[] }) {
+  const db = await requireDb();
+  const selected = await db.select().from(customerBotTestCases).where(and(eq(customerBotTestCases.storeId, input.storeId), eq(customerBotTestCases.status, "approved"), input.testCaseIds?.length ? inArray(customerBotTestCases.id, input.testCaseIds) : undefined)).orderBy(customerBotTestCases.id).limit(30);
+  if (!selected.length) throw new Error("لا توجد حالات اختبار معتمدة للتشغيل. اعتمدي الحالات أولاً.");
+  const session = await createPlaygroundSession({ storeId: input.storeId, actorUserId: input.actorUserId, mode: "new_test_customer", channel: "internal" });
+  const results = [];
+  try {
+    for (const testCase of selected) {
+      const prompt = testCasePrompt(testCase.inputJson);
+      if (!prompt) {
+        results.push({ testCaseId: testCase.id, title: testCase.title, passed: false, reply: "", reason: "صيغة إدخال الحالة لا تحتوي على prompt أو message صالح." });
+        continue;
+      }
+      const result = await sendPlaygroundMessage({ storeId: input.storeId, sessionId: session.id, actorUserId: input.actorUserId, body: prompt });
+      const passed = testCaseMatches(testCase.expectedJson, result.assistantMessage.body, result.assistantMessage.actionJson);
+      results.push({ testCaseId: testCase.id, title: testCase.title, passed, reply: result.assistantMessage.body, confidence: result.assistantMessage.confidence ?? 0, action: safeJson<any>(result.assistantMessage.actionJson ?? "{}", {}).type ?? "none", reason: passed ? "طابق التوقع المحفوظ." : "الرد لم يطابق التوقع المحفوظ." });
+    }
+  } finally {
+    await closePlaygroundSession({ storeId: input.storeId, sessionId: session.id });
+  }
+  const passed = results.filter(result => result.passed).length;
+  return { sessionId: session.id, total: results.length, passed, failed: results.length - passed, results };
+}
+
 export async function setBehaviorCardStatus(input: { storeId: number; actorUserId: number; cardId: number; status: "approved" | "archived" }) {
   const db = await requireDb();
   const [card] = await db.select().from(customerBotBehaviorCards).where(and(eq(customerBotBehaviorCards.id, input.cardId), eq(customerBotBehaviorCards.storeId, input.storeId))).limit(1);
