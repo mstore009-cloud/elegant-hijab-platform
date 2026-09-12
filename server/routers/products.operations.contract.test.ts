@@ -7,14 +7,8 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     const dbSource = readFileSync(new URL("../products/db.ts", import.meta.url), "utf8");
     expect(routerSource).toContain("operations: protectedProcedure");
     expect(routerSource).toContain("restoreMediaToColorReview");
-    expect(routerSource).toContain("setPrimaryMedia");
     expect(dbSource).toContain("listProductOperations");
     expect(dbSource).toContain("innerJoin(products");
     expect(dbSource).toContain("media_color_review_restored");
-    expect(dbSource).toContain("primary_media_changed");
-    expect(routerSource).toContain("restoreFromArchive");
-    expect(routerSource).toContain("archive: protectedProcedure");
-    expect(dbSource).toContain("product_archived");
-    expect(dbSource).toContain("product_restored_from_archive");
   });
 });

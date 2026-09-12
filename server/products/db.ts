@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { catalogFolderImports, contentPostMedia, contentPosts, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, productVisualReferences, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, contentPostMedia, contentPosts, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { normalizeApprovedColorNames, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { planOperationalReferenceDetach } from "./operationalMediaLifecycle";
@@ -24,7 +24,7 @@ export async function listProductsWithPrimaryOperationalMedia(storeId: number) {
   ]);
   const primaryMediaByProductId = new Map<number, typeof mediaList[number]>();
   for (const media of mediaList) {
-    if (media.mediaType !== "image" || !media.storageKey || primaryMediaByProductId.has(media.productId)) continue;
+    if (!media.storageKey || primaryMediaByProductId.has(media.productId)) continue;
     primaryMediaByProductId.set(media.productId, media);
   }
   const missingByProductId = new Map(folderImports.filter(entry => entry.linkedProductId).map(entry => [entry.linkedProductId!, parseMissingFields(entry.missingFields)]));
@@ -134,32 +134,6 @@ export async function activateReadyProduct(input: { productId: number; actorUser
     });
   }
   return { status: "active" as const };
-}
-
-export async function archiveProduct(input: { productId: number; actorUserId: number }) {
-  const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const [product] = await db.select({ id: products.id, status: products.status }).from(products).where(eq(products.id, input.productId)).limit(1);
-  if (!product) throw new Error("المنتج غير موجود.");
-  if (product.status === "archived") return { status: "archived" as const };
-  await db.transaction(async tx => {
-    await tx.update(products).set({ status: "archived" }).where(eq(products.id, input.productId));
-    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "product_archived", changes: JSON.stringify({ priorStatus: product.status }) });
-  });
-  return { status: "archived" as const, priorStatus: product.status };
-}
-
-export async function restoreArchivedProduct(input: { productId: number; actorUserId: number }) {
-  const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const [product] = await db.select({ id: products.id, status: products.status }).from(products).where(eq(products.id, input.productId)).limit(1);
-  if (!product) throw new Error("المنتج غير موجود.");
-  if (product.status !== "archived") return { status: product.status };
-  await db.transaction(async tx => {
-    await tx.update(products).set({ status: "draft" }).where(eq(products.id, input.productId));
-    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "product_restored_from_archive", changes: JSON.stringify({ nextStatus: "draft" }) });
-  });
-  return { status: "draft" as const, message: "أُعيد المنتج كمسودة؛ راجعه ثم فعّله عند الجاهزية." };
 }
 
 export function isPublicProductStatus(status: string) {
@@ -620,52 +594,6 @@ export async function getProductMedia(productId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(productMedia).where(eq(productMedia.productId, productId)).orderBy(productMedia.sortOrder);
-}
-
-export async function listProductVisualReferences(input: { storeId: number; productId: number }) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select({ id: productVisualReferences.id, productId: productVisualReferences.productId, productMediaId: productVisualReferences.productMediaId, referenceType: productVisualReferences.referenceType, sortOrder: productVisualReferences.sortOrder, enabled: productVisualReferences.enabled, storageKey: productMedia.storageKey, originalFileName: productMedia.originalFileName, variantId: productMedia.variantId })
-    .from(productVisualReferences)
-    .innerJoin(productMedia, eq(productMedia.id, productVisualReferences.productMediaId))
-    .where(and(eq(productVisualReferences.storeId, input.storeId), eq(productVisualReferences.productId, input.productId)))
-    .orderBy(productVisualReferences.sortOrder, productVisualReferences.id);
-}
-
-export async function saveProductVisualReference(input: { storeId: number; productId: number; productMediaId: number; referenceType: "primary" | "color" | "detail"; sortOrder: number; actorUserId: number }) {
-  const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const [media] = await db.select({ id: productMedia.id }).from(productMedia).innerJoin(products, eq(products.id, productMedia.productId)).where(and(eq(products.storeId, input.storeId), eq(products.id, input.productId), eq(productMedia.id, input.productMediaId), eq(productMedia.mediaType, "image"), eq(products.status, "active"))).limit(1);
-  if (!media) throw new Error("اختر صورة موجودة لهذا المنتج النشط فقط.");
-  const current = await db.select({ productMediaId: productVisualReferences.productMediaId }).from(productVisualReferences).where(and(eq(productVisualReferences.storeId, input.storeId), eq(productVisualReferences.productId, input.productId), eq(productVisualReferences.enabled, true)));
-  const existing = current.some(item => item.productMediaId === input.productMediaId);
-  if (!existing && current.length >= 3) throw new Error("يمكن اختيار ثلاث صور مرجعية فعالة كحد أقصى لكل منتج.");
-  await db.insert(productVisualReferences).values({ storeId: input.storeId, productId: input.productId, productMediaId: input.productMediaId, referenceType: input.referenceType, sortOrder: input.sortOrder, enabled: true, createdByUserId: input.actorUserId }).onDuplicateKeyUpdate({ set: { referenceType: input.referenceType, sortOrder: input.sortOrder, enabled: true } });
-  return listProductVisualReferences({ storeId: input.storeId, productId: input.productId });
-}
-
-export async function removeProductVisualReference(input: { storeId: number; productId: number; referenceId: number }) {
-  const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  await db.delete(productVisualReferences).where(and(eq(productVisualReferences.id, input.referenceId), eq(productVisualReferences.storeId, input.storeId), eq(productVisualReferences.productId, input.productId)));
-  return listProductVisualReferences({ storeId: input.storeId, productId: input.productId });
-}
-
-export async function setPrimaryProductMedia(input: { productId: number; mediaId: number; actorUserId: number }) {
-  const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
-  const media = await db.select().from(productMedia).where(eq(productMedia.productId, input.productId)).orderBy(productMedia.sortOrder, productMedia.id);
-  const selected = media.find(item => item.id === input.mediaId);
-  if (!selected || selected.mediaType !== "image") throw new Error("اختر صورة صالحة من صور المنتج.");
-  const ordered = [selected, ...media.filter(item => item.id !== selected.id && item.mediaType === "image"), ...media.filter(item => item.id !== selected.id && item.mediaType !== "image")];
-  await db.transaction(async tx => {
-    for (let index = 0; index < ordered.length; index += 1) {
-      const item = ordered[index];
-      if (item) await tx.update(productMedia).set({ sortOrder: index }).where(eq(productMedia.id, item.id));
-    }
-    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "products_ui", action: "primary_media_changed", changes: JSON.stringify({ mediaId: input.mediaId, originalFileName: selected.originalFileName }) });
-  });
-  return { productId: input.productId, mediaId: input.mediaId };
 }
 
 export async function getCatalogProductFolderId(input: { productId: number; storeId: number }) {

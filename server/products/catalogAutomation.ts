@@ -341,26 +341,11 @@ async function syncCatalogSourceProductMetadata(input: {
 }) {
   const [current] = await input.db.select({ name: products.name, description: products.description, sellingPrice: products.sellingPrice, previousPrice: products.previousPrice, material: products.material, sizeLabels: products.sizeLabels }).from(products).where(eq(products.id, input.productId)).limit(1);
   if (!current) return [] as string[];
-  const operations = await input.db.select({ action: productOperations.action, source: productOperations.source, changes: productOperations.changes, createdAt: productOperations.createdAt }).from(productOperations).where(eq(productOperations.productId, input.productId)).orderBy(desc(productOperations.createdAt), desc(productOperations.id));
-  const latestSourceSync = operations.find(operation => operation.action === "catalog_product_metadata_synced")?.createdAt?.getTime() ?? 0;
-  const protectedFields = new Set<string>();
-  for (const operation of operations.filter(operation => operation.source === "products_ui" && operation.action === "details_updated" && operation.createdAt.getTime() > latestSourceSync)) {
-    try {
-      const changes = JSON.parse(operation.changes) as Record<string, unknown>;
-      for (const key of Object.keys(changes)) protectedFields.add(key === "descriptionUpdated" ? "description" : key);
-    } catch {
-      protectedFields.add("unknown");
-    }
-  }
   const updates: Record<string, string | null> = {};
   const changed: string[] = [];
-  const conflicts: string[] = [];
   const setIfPresent = (key: keyof LenientCatalogProductMetadata, column: string, label: string, currentValue: string | null) => {
     const next = input.metadata[key];
-    if (typeof next === "string" && next !== currentValue) {
-      if (protectedFields.has(column)) { conflicts.push(label); return; }
-      updates[column] = next; changed.push(label);
-    }
+    if (typeof next === "string" && next !== currentValue) { updates[column] = next; changed.push(label); }
   };
   setIfPresent("name", "name", "الاسم", current.name);
   setIfPresent("description", "description", "الوصف", current.description);
@@ -369,18 +354,12 @@ async function syncCatalogSourceProductMetadata(input: {
   setIfPresent("material", "material", "الخامة", current.material);
   if (input.metadata.sizes.length) {
     const nextSizes = JSON.stringify(input.metadata.sizes);
-    if (nextSizes !== (current.sizeLabels ?? "[]")) {
-      if (protectedFields.has("sizeLabels")) conflicts.push("القياسات");
-      else { updates.sizeLabels = nextSizes; changed.push("القياسات"); }
-    }
+    if (nextSizes !== (current.sizeLabels ?? "[]")) { updates.sizeLabels = nextSizes; changed.push("القياسات"); }
   }
-  if (!changed.length && !conflicts.length) return changed;
+  if (!changed.length) return changed;
   await input.db.transaction(async tx => {
-    if (changed.length) {
-      await tx.update(products).set(updates).where(eq(products.id, input.productId));
-      await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "catalog_scan", action: "catalog_product_metadata_synced", changes: JSON.stringify({ source: "onedrive_product_metadata", fields: changed }) });
-    }
-    if (conflicts.length) await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "catalog_scan", action: "onedrive_manual_edit_conflict", changes: JSON.stringify({ source: "onedrive_product_metadata", protectedFields: conflicts, policy: "manual_value_preserved" }) });
+    await tx.update(products).set(updates).where(eq(products.id, input.productId));
+    await tx.insert(productOperations).values({ productId: input.productId, actorUserId: input.actorUserId, source: "catalog_scan", action: "catalog_product_metadata_synced", changes: JSON.stringify({ source: "onedrive_product_metadata", fields: changed }) });
   });
   return changed;
 }

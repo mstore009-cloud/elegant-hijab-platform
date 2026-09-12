@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { catalogFolderImports, productMedia, productOperations, productVariants, productVisualReferences, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, productMedia, productOperations, productVariants, products, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getPublicStore } from "../stores/db";
-import { activateReadyProduct, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductReviewReadiness, getProductWithVariants, listProductVisualReferences, recordAutomaticColorSuggestionDecision, removeProductVisualReference, saveProductColorInventory, saveProductVisualReference, updateProductDetails } from "./db";
+import { activateReadyProduct, addProductColor, applyAutomaticColorSuggestionReview, assignProductMediaColor, excludeProductMediaFromColorReview, generateAutomaticColorSuggestion, getProductReviewReadiness, getProductWithVariants, recordAutomaticColorSuggestionDecision, saveProductColorInventory, updateProductDetails } from "./db";
 
 async function getTestStoreId() {
   const store = await getPublicStore();
@@ -227,38 +227,6 @@ describe("عمليات المنتج الموحدة", () => {
         await db.delete(productOperations).where(eq(productOperations.productId, productId));
         await db.delete(productMedia).where(eq(productMedia.productId, productId));
         await db.delete(productVariants).where(eq(productVariants.productId, productId));
-        await db.delete(products).where(eq(products.id, productId));
-      }
-    }
-  }, 20_000);
-
-  it("يحصر مراجع المطابقة البصرية بثلاث صور ولا يغير وسائط المنتج عند إزالتها", async () => {
-    const db = await getDb();
-    if (!db) throw new Error("قاعدة البيانات غير متاحة لاختبار مراجع الصور.");
-    const [owner] = await db.select({ id: users.id }).from(users).limit(1);
-    if (!owner) throw new Error("لا يوجد مستخدم مخول لاختبار مراجع الصور.");
-    const storeId = await getTestStoreId();
-    const productCode = `TST-VISUAL-${randomUUID().slice(0, 10)}`;
-    let productId: number | null = null;
-    try {
-      const created = await db.insert(products).values({ storeId, productCode, name: "منتج مراجع بصرية", category: "اختبار", description: "وصف", sizeLabels: null, status: "active", sellingPrice: "10000.00", createdByUserId: owner.id });
-      productId = Number(created[0].insertId);
-      const media = [] as number[];
-      for (let index = 0; index < 4; index += 1) {
-        const inserted = await db.insert(productMedia).values({ productId, source: "manual", mediaType: "image", storageKey: `products/test/${productCode}-${index}.webp`, originalFileName: `ref-${index}.webp`, colorVerified: false, sortOrder: index });
-        media.push(Number(inserted[0].insertId));
-      }
-      for (const [index, mediaId] of media.slice(0, 3).entries()) await saveProductVisualReference({ storeId, productId, productMediaId: mediaId!, referenceType: index === 0 ? "primary" : "color", sortOrder: index, actorUserId: owner.id });
-      expect(await listProductVisualReferences({ storeId, productId })).toHaveLength(3);
-      await expect(saveProductVisualReference({ storeId, productId, productMediaId: media[3]!, referenceType: "detail", sortOrder: 3, actorUserId: owner.id })).rejects.toThrow("ثلاث صور مرجعية");
-      const [reference] = await listProductVisualReferences({ storeId, productId });
-      await removeProductVisualReference({ storeId, productId, referenceId: reference!.id });
-      expect(await listProductVisualReferences({ storeId, productId })).toHaveLength(2);
-      expect(await db.select().from(productMedia).where(eq(productMedia.id, media[0]!))).toHaveLength(1);
-    } finally {
-      if (productId) {
-        await db.delete(productVisualReferences).where(eq(productVisualReferences.productId, productId));
-        await db.delete(productMedia).where(eq(productMedia.productId, productId));
         await db.delete(products).where(eq(products.id, productId));
       }
     }
