@@ -33,8 +33,28 @@ type BotAction = { type: "none" | "send_product_images" | "send_product_card" | 
 type StructuredReply = { reply: string; confidence: number; needsEscalation: boolean; escalationReason: string | null; action: BotAction };
 type CommandClassification = { destination: ProposalCategory | "clarification"; title: string; body: string; explanation: string; warning: string | null; clarificationQuestion: string | null; confidence: number };
 
-const audioTypes = new Set(["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/ogg", "audio/webm", "audio/mp4", "audio/m4a"]);
+const audioTypes = new Set(["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/wave", "audio/x-pn-wav", "audio/ogg", "audio/webm", "audio/mp4", "audio/m4a", "audio/x-m4a"]);
+const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg", "webm"]);
 const maxAudioBytes = 16 * 1024 * 1024;
+
+export function normalizeAudioMimeType(mimeType: string, fileName = "") {
+  const baseMime = mimeType.trim().toLowerCase().split(";", 1)[0] ?? "";
+  if (audioTypes.has(baseMime)) {
+    if (["audio/x-wav", "audio/wave", "audio/x-pn-wav"].includes(baseMime)) return "audio/wav";
+    if (["audio/m4a", "audio/x-m4a"].includes(baseMime)) return "audio/mp4";
+    if (baseMime === "audio/mp3") return "audio/mpeg";
+    return baseMime;
+  }
+  if (baseMime && baseMime !== "application/octet-stream") return null;
+  const extension = fileName.trim().toLowerCase().split(".").pop() ?? "";
+  if (audioExtensions.has(extension)) {
+    if (extension === "mp3") return "audio/mpeg";
+    if (extension === "wav") return "audio/wav";
+    if (extension === "m4a") return "audio/mp4";
+    return `audio/${extension}`;
+  }
+  return null;
+}
 
 async function requireDb() {
   const db = await getDb();
@@ -272,8 +292,8 @@ export async function createTextCommandRequest(input: { storeId: number; actorUs
 function publicUrl(path: string) { try { return new URL(path, new URL(ENV.metaRedirectUri).origin).toString(); } catch { throw new Error("لا يتوفر النطاق العام اللازم لتحويل التسجيل الصوتي إلى نص."); } }
 
 export async function createAudioCommandRequest(input: { storeId: number; actorUserId: number; fileName: string; mimeType: string; base64: string }) {
-  const mimeType = input.mimeType.trim().toLowerCase();
-  if (!audioTypes.has(mimeType)) throw new Error("ارفعي أو سجّلي MP3 أو WAV أو M4A أو OGG أو WEBM فقط.");
+  const mimeType = normalizeAudioMimeType(input.mimeType, input.fileName);
+  if (!mimeType) throw new Error("ارفعي أو سجّلي MP3 أو WAV أو M4A أو OGG أو WEBM فقط.");
   const bytes = Buffer.from(input.base64, "base64");
   if (!bytes.length || bytes.length > maxAudioBytes) throw new Error("يجب ألا يتجاوز التسجيل الصوتي 16 ميغابايت.");
   const safeName = (input.fileName.trim() || "bot-command.webm").replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 255);
