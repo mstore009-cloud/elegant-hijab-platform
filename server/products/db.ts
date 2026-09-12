@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { catalogFolderImports, contentPostMedia, contentPosts, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, products, users } from "../../drizzle/schema";
+import { catalogFolderImports, contentPostMedia, contentPosts, productImportJobs, productMedia, productMediaLifecycleEvents, productOperations, productVariants, productVisualReferences, products, users } from "../../drizzle/schema";
 import { normalizeApprovedColorNames, validateApprovedImageColorLinks } from "../integrations/onedrive/productMetadata";
 import { getDb } from "../db";
 import { planOperationalReferenceDetach } from "./operationalMediaLifecycle";
@@ -620,6 +620,35 @@ export async function getProductMedia(productId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(productMedia).where(eq(productMedia.productId, productId)).orderBy(productMedia.sortOrder);
+}
+
+export async function listProductVisualReferences(input: { storeId: number; productId: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({ id: productVisualReferences.id, productId: productVisualReferences.productId, productMediaId: productVisualReferences.productMediaId, referenceType: productVisualReferences.referenceType, sortOrder: productVisualReferences.sortOrder, enabled: productVisualReferences.enabled, storageKey: productMedia.storageKey, originalFileName: productMedia.originalFileName, variantId: productMedia.variantId })
+    .from(productVisualReferences)
+    .innerJoin(productMedia, eq(productMedia.id, productVisualReferences.productMediaId))
+    .where(and(eq(productVisualReferences.storeId, input.storeId), eq(productVisualReferences.productId, input.productId)))
+    .orderBy(productVisualReferences.sortOrder, productVisualReferences.id);
+}
+
+export async function saveProductVisualReference(input: { storeId: number; productId: number; productMediaId: number; referenceType: "primary" | "color" | "detail"; sortOrder: number; actorUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  const [media] = await db.select({ id: productMedia.id }).from(productMedia).innerJoin(products, eq(products.id, productMedia.productId)).where(and(eq(products.storeId, input.storeId), eq(products.id, input.productId), eq(productMedia.id, input.productMediaId), eq(productMedia.mediaType, "image"), eq(products.status, "active"))).limit(1);
+  if (!media) throw new Error("اختر صورة موجودة لهذا المنتج النشط فقط.");
+  const current = await db.select({ productMediaId: productVisualReferences.productMediaId }).from(productVisualReferences).where(and(eq(productVisualReferences.storeId, input.storeId), eq(productVisualReferences.productId, input.productId), eq(productVisualReferences.enabled, true)));
+  const existing = current.some(item => item.productMediaId === input.productMediaId);
+  if (!existing && current.length >= 3) throw new Error("يمكن اختيار ثلاث صور مرجعية فعالة كحد أقصى لكل منتج.");
+  await db.insert(productVisualReferences).values({ storeId: input.storeId, productId: input.productId, productMediaId: input.productMediaId, referenceType: input.referenceType, sortOrder: input.sortOrder, enabled: true, createdByUserId: input.actorUserId }).onDuplicateKeyUpdate({ set: { referenceType: input.referenceType, sortOrder: input.sortOrder, enabled: true } });
+  return listProductVisualReferences({ storeId: input.storeId, productId: input.productId });
+}
+
+export async function removeProductVisualReference(input: { storeId: number; productId: number; referenceId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة البيانات غير متاحة حاليًا.");
+  await db.delete(productVisualReferences).where(and(eq(productVisualReferences.id, input.referenceId), eq(productVisualReferences.storeId, input.storeId), eq(productVisualReferences.productId, input.productId)));
+  return listProductVisualReferences({ storeId: input.storeId, productId: input.productId });
 }
 
 export async function setPrimaryProductMedia(input: { productId: number; mediaId: number; actorUserId: number }) {
