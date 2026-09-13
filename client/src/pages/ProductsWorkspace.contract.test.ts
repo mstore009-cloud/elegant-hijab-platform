@@ -215,11 +215,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     const browser = readFileSync(resolve(process.cwd(), "client/src/components/ProductCategoryBrowser.tsx"), "utf8");
     const thumbnail = readFileSync(resolve(process.cwd(), "client/src/components/ProductListThumbnail.tsx"), "utf8");
     expect(source).toContain('grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4');
-    expect(source).toContain('className="h-40 w-full"');
+    expect(source).toContain('className="flex h-40 w-full items-center justify-center border-0 bg-transparent" imageClassName="max-h-full max-w-full object-contain"');
     expect(source).toContain('rounded-2xl border px-3 py-3 text-right transition');
     expect(browser).toContain("children?: ReactNode");
     expect(browser).toContain("{children}</div>");
     expect(thumbnail).toContain("className?: string");
+    expect(thumbnail).toContain("imageClassName?: string");
   });
 
   it("يفتح تفاصيل المنتج كبطاقة منبثقة فوق التخطيط ويحافظ على نسبة الصورة", () => {
@@ -230,6 +231,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain('if (event.key === "Escape") setSelectedProductId(null)');
     expect(source).toContain('onClick={event => { if (event.target === event.currentTarget) setSelectedProductId(null); }}');
     expect(source).toContain('max-w-[1100px] overflow-y-auto rounded-3xl');
+    expect(thumbnail).toContain('bg-transparent');
     expect(thumbnail).toContain('object-contain');
   });
 
