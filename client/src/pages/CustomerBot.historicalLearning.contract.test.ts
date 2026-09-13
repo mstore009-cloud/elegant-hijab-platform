@@ -46,6 +46,16 @@ describe("Customer Bot training center", () => {
     expect(playground).toContain('status: "archived"');
   });
 
+  it("keeps clarification proposals editable and offers guided alternatives", () => {
+    const source = read("CustomerBotCommandAssistant.tsx");
+    const playground = read("../../../server/customerBot/playground.ts");
+    expect(source).toContain("تحسين الاقتراح");
+    expect(source).toContain("alternatives.map");
+    expect(source).toContain("حفظ كمسودة جديدة");
+    expect(playground).toContain("improveCommandRequest");
+    expect(playground).toContain("alternatives");
+  });
+
   it("keeps command guidance inside the learning center with practical templates", () => {
     const learning = read("CustomerBotLearning.tsx");
     const nav = read("../components/customerBot/CustomerBotNav.tsx");

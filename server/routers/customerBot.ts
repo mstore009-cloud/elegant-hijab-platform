@@ -9,7 +9,7 @@ import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHisto
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 import { archiveCustomerBotOrderDraft, createFinalOrderFromCustomerBotDraft, listCustomerBotOrderDrafts } from "../customerBot/orderDrafts";
 import { createStyleCandidateFromTrainingAsset, listCustomerBotTrainingAssets, uploadCustomerBotTrainingAsset } from "../customerBot/training";
-import { archiveCommandRequest, createAudioCommandRequest, createLearningProposal, createPlaybookDraft, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, runTestCaseBatch, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus, updateTextCommandRequest } from "../customerBot/playground";
+import { archiveCommandRequest, createAudioCommandRequest, createLearningProposal, createPlaybookDraft, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, improveCommandRequest, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, runTestCaseBatch, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus, updateTextCommandRequest } from "../customerBot/playground";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
@@ -172,6 +172,12 @@ export const customerBotRouter = router({
     const store = await requireStore(ctx, "bot.manage");
     const result = await updateTextCommandRequest({ storeId: store.id, ...input });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_command", entityId: result.command.id, action: "bot.command_updated", summary: "أُعيد تفسير أمر مساعد البوت المحدد بعد تعديله." });
+    return result;
+  }),
+  improveCommand: protectedProcedure.input(z.object({ commandId: z.number().int().positive(), instruction: z.string().trim().max(2000).optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const result = await improveCommandRequest({ storeId: store.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_command", entityId: result.command.id, action: "bot.command_suggestion_improved", summary: "حُسّن اقتراح أمر البوت وعُرضت بدائل جديدة للمراجعة." });
     return result;
   }),
   createAudioCommand: protectedProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(3).max(120), base64: z.string().min(4).max(23_000_000) })).mutation(async ({ ctx, input }) => {

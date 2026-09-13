@@ -31,7 +31,8 @@ type PlaygroundMode = (typeof playgroundModes)[number];
 
 type BotAction = { type: "none" | "send_product_images" | "send_product_card" | "order_summary" | "notify_human"; productCode: string | null; colorName: string | null; quantity: number | null; caption: string | null };
 type StructuredReply = { reply: string; confidence: number; needsEscalation: boolean; escalationReason: string | null; action: BotAction };
-type CommandClassification = { destination: ProposalCategory | "clarification"; title: string; body: string; explanation: string; warning: string | null; clarificationQuestion: string | null; confidence: number };
+type CommandAlternative = { destination: ProposalCategory; title: string; body: string; reason: string };
+type CommandClassification = { destination: ProposalCategory | "clarification"; title: string; body: string; explanation: string; warning: string | null; clarificationQuestion: string | null; confidence: number; alternatives: CommandAlternative[] };
 
 const audioTypes = new Set(["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/wave", "audio/x-pn-wav", "audio/ogg", "audio/webm", "audio/mp4", "audio/m4a", "audio/x-m4a"]);
 const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg", "webm"]);
@@ -259,10 +260,11 @@ function parseCommand(value: string): CommandClassification {
   const parsed = safeJson<any>(value, {});
   const valid = new Set([...proposalCategories, "clarification"]);
   const destination = typeof parsed.destination === "string" && valid.has(parsed.destination) ? parsed.destination : "clarification";
-  return { destination, title: typeof parsed.title === "string" ? parsed.title.trim().slice(0, 240) : "تعليمة تحتاج مراجعة", body: typeof parsed.body === "string" ? parsed.body.trim().slice(0, 12000) : "", explanation: typeof parsed.explanation === "string" ? parsed.explanation.trim().slice(0, 1200) : "لم يتمكن المساعد من تفسير الأمر بوضوح.", warning: typeof parsed.warning === "string" ? parsed.warning.trim().slice(0, 500) : null, clarificationQuestion: typeof parsed.clarificationQuestion === "string" ? parsed.clarificationQuestion.trim().slice(0, 800) : null, confidence: clampConfidence(parsed.confidence) };
+  const alternatives = Array.isArray(parsed.alternatives) ? parsed.alternatives.filter((item: any) => item && typeof item === "object" && proposalCategories.includes(item.destination)).slice(0, 3).map((item: any) => ({ destination: item.destination as ProposalCategory, title: typeof item.title === "string" ? item.title.trim().slice(0, 240) : "اقتراح بديل", body: typeof item.body === "string" ? item.body.trim().slice(0, 12000) : "", reason: typeof item.reason === "string" ? item.reason.trim().slice(0, 500) : "بديل قابل للمراجعة" })) : [];
+  return { destination, title: typeof parsed.title === "string" ? parsed.title.trim().slice(0, 240) : "تعليمة تحتاج مراجعة", body: typeof parsed.body === "string" ? parsed.body.trim().slice(0, 12000) : "", explanation: typeof parsed.explanation === "string" ? parsed.explanation.trim().slice(0, 1200) : "لم يتمكن المساعد من تفسير الأمر بوضوح.", warning: typeof parsed.warning === "string" ? parsed.warning.trim().slice(0, 500) : null, clarificationQuestion: typeof parsed.clarificationQuestion === "string" ? parsed.clarificationQuestion.trim().slice(0, 800) : null, confidence: clampConfidence(parsed.confidence), alternatives };
 }
 
-async function classifyCommand(storeId: number, text: string) {
+async function classifyCommand(storeId: number, text: string, refinement?: { current: CommandClassification; instruction?: string }) {
   const settings = await getCustomerBotSettings(storeId);
   const invoke = createAiTaskInvoker("customer_reply_fast", { storeId });
   const result = await invoke({
@@ -272,9 +274,9 @@ async function classifyCommand(storeId: number, text: string) {
       `الوجهات المسموحة: ${proposalCategories.join(", ")} أو clarification.`,
       "المعرفة للسياسات والحقائق الثابتة فقط. الأسلوب واللهجة في dialect_style أو reply_example. متى يرسل البوت صورة أو بطاقة أو ملخصاً في sales_playbook. الرد الممنوع في guardrail. السؤال المتكرر في test_case. النقص في knowledge_gap.",
       "السعر والمخزون وحالة الطلب حقائق حية وليست بطاقة نصية. أوامر تشغيل القنوات أو إرسال رسائل أو اعتماد نهائي يجب أن تكون clarification مع تحذير أنها تحتاج شاشة الإعدادات وتأكيداً مستقلاً.",
-      "أعد JSON فقط: {destination:string,title:string,body:string,explanation:string,warning:string|null,clarificationQuestion:string|null,confidence:number}.",
-    ].join("\n\n") }, { role: "user", content: text }],
-    outputSchema: { name: "customer_bot_command_interpretation", strict: true, schema: { type: "object", properties: { destination: { type: "string", enum: [...proposalCategories, "clarification"] }, title: { type: "string" }, body: { type: "string" }, explanation: { type: "string" }, warning: { type: ["string", "null"] }, clarificationQuestion: { type: ["string", "null"] }, confidence: { type: "integer" } }, required: ["destination", "title", "body", "explanation", "warning", "clarificationQuestion", "confidence"], additionalProperties: false } },
+      "أعد JSON فقط مع alternatives تحتوي حتى ثلاثة بدائل: {destination:string,title:string,body:string,explanation:string,warning:string|null,clarificationQuestion:string|null,confidence:number,alternatives:[{destination:string,title:string,body:string,reason:string}]}.",
+    ].join("\n\n") }, { role: "user", content: refinement ? `الأمر الأصلي:\n${text}\n\nالتفسير الحالي:\n${JSON.stringify(refinement.current)}\n\n${refinement.instruction ? `تعليمات التحسين:\n${refinement.instruction}` : "حسّن الاقتراح وقدّم بدائل أوضح."}` : text }],
+    outputSchema: { name: "customer_bot_command_interpretation", strict: true, schema: { type: "object", properties: { destination: { type: "string", enum: [...proposalCategories, "clarification"] }, title: { type: "string" }, body: { type: "string" }, explanation: { type: "string" }, warning: { type: ["string", "null"] }, clarificationQuestion: { type: ["string", "null"] }, confidence: { type: "integer" }, alternatives: { type: "array", items: { type: "object", properties: { destination: { type: "string", enum: proposalCategories }, title: { type: "string" }, body: { type: "string" }, reason: { type: "string" } }, required: ["destination", "title", "body", "reason"], additionalProperties: false } } }, required: ["destination", "title", "body", "explanation", "warning", "clarificationQuestion", "confidence", "alternatives"], additionalProperties: false } },
   });
   return { classification: parseCommand(responseText(result)), usage: result.usage ?? null };
 }
@@ -284,7 +286,7 @@ export async function createTextCommandRequest(input: { storeId: number; actorUs
   if (text.length < 3) throw new Error("اكتبي أمراً واضحاً للمساعد أولاً.");
   const { classification, usage } = await classifyCommand(input.storeId, text);
   const db = await requireDb();
-  const inserted = await db.insert(customerBotCommandRequests).values({ storeId: input.storeId, createdByUserId: input.actorUserId, inputType: "text", originalText: text, transcript: text, classificationJson: JSON.stringify(classification), proposedChangeJson: JSON.stringify({ category: classification.destination, title: classification.title, body: classification.body }), status: classification.destination === "clarification" ? "needs_clarification" : "previewed" });
+  const inserted = await db.insert(customerBotCommandRequests).values({ storeId: input.storeId, createdByUserId: input.actorUserId, inputType: "text", originalText: text, transcript: text, classificationJson: JSON.stringify(classification), proposedChangeJson: JSON.stringify({ category: classification.destination, title: classification.title, body: classification.body, alternatives: classification.alternatives }), status: classification.destination === "clarification" ? "needs_clarification" : "previewed" });
   const [command] = await db.select().from(customerBotCommandRequests).where(eq(customerBotCommandRequests.id, Number(inserted[0].insertId))).limit(1);
   return { command, classification, usage };
 }
@@ -296,7 +298,20 @@ export async function updateTextCommandRequest(input: { storeId: number; command
   const [command] = await db.select().from(customerBotCommandRequests).where(and(eq(customerBotCommandRequests.id, input.commandId), eq(customerBotCommandRequests.storeId, input.storeId))).limit(1);
   if (!command) throw new Error("أمر المساعد غير موجود في المتجر الحالي.");
   const { classification, usage } = await classifyCommand(input.storeId, text);
-  await db.update(customerBotCommandRequests).set({ originalText: text, transcript: text, classificationJson: JSON.stringify(classification), proposedChangeJson: JSON.stringify({ category: classification.destination, title: classification.title, body: classification.body }), status: classification.destination === "clarification" ? "needs_clarification" : "previewed", errorSummary: null }).where(eq(customerBotCommandRequests.id, command.id));
+  await db.update(customerBotCommandRequests).set({ originalText: text, transcript: text, classificationJson: JSON.stringify(classification), proposedChangeJson: JSON.stringify({ category: classification.destination, title: classification.title, body: classification.body, alternatives: classification.alternatives }), status: classification.destination === "clarification" ? "needs_clarification" : "previewed", errorSummary: null }).where(eq(customerBotCommandRequests.id, command.id));
+  const [updated] = await db.select().from(customerBotCommandRequests).where(eq(customerBotCommandRequests.id, command.id)).limit(1);
+  return { command: updated, classification, usage };
+}
+
+export async function improveCommandRequest(input: { storeId: number; commandId: number; instruction?: string }) {
+  const db = await requireDb();
+  const [command] = await db.select().from(customerBotCommandRequests).where(and(eq(customerBotCommandRequests.id, input.commandId), eq(customerBotCommandRequests.storeId, input.storeId))).limit(1);
+  if (!command) throw new Error("أمر المساعد غير موجود في المتجر الحالي.");
+  const source = command.originalText || command.transcript || "";
+  if (source.trim().length < 3) throw new Error("لا يوجد نص كافٍ لتحسين الاقتراح.");
+  const current = parseCommand(command.classificationJson || command.proposedChangeJson || "{}");
+  const { classification, usage } = await classifyCommand(input.storeId, source, { current, instruction: input.instruction?.trim().slice(0, 2000) });
+  await db.update(customerBotCommandRequests).set({ classificationJson: JSON.stringify(classification), proposedChangeJson: JSON.stringify({ category: classification.destination, title: classification.title, body: classification.body, alternatives: classification.alternatives }), status: classification.destination === "clarification" ? "needs_clarification" : "previewed" }).where(eq(customerBotCommandRequests.id, command.id));
   const [updated] = await db.select().from(customerBotCommandRequests).where(eq(customerBotCommandRequests.id, command.id)).limit(1);
   return { command: updated, classification, usage };
 }
@@ -320,7 +335,7 @@ export async function createAudioCommandRequest(input: { storeId: number; actorU
   const transcript = transcription.text.trim().slice(0, 12000);
   if (transcript.length < 3) throw new Error("لم ينتج عن التسجيل نص كافٍ لفهم الأمر. صححي النص أو أعيدي التسجيل.");
   const { classification, usage } = await classifyCommand(input.storeId, transcript);
-  const inserted = await db.insert(customerBotCommandRequests).values({ storeId: input.storeId, createdByUserId: input.actorUserId, inputType: "audio", storageKey: stored.key, transcript, classificationJson: JSON.stringify(classification), proposedChangeJson: JSON.stringify({ category: classification.destination, title: classification.title, body: classification.body }), status: classification.destination === "clarification" ? "needs_clarification" : "previewed" });
+  const inserted = await db.insert(customerBotCommandRequests).values({ storeId: input.storeId, createdByUserId: input.actorUserId, inputType: "audio", storageKey: stored.key, transcript, classificationJson: JSON.stringify(classification), proposedChangeJson: JSON.stringify({ category: classification.destination, title: classification.title, body: classification.body, alternatives: classification.alternatives }), status: classification.destination === "clarification" ? "needs_clarification" : "previewed" });
   const [command] = await db.select().from(customerBotCommandRequests).where(eq(customerBotCommandRequests.id, Number(inserted[0].insertId))).limit(1);
   return { command, classification, usage };
 }
