@@ -43,6 +43,10 @@ const orderStatusLabels: Record<string, string> = {
   cancelled: "أُلغي الطلب",
 };
 
+function compactBotContext(value: string | null | undefined, limit: number) {
+  return (value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
 const humanHandoffTerms = /(خصم|تخفيض|كوبون|إرجاع|ارجاع|استرجاع|إلغاء|الغاء|شكوى|مشكلة|تغيير.{0,24}(سعر|طلب|كمية|عنوان)|تعديل.{0,24}(سعر|طلب|كمية|عنوان)|فاتورة|استبدال)/i;
 const complexConversationTerms = /(قارن|مقارنة|الأفضل|الافضل|أنسب|انسب|مناسبة|ستايل|تنسيق|أكثر من|اكثر من|بين .+ و)/i;
 
@@ -199,13 +203,16 @@ async function collectFacts(db: any, storeId: number, conversationId: number, so
       }
       return { ...product, productLink: enrichmentRows.find((row: any) => row.productId === product.id)?.productLink ?? null, imageUrls, colors: Array.from(colorGroups.values()) };
     }));
+  const compactKnowledge = approvedKnowledge.map(article => ({ ...article, title: compactBotContext(article.title, 180), body: compactBotContext(article.body, 1400) }));
+  const compactBehaviorCards = behaviorCards.map((card: any) => ({ ...card, title: compactBotContext(card.title, 180), body: compactBotContext(card.body, 1400), examplesJson: compactBotContext(card.examplesJson, 800) }));
+  const compactPlaybooks = playbooks.map((playbook: any) => ({ ...playbook, title: compactBotContext(playbook.title, 180), triggerJson: compactBotContext(playbook.triggerJson, 800), stepsJson: compactBotContext(playbook.stepsJson, 1800), guardrailsJson: compactBotContext(playbook.guardrailsJson, 1000) }));
   return {
     store: { currencyCode: store?.currencyCode ?? "IQD", defaultDeliveryFee: store?.defaultDeliveryFee ?? "0.00", freeDeliveryEnabled: store?.freeDeliveryEnabled ?? false, freeDeliveryThreshold: store?.freeDeliveryThreshold ?? null },
     conversation: { id: conversation.id, subject: conversation.subject, channel: conversation.channel, customerName: conversation.contactNameSnapshot, order: linkedOrder ? { ...linkedOrder, statusLabel: orderStatusLabels[linkedOrder.status] ?? linkedOrder.status } : null },
     products: enrichedProducts,
-    knowledge: approvedKnowledge,
-    behaviorCards,
-    playbooks,
+    knowledge: compactKnowledge,
+    behaviorCards: compactBehaviorCards,
+    playbooks: compactPlaybooks,
     recentMessages: messages.reverse().map((message: { direction: "inbound" | "outbound"; body: string }) => ({ direction: message.direction, body: message.body })),
     imageAnalyses,
   };

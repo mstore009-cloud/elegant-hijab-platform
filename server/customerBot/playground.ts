@@ -3,6 +3,7 @@ import {
   customerBotBehaviorCards,
   customerBotCommandRequests,
   customerBotKnowledgeArticles,
+  customerBotKnowledgeGaps,
   customerBotLearningProposals,
   customerBotPlaybooks,
   customerBotPlaygroundMessages,
@@ -101,23 +102,29 @@ function extractTerms(value: string) {
   return Array.from(new Set(value.split(/[^A-Za-z0-9\u0600-\u06FF-]+/).map(term => term.trim()).filter(term => term.length >= 3))).slice(0, 6);
 }
 
+function compactPlaygroundContext(value: string | null | undefined, limit: number) {
+  return (value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
 async function scopedSession(db: any, storeId: number, sessionId: number) {
   const [session] = await db.select().from(customerBotPlaygroundSessions).where(and(eq(customerBotPlaygroundSessions.id, sessionId), eq(customerBotPlaygroundSessions.storeId, storeId))).limit(1);
   if (!session) throw new Error("جلسة المختبر غير موجودة في المتجر التشغيلي الحالي.");
   return session;
 }
 
-async function getPlaygroundFacts(db: any, storeId: number, body: string) {
+export async function getPlaygroundFacts(db: any, storeId: number, body: string) {
   const terms = extractTerms(body);
   const productFilters = terms.flatMap(term => [like(products.name, `%${term}%`), like(products.productCode, `%${term}%`), like(products.category, `%${term}%`)]);
   const knowledgeFilters = terms.flatMap(term => [like(customerBotKnowledgeArticles.title, `%${term}%`), like(customerBotKnowledgeArticles.body, `%${term}%`)]);
-  const [matches, knowledge] = await Promise.all([
+  const [matches, knowledge, behaviorCards, playbooks] = await Promise.all([
     productFilters.length
       ? db.select({ id: products.id, productCode: products.productCode, name: products.name, category: products.category, sellingPrice: products.sellingPrice, description: products.description }).from(products).where(and(eq(products.storeId, storeId), eq(products.status, "active"), or(...productFilters)!)).limit(5)
       : [],
     knowledgeFilters.length
       ? db.select({ id: customerBotKnowledgeArticles.id, title: customerBotKnowledgeArticles.title, kind: customerBotKnowledgeArticles.kind, body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "approved"), or(...knowledgeFilters)!)).limit(5)
       : db.select({ id: customerBotKnowledgeArticles.id, title: customerBotKnowledgeArticles.title, kind: customerBotKnowledgeArticles.kind, body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "approved"))).limit(3),
+    db.select({ id: customerBotBehaviorCards.id, title: customerBotBehaviorCards.title, kind: customerBotBehaviorCards.kind, body: customerBotBehaviorCards.body, examplesJson: customerBotBehaviorCards.examplesJson, priority: customerBotBehaviorCards.priority }).from(customerBotBehaviorCards).where(and(eq(customerBotBehaviorCards.storeId, storeId), eq(customerBotBehaviorCards.status, "approved"))).orderBy(customerBotBehaviorCards.priority).limit(8),
+    db.select({ id: customerBotPlaybooks.id, title: customerBotPlaybooks.title, triggerJson: customerBotPlaybooks.triggerJson, stepsJson: customerBotPlaybooks.stepsJson, guardrailsJson: customerBotPlaybooks.guardrailsJson }).from(customerBotPlaybooks).where(and(eq(customerBotPlaybooks.storeId, storeId), eq(customerBotPlaybooks.status, "approved"))).orderBy(desc(customerBotPlaybooks.updatedAt)).limit(4),
   ]);
   const variants = matches.length
     ? await db.select({ productId: productVariants.productId, colorName: productVariants.colorName, sizeLabel: productVariants.sizeLabel, inventoryQuantity: productVariants.inventoryQuantity, availability: productVariants.availability }).from(productVariants).where(inArray(productVariants.productId, matches.map((product: any) => product.id)))
@@ -131,7 +138,9 @@ async function getPlaygroundFacts(db: any, storeId: number, body: string) {
       description: product.description,
       colors: variants.filter((variant: any) => variant.productId === product.id).map((variant: any) => ({ colorName: variant.colorName, size: variant.sizeLabel, available: variant.inventoryQuantity > 0 && variant.availability !== "out_of_stock" })),
     })),
-    knowledge,
+    knowledge: knowledge.map((article: any) => ({ ...article, title: compactPlaygroundContext(article.title, 180), body: compactPlaygroundContext(article.body, 1400) })),
+    behaviorCards: behaviorCards.map((card: any) => ({ ...card, title: compactPlaygroundContext(card.title, 180), body: compactPlaygroundContext(card.body, 1400), examplesJson: compactPlaygroundContext(card.examplesJson, 800) })),
+    playbooks: playbooks.map((playbook: any) => ({ ...playbook, title: compactPlaygroundContext(playbook.title, 180), triggerJson: compactPlaygroundContext(playbook.triggerJson, 800), stepsJson: compactPlaygroundContext(playbook.stepsJson, 1800), guardrailsJson: compactPlaygroundContext(playbook.guardrailsJson, 1000) })),
   };
 }
 
@@ -177,9 +186,9 @@ export async function sendPlaygroundMessage(input: { storeId: number; sessionId:
       `اللهجة: ${settings.dialect}. النبرة: ${settings.tone}.`,
       settings.operatorInstructions ? `التعليمات المعتمدة: ${settings.operatorInstructions}` : "لا توجد تعليمات إضافية.",
       "هذه تجربة داخلية للقراءة فقط. لا ترسل Meta، لا تنشئ طلباً نهائياً، لا تعدّل CRM أو مخزوناً، ولا تدّعِ تنفيذ أي فعل خارجي.",
-      "استخدم حقائق المنتجات والمعرفة المرفقة فقط. السعر والتوفر معلومات حية للقراءة؛ لا تحفظها كتعليمات. عند الخصم أو الإرجاع أو الإلغاء أو تعديلات الطلب أو نقص الحقيقة، استخدم notify_human مع رسالة مهذبة لا تكشف التحويل الداخلي.",
+      "استخدم حقائق المنتجات والبطاقات السلوكية وإجراءات البيع والمعرفة المرفقة فقط. البطاقات المعتمدة هي تعليمات المتجر؛ إذا وجدت بطاقة مثال رد مناسبة فطبّق صياغتها وروحها قبل الصياغة العامة. السعر والتوفر معلومات حية للقراءة؛ لا تحفظها كتعليمات. عند الخصم أو الإرجاع أو الإلغاء أو تعديلات الطلب أو نقص الحقيقة، استخدم notify_human مع رسالة مهذبة لا تكشف التحويل الداخلي.",
       "أعد JSON فقط: {reply:string, confidence:number, needsEscalation:boolean, escalationReason:string|null, action:string, productCode:string|null, colorName:string|null, quantity:number|null, actionCaption:string|null}.",
-      `حقائق القراءة الحية: ${JSON.stringify(facts)}`,
+      `حقائق القراءة الحية ومصادر التعلم المعتمدة: ${JSON.stringify(facts)}`,
       `سجل الاختبار القريب: ${JSON.stringify(previous.reverse())}`,
       `رسالة العميل الجديدة: ${body}`,
     ].join("\n\n") }],
@@ -236,24 +245,30 @@ async function scopedProposal(db: any, storeId: number, proposalId: number) {
 export async function setLearningProposalStatus(input: { storeId: number; actorUserId: number; proposalId: number; status: "approved" | "rejected" | "archived" }) {
   const db = await requireDb();
   const proposal = await scopedProposal(db, input.storeId, input.proposalId);
+  if (input.status === "approved" && proposal.status === "approved") return { proposal, artifact: null };
   await db.update(customerBotLearningProposals).set({ status: input.status, reviewedByUserId: input.actorUserId, reviewedAt: new Date() }).where(eq(customerBotLearningProposals.id, proposal.id));
-  if (input.status !== "approved") return { proposal, artifact: null };
+  const [reviewedProposal] = await db.select().from(customerBotLearningProposals).where(eq(customerBotLearningProposals.id, proposal.id)).limit(1);
+  if (!reviewedProposal) throw new Error("تعذر تحديث اقتراح التعلم.");
+  if (input.status !== "approved") return { proposal: reviewedProposal, artifact: null };
   let artifact: { type: string; id: number } | null = null;
   if (proposal.category === "knowledge") {
-    const result = await db.insert(customerBotKnowledgeArticles).values({ storeId: input.storeId, title: proposal.title, kind: "faq", body: proposal.body, source: "review_feedback", status: "draft", createdByUserId: input.actorUserId });
+    const result = await db.insert(customerBotKnowledgeArticles).values({ storeId: input.storeId, title: proposal.title, kind: "faq", body: proposal.body, source: "review_feedback", status: "approved", approvedByUserId: input.actorUserId, approvedAt: new Date(), createdByUserId: input.actorUserId });
     artifact = { type: "knowledge", id: Number(result[0].insertId) };
   } else if (proposal.category === "dialect_style" || proposal.category === "reply_example" || proposal.category === "guardrail") {
     const kind = proposal.category === "dialect_style" ? "dialect" : proposal.category === "guardrail" ? "guardrail" : "reply_example";
-    const result = await db.insert(customerBotBehaviorCards).values({ storeId: input.storeId, title: proposal.title, kind, body: proposal.body, sourceProposalId: proposal.id, createdByUserId: input.actorUserId });
+    const result = await db.insert(customerBotBehaviorCards).values({ storeId: input.storeId, title: proposal.title, kind, body: proposal.body, sourceProposalId: proposal.id, status: "approved", approvedByUserId: input.actorUserId, approvedAt: new Date(), createdByUserId: input.actorUserId });
     artifact = { type: "behavior", id: Number(result[0].insertId) };
   } else if (proposal.category === "sales_playbook") {
-    const result = await db.insert(customerBotPlaybooks).values({ storeId: input.storeId, title: proposal.title, triggerJson: JSON.stringify({ trigger: "manual_review_required" }), stepsJson: JSON.stringify([{ instruction: proposal.body }]), guardrailsJson: JSON.stringify(["لا إرسال خارجي أو تغيير تجاري من المسودة"]), sourceProposalId: proposal.id, createdByUserId: input.actorUserId });
+    const result = await db.insert(customerBotPlaybooks).values({ storeId: input.storeId, title: proposal.title, triggerJson: JSON.stringify({ trigger: "manual_review_required" }), stepsJson: JSON.stringify([{ instruction: proposal.body }]), guardrailsJson: JSON.stringify(["لا إرسال خارجي أو تغيير تجاري من المسودة"]), sourceProposalId: proposal.id, status: "approved", approvedByUserId: input.actorUserId, approvedAt: new Date(), createdByUserId: input.actorUserId });
     artifact = { type: "playbook", id: Number(result[0].insertId) };
   } else if (proposal.category === "test_case") {
-    const result = await db.insert(customerBotTestCases).values({ storeId: input.storeId, title: proposal.title, inputJson: JSON.stringify({ prompt: proposal.originalReply }), expectedJson: JSON.stringify({ expected: proposal.editedReply }), sourceProposalId: proposal.id, createdByUserId: input.actorUserId });
+    const result = await db.insert(customerBotTestCases).values({ storeId: input.storeId, title: proposal.title, inputJson: JSON.stringify({ prompt: proposal.originalReply }), expectedJson: JSON.stringify({ expected: proposal.editedReply }), sourceProposalId: proposal.id, status: "approved", createdByUserId: input.actorUserId });
     artifact = { type: "test_case", id: Number(result[0].insertId) };
+  } else if (proposal.category === "knowledge_gap") {
+    const result = await db.insert(customerBotKnowledgeGaps).values({ storeId: input.storeId, category: "knowledge", title: proposal.title, questionSnapshot: proposal.originalReply || proposal.body, status: "open", createdByUserId: input.actorUserId });
+    artifact = { type: "knowledge_gap", id: Number(result[0].insertId) };
   }
-  return { proposal, artifact };
+  return { proposal: reviewedProposal, artifact };
 }
 
 function parseCommand(value: string): CommandClassification {

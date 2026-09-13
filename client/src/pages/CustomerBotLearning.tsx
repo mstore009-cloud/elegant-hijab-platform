@@ -63,8 +63,13 @@ export default function CustomerBotLearning() {
   if (profile.isLoading || (canManage && activeTabLoading)) return <div className="p-8 text-sm text-muted-foreground">جارٍ تحميل القسم…</div>;
   if (!canManage) return <div className="p-8 text-center">لا توجد صلاحية لإدارة معرفة البوت.</div>;
   return <main dir="rtl" className="mx-auto max-w-6xl space-y-5 pb-10">
-    <CustomerBotNav title="المعرفة والتعلم" description="المكان الموحد لتغذية البوت: أضيفي بطاقة بسيطة، استخدمي مساعد التعليم، ابنِي إجراء بيع مرئياً، ثم راجعي الجودة قبل الاعتماد." action={<Button onClick={() => { setOpen(true); navigateTab("cards"); }} className="rounded-xl bg-[#1d5a4d] hover:bg-[#153f36]"><Plus className="ml-2 h-4 w-4" />بطاقة معرفة جديدة</Button>} />
+    <CustomerBotNav title="المعرفة والتعلم" description="أضيفي المعلومة أو صححي الرد، ثم راجعيها من المسودات واعتمديها مرة واحدة. بعد الاعتماد تصبح جزءاً من رد البوت التالي." action={<Button onClick={() => { setOpen(true); navigateTab("cards"); }} className="rounded-xl bg-[#1d5a4d] hover:bg-[#153f36]"><Plus className="ml-2 h-4 w-4" />بطاقة معرفة جديدة</Button>} />
     <SafetyNotice />
+    <section className="grid gap-3 rounded-2xl border border-[#dfe9e1] bg-[#f5faf6] p-4 text-sm text-[#40584a] sm:grid-cols-3">
+      <div><p className="font-bold text-[#1d5a4d]">1. أدخلي أو صححي</p><p className="mt-1 text-xs leading-5 text-[#718077]">بطاقة، أمر، مصدر صوتي، أو تعديل لرد داخل المختبر.</p></div>
+      <div><p className="font-bold text-[#1d5a4d]">2. راجعي المسودة</p><p className="mt-1 text-xs leading-5 text-[#718077]">كل الإدخالات تبقى غير فعالة حتى يعتمدها صاحب الصلاحية من «المسودات والمراجعة».</p></div>
+      <div><p className="font-bold text-[#1d5a4d]">3. يصبح التعلم فعالاً</p><p className="mt-1 text-xs leading-5 text-[#718077]">الاعتماد يضيف الأثر إلى سياق البوت؛ السعر والمخزون والطلبات تبقى من البيانات الحية.</p></div>
+    </section>
     <nav aria-label="أدوات المعرفة والتعلم" className="grid gap-2 rounded-2xl border border-[#e2e8e3] bg-white p-2 shadow-[0_8px_20px_rgba(41,63,53,0.04)] sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">{tabs.map(tab => { const Icon = tab.icon; const active = activeTab === tab.id; return <Button key={tab.id} type="button" variant={active ? "default" : "ghost"} onClick={() => navigateTab(tab.id)} className={`h-auto justify-start rounded-xl px-3 py-3 text-right ${active ? "bg-[#1d5a4d] text-white hover:bg-[#153f36]" : "text-[#52675a] hover:bg-[#f3f8f4]"}`}><Icon className="ml-2 h-4 w-4 shrink-0" /><span><span className="block text-xs font-bold">{tab.label}</span><span className={`mt-0.5 block text-[10px] ${active ? "text-white/75" : "text-[#849189]"}`}>{tab.hint}</span></span></Button>; })}</nav>
     {activeTab === "cards" ? <KnowledgePanel knowledge={knowledge.data ?? []} canApprove={canApprove} changeStatus={changeStatus} /> : null}
     {activeTab === "assistant" ? <CustomerBotCommandAssistant embedded canManageOverride={canManage} /> : null}
