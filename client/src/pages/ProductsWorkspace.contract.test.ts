@@ -174,11 +174,10 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("const workViewProducts = useMemo");
     expect(source).toContain("فتح الأول");
     expect(source).toContain("setWorkView(view)");
-    expect(source).toContain("صور تحتاج ربطًا بلون");
-    expect(source).toContain("reviewMediaPreviews");
-    expect(source).toContain("assignUnlinkedMediaToColorMany");
-    expect(source).toContain("generateAutomaticSuggestionsMany");
-    expect(source).toContain("تحليل واستخراج الألوان تلقائيًا");
+    expect(source).not.toContain("صور تحتاج ربطًا بلون");
+    expect(source).not.toContain("assignUnlinkedMediaToColorMany");
+    expect(source).not.toContain("generateAutomaticSuggestionsMany");
+    expect(source).not.toContain("تحليل واستخراج الألوان تلقائيًا");
     expect(source).toContain("moveReviewProduct");
     expect(source).toContain("السابق");
     expect(source).toContain("التالي");
@@ -194,12 +193,8 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
   it("لا يرسل إجراءات الدفعات الجماعية بمعرفات منتجات فارغة أو قديمة", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("const selectedMetaProductIdsInView = useMemo");
-    expect(source).toContain("const colorReviewProductIds = useMemo");
     expect(source).toContain("if (selectedMetaProductIdsInView.length) syncProductsNow.mutate");
-    expect(source).toContain("if (colorReviewProductIds.length) assignUnlinkedMediaToColorMany.mutate");
-    expect(source).toContain("if (colorReviewProductIds.length) generateAutomaticSuggestionsMany.mutate");
     expect(source).toContain("!selectedMetaProductIdsInView.length");
-    expect(source).toContain("!colorReviewProductIds.length");
   });
 
   it("ينظف تحديدات Meta القديمة قبل المعاينة أو التجهيز أو التصدير", () => {
@@ -210,11 +205,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("productIds: selectedIdsForAction");
   });
 
-  it("يعرض عدد المنتجات الفعلي في إجراءات مراجعة الألوان الجماعية", () => {
+  it("يبقي بطاقة الألوان بسيطة مثل بقية بطاقات التنبيهات", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
-    expect(source).toContain("`ربط الكل (${colorReviewProductIds.length})`");
-    expect(source).toContain("`تحليل واستخراج الألوان تلقائيًا (${colorReviewProductIds.length})`");
-    expect(source).toContain("اقتراحات ألوان سابقة بانتظار المراجعة والاعتماد");
+    expect(source).toContain('["color_review", "ألوان تحتاج مراجعة", workViewCounts.colorReview, "راجع التحليل"]');
+    expect(source).toContain("const first = alertProductsForView(view)[0]");
+    expect(source).not.toContain("bulkColorName");
+    expect(source).not.toContain("bulkColorFeedback");
   });
 
   it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {
