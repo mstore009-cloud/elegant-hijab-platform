@@ -185,9 +185,10 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
 
   it("يعرض بطاقات مركز العمل بحجم مضغوط مع إبقاء زر فتح الأول", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
-    expect(source).toContain('mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5');
+    expect(source).toContain('mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 2xl:grid-cols-7');
     expect(source).toContain('rounded-xl border p-2 text-right transition');
     expect(source).toContain('className="mt-1.5 space-y-1.5"');
+    expect(source).toContain('text-lg text-[#285f4e]');
     expect(source).toContain("فتح الأول");
   });
 
