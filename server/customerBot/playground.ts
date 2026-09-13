@@ -438,7 +438,8 @@ function testCaseMatches(expectedJson: string | null, reply: string, actionJson:
   const expected = safeJson<any>(expectedJson ?? "{}", {});
   const action = safeJson<any>(actionJson ?? "{}", {});
   const expectedText = typeof expected.expected === "string" ? expected.expected : typeof expected.replyContains === "string" ? expected.replyContains : null;
-  const textMatches = !expectedText || reply.toLowerCase().includes(expectedText.toLowerCase());
+  const normalizeArabic = (value: string) => value.toLowerCase().normalize("NFKC").replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "").replace(/[أإآ]/g, "ا").replace(/ـ/g, "").replace(/\s+/g, " ").trim();
+  const textMatches = !expectedText || normalizeArabic(reply).includes(normalizeArabic(expectedText));
   const actionMatches = !expected.action || action.type === expected.action;
   const escalationMatches = typeof expected.needsEscalation !== "boolean" || action.needsEscalation === expected.needsEscalation;
   return textMatches && actionMatches && escalationMatches;
