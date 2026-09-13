@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "4f4f23b1-3e5b-4127-a0d4-302becfe25e0",
-  "prevId": "c327ee8d-6889-448a-86d2-baf65d2bf47a",
+  "id": "bf5c09fe-1b7a-4e3e-bcb8-56e7cef50212",
+  "prevId": "4f4f23b1-3e5b-4127-a0d4-302becfe25e0",
   "tables": {
     "ai_pricing_cards": {
       "name": "ai_pricing_cards",
@@ -2657,7 +2657,7 @@
         },
         "status": {
           "name": "status",
-          "type": "enum('transcribed','needs_clarification','previewed','saved_draft','cancelled','failed')",
+          "type": "enum('transcribed','needs_clarification','previewed','saved_draft','cancelled','archived','failed')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,

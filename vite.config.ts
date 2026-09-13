@@ -191,9 +191,8 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
-          if (/[\\/]react(?:-dom)?[\\/]|[\\/]scheduler[\\/]/.test(id)) return "react-vendor";
-          if (id.includes("@radix-ui") || id.includes("lucide-react")) return "ui-vendor";
           if (id.includes("recharts")) return "charts-vendor";
+          if (id.includes("@radix-ui") || id.includes("lucide-react")) return "ui-vendor";
           if (id.includes("@trpc") || id.includes("@tanstack/react-query") || id.includes("superjson")) return "data-vendor";
           return "vendor";
         },

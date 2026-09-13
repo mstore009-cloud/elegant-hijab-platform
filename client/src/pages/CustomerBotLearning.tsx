@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { BookOpenText, CheckCircle2, FileAudio, FileText, FolderOpen, Gauge, ListChecks, Loader2, Plus, Radio, ShieldCheck, ShoppingCart, UploadCloud, WandSparkles, X } from "lucide-react";
 import { ReactNode, useMemo, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 
 const statusStyle: Record<string, string> = { draft: "bg-amber-50 text-amber-800", approved: "bg-emerald-50 text-emerald-800", archived: "bg-slate-100 text-slate-700", rejected: "bg-rose-50 text-rose-800" };
@@ -28,8 +28,9 @@ const tabs = [
 type TabId = (typeof tabs)[number]["id"];
 
 export default function CustomerBotLearning() {
-  const [location, setLocation] = useLocation();
-  const query = location.includes("?") ? location.split("?")[1] : (typeof window !== "undefined" ? window.location.search.slice(1) : "");
+  const [, setLocation] = useLocation();
+  const search = useSearch();
+  const query = search ? (search.startsWith("?") ? search.slice(1) : search) : (typeof window !== "undefined" ? window.location.search.slice(1) : "");
   const activeTab = (new URLSearchParams(query).get("tab") as TabId | null) ?? "cards";
   const profile = trpc.access.myProfile.useQuery();
   const canManage = profile.data?.permissions.includes("bot.manage") ?? false;

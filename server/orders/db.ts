@@ -12,7 +12,7 @@ export type CustomerChannel = (typeof customerChannels)[number];
 export const contactOutcomes = ["attempted", "no_answer", "customer_confirmed", "customer_requested_change", "cancelled"] as const;
 export type ContactOutcome = (typeof contactOutcomes)[number];
 
-type CartItemInput = { productCode: string; colorName: string; quantity: number };
+type CartItemInput = { productCode: string; colorName: string; sizeLabel?: string | null; quantity: number };
 type CreateStorefrontOrderInput = { items: CartItemInput[]; customerName: string; customerPhone: string; governorate: string; address: string; customerNote?: string | null; couponCode?: string | null };
 function createOrderNumber() { return `ORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`; }
 function money(value: number) { return value.toFixed(2); }
@@ -35,8 +35,9 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   for (const item of input.items) {
     const productCode = item.productCode.trim(); const colorName = item.colorName.trim(); const quantity = Math.max(1, Math.min(100, Math.floor(item.quantity)));
     if (!productCode || !colorName) throw new Error("اختيار المنتج واللون مطلوب.");
-    const key = `${productCode}::${colorName}`; const existing = grouped.get(key);
-    grouped.set(key, { productCode, colorName, quantity: Math.min(100, quantity + (existing?.quantity ?? 0)) });
+    const sizeLabel = item.sizeLabel?.trim() || null;
+    const key = `${productCode}::${colorName}::${sizeLabel ?? ""}`; const existing = grouped.get(key);
+    grouped.set(key, { productCode, colorName, sizeLabel, quantity: Math.min(100, quantity + (existing?.quantity ?? 0)) });
   }
   const requested = Array.from(grouped.values());
   if (!requested.length) throw new Error("أضيفي منتجًا واحدًا على الأقل إلى السلة.");
@@ -47,10 +48,15 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
   const media = await db.select().from(productMedia).where(inArray(productMedia.productId, activeProducts.map(product => product.id)));
   const resolved = requested.map(item => {
     const product = activeProducts.find(candidate => candidate.productCode === item.productCode);
-    const variant = variants.find(candidate => candidate.productId === product?.id && candidate.colorName === item.colorName);
+    const productVariantsList = variants.filter(candidate => candidate.productId === product?.id && candidate.colorName === item.colorName);
+    let productSizes: unknown = [];
+    try { productSizes = JSON.parse(product?.sizeLabels ?? "[]"); } catch { productSizes = []; }
+    const hasSizes = Array.isArray(productSizes) && productSizes.some(size => typeof size === "string" && size.trim().length > 0);
+    if (hasSizes && !item.sizeLabel) throw new Error(`اختيار القياس مطلوب للمنتج «${product?.name ?? item.productCode}».`);
+    const variant = item.sizeLabel ? productVariantsList.find(candidate => candidate.sizeLabel === item.sizeLabel) : productVariantsList[0];
     if (!product || !variant) throw new Error(`لون «${item.colorName}» لم يعد متاحًا.`);
     const image = media.find(candidate => candidate.variantId === variant.id && candidate.mediaType === "image" && candidate.storageKey);
-    return { product, variant, quantity: item.quantity, imageStorageKeySnapshot: image?.storageKey ?? null };
+    return { product, variant, quantity: item.quantity, sizeLabelSnapshot: item.sizeLabel || variant.sizeLabel || null, imageStorageKeySnapshot: image?.storageKey ?? null };
   });
   const subtotalNumber = resolved.reduce((total, item) => total + Number(item.product.sellingPrice) * item.quantity, 0);
   const subtotal = money(subtotalNumber);
@@ -81,7 +87,7 @@ export async function createStorefrontOrder(input: CreateStorefrontOrderInput) {
     }
     const created = await tx.insert(orders).values({ storeId, customerId: customer.customerId, orderNumber, status: "new", source: "storefront", customerChannel: "storefront", customerName: input.customerName.trim(), customerPhone: input.customerPhone.trim(), governorate: input.governorate.trim(), address: input.address.trim(), customerNote: input.customerNote?.trim() || null, paymentMethod: "cash_on_delivery", subtotal, deliveryFee: money(deliveryFee), manualDiscount: money(couponDiscount), total: money(Math.max(0, subtotalNumber - couponDiscount + deliveryFee)) });
     const orderId = Number(created[0].insertId);
-    await tx.insert(orderItems).values(resolved.map(item => ({ orderId, productId: item.product.id, variantId: item.variant.id, productCodeSnapshot: item.product.productCode, productNameSnapshot: item.product.name, colorNameSnapshot: item.variant.colorName, imageStorageKeySnapshot: item.imageStorageKeySnapshot, unitPriceSnapshot: item.product.sellingPrice, quantity: item.quantity })));
+    await tx.insert(orderItems).values(resolved.map(item => ({ orderId, productId: item.product.id, variantId: item.variant.id, productCodeSnapshot: item.product.productCode, productNameSnapshot: item.product.name, colorNameSnapshot: item.variant.colorName, sizeLabelSnapshot: item.sizeLabelSnapshot, imageStorageKeySnapshot: item.imageStorageKeySnapshot, unitPriceSnapshot: item.product.sellingPrice, quantity: item.quantity })));
     await tx.insert(orderStatusEvents).values({ orderId, fromStatus: null, toStatus: "new", actorUserId: null, source: "storefront", note: "طلب جديد من المتجر" });
     await recordOrderCustomerActivity(tx, { storeId, customerId: customer.customerId, orderId, orderNumber, created: customer.created });
     return { orderId, orderNumber, status: "new" as const };

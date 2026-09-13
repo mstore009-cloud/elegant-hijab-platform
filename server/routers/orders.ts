@@ -24,7 +24,7 @@ export const ordersRouter = router({
   publicDeliveryFee: publicProcedure.input(z.object({ subtotal: z.number().min(0) })).query(({ input }) => getPublicDeliveryFee(input.subtotal)),
   validateCoupon: publicProcedure.input(z.object({ code: z.string().trim().max(80), subtotal: z.number().min(0) })).query(({ input }) => validatePublicCoupon(input.code, input.subtotal)),
   createFromStorefront: publicProcedure.input(z.object({
-    items: z.array(z.object({ productCode: z.string().trim().min(1).max(80), colorName: z.string().trim().min(1).max(100), quantity: z.number().int().min(1).max(100) })).min(1).max(30),
+    items: z.array(z.object({ productCode: z.string().trim().min(1).max(80), colorName: z.string().trim().min(1).max(100), sizeLabel: z.string().trim().max(80).optional(), quantity: z.number().int().min(1).max(100) })).min(1).max(30),
     customerName: z.string().trim().min(2).max(160),
     customerPhone: z.string().trim().min(6).max(40),
     governorate: z.string().trim().min(2).max(120),

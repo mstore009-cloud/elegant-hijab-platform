@@ -37,10 +37,10 @@ describe("دورة الطلب", () => {
     const productId = Number(productResult[0].insertId);
     const variantResult = await db.insert(productVariants).values({ productId, colorName: "بيج", inventoryQuantity: 5, availability: "available" });
     const variantId = Number(variantResult[0].insertId);
-    const secondVariantResult = await db.insert(productVariants).values({ productId, colorName: "أسود", inventoryQuantity: 4, availability: "available" });
+    const secondVariantResult = await db.insert(productVariants).values({ productId, colorName: "أسود", sizeLabel: "L", inventoryQuantity: 4, availability: "available" });
     const secondVariantId = Number(secondVariantResult[0].insertId);
     const expectedDelivery = Number((await getPublicDeliveryFee(36000)).fee);
-    const created = await createStorefrontOrder({ items: [{ productCode, colorName: "بيج", quantity: 2 }, { productCode, colorName: "أسود", quantity: 1 }], customerName: "عميلة اختبار", customerPhone: "07700000000", governorate: "بغداد", address: "عنوان اختبار كامل", customerNote: "" });
+    const created = await createStorefrontOrder({ items: [{ productCode, colorName: "بيج", quantity: 2 }, { productCode, colorName: "أسود", sizeLabel: "L", quantity: 1 }], customerName: "عميلة اختبار", customerPhone: "07700000000", governorate: "بغداد", address: "عنوان اختبار كامل", customerNote: "" });
     const otherStoreResult = await db.insert(stores).values({ name: "متجر اختبار العزل", slug: `isolation-${randomUUID().slice(0, 10)}`, status: "active", primaryOwnerUserId: owner.id });
     const otherStoreId = Number(otherStoreResult[0].insertId);
     cleanup.push({ orderId: created.orderId, productId, variantIds: [variantId, secondVariantId], otherStoreId });
@@ -48,7 +48,9 @@ describe("دورة الطلب", () => {
     expect(beforeConfirmation?.inventoryQuantity).toBe(5);
     expect((await getOperationalOrder(created.orderId, storeId))?.items).toHaveLength(2);
     await expect(getOperationalOrder(created.orderId, otherStoreId)).resolves.toBeNull();
-    expect((await getOperationalOrder(created.orderId, storeId))?.items[0]).toMatchObject({ productCodeSnapshot: productCode, unitPriceSnapshot: "12000.00" });
+    const operationalItems = (await getOperationalOrder(created.orderId, storeId))?.items ?? [];
+    expect(operationalItems[0]).toMatchObject({ productCodeSnapshot: productCode, unitPriceSnapshot: "12000.00" });
+    expect(operationalItems.find(item => item.colorNameSnapshot === "أسود")?.sizeLabelSnapshot).toBe("L");
     expect((await getOperationalOrder(created.orderId, storeId))?.order).toMatchObject({ subtotal: "36000.00", deliveryFee: expectedDelivery.toFixed(2), manualDiscount: "0.00", total: (36000 + expectedDelivery).toFixed(2), customerChannel: "storefront" });
     await updateOrderCommercialTerms({ storeId, orderId: created.orderId, deliveryFee: 3000, manualDiscount: 1000, customerChannel: "instagram", actorUserId: owner.id });
     await addOrderContactEvent({ storeId, orderId: created.orderId, channel: "instagram", outcome: "attempted", note: "رسالة أولى", actorUserId: owner.id });

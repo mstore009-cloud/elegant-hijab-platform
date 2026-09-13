@@ -1450,6 +1450,7 @@ export const orderItems = mysqlTable(
     productCodeSnapshot: varchar("productCodeSnapshot", { length: 80 }).notNull(),
     productNameSnapshot: varchar("productNameSnapshot", { length: 220 }).notNull(),
     colorNameSnapshot: varchar("colorNameSnapshot", { length: 100 }).notNull(),
+    sizeLabelSnapshot: varchar("sizeLabelSnapshot", { length: 80 }),
     imageStorageKeySnapshot: varchar("imageStorageKeySnapshot", { length: 512 }),
     unitPriceSnapshot: decimal("unitPriceSnapshot", { precision: 12, scale: 2 }).notNull(),
     quantity: int("quantity").notNull(),

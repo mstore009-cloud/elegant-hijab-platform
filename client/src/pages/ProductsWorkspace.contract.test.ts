@@ -34,7 +34,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
   it("يعرض مصفوفة اللون والقياس ويحفظ كل متغير عبر saveInventory عند وجود قياسات", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("مصفوفة المخزون: اللون × القياس");
-    expect(source).toContain("(detail.product.sizeLabels ?? []).length > 0");
+    expect(source).toContain("draftHasSizes && productSizes.length > 0");
     expect(source).toContain("function ColorCard({ colorName, quantity, media, variants, sizeLabels, onOpen }");
     expect(source).toContain("const hasSizes = sizeLabels.length > 0");
     expect(source).toContain("مخزون ${colorName} حسب القياس");
@@ -54,6 +54,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
 
   it("لا يعرض أي اعتبار للقياس عندما لا توجد قياسات للمنتج", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("createHasSizes");
+    expect(source).toContain("draftHasSizes");
+    expect(source).toContain("تفعيل القياسات");
+    expect(source).toContain("sizeLabels: createHasSizes ? sizes : []");
+    expect(source).toContain("const nextSizes = draftHasSizes ?");
+    expect(source).toContain("عند الإيقاف تُلغى مصفوفة القياسات وجميع امتيازاتها");
     expect(source).toContain("{productSizes.length > 0 && <p><span className=\"text-[#74817a]\">القياسات:");
     expect(source).toContain("sizeLabels={productSizes}");
     expect(source).toContain('sizes_cleared: "إزالة القياسات ودمج الألوان"');
@@ -63,6 +69,11 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("confirmSizeClear");
     expect(source).toContain("regenerateSizeMatrix");
     expect(source).toContain("إعادة توليد مصفوفة اللون × القياس");
+    expect(source).toContain("sizeTemplateProducts");
+    expect(source).toContain("copySizesFromProduct");
+    expect(source).toContain("نسخ قياسات من منتج آخر");
+    expect(source).toContain("سيتم نسخ أسماء القياسات فقط");
+    expect(source).toContain("draftHasSizes && productSizes.length > 0");
   });
 
   it("يعرض الأرشيف ومؤشر جاهزية التفعيل وملخص المخزون المستقل", () => {
@@ -173,6 +184,25 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("التالي");
   });
 
+  it("لا يرسل إجراءات الدفعات الجماعية بمعرفات منتجات فارغة أو قديمة", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("const selectedMetaProductIdsInView = useMemo");
+    expect(source).toContain("const workViewProductIds = useMemo");
+    expect(source).toContain("if (selectedMetaProductIdsInView.length) syncProductsNow.mutate");
+    expect(source).toContain("if (workViewProductIds.length) assignUnlinkedMediaToColorMany.mutate");
+    expect(source).toContain("if (workViewProductIds.length) generateAutomaticSuggestionsMany.mutate");
+    expect(source).toContain("!selectedMetaProductIdsInView.length");
+    expect(source).toContain("!workViewProductIds.length");
+  });
+
+  it("ينظف تحديدات Meta القديمة قبل المعاينة أو التجهيز أو التصدير", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/components/MetaCatalogWorkspace.tsx"), "utf8");
+    expect(source).toContain("const selectedIdsForAction = useMemo");
+    expect(source).toContain("selectedAssetId && selectedIdsForAction.length");
+    expect(source).toContain("if (!selectedIdsForAction.length) return");
+    expect(source).toContain("productIds: selectedIdsForAction");
+  });
+
   it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("addDetailMedia");
@@ -199,7 +229,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("createPreviousPrice");
     expect(source).toContain("createSizes");
     expect(source).toContain("createMediaFiles");
-    expect(source).toContain("sizeLabels: sizes");
+    expect(source).toContain("sizeLabels: createHasSizes ? sizes : []");
     expect(source).toContain("uploadManualMedia.mutateAsync");
     expect(source).toContain("acceptCreateMedia");
     expect(source).toContain("video/mp4");
