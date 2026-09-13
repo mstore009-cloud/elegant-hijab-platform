@@ -142,5 +142,8 @@ describe("Customer Bot training center", () => {
     expect(learning).toContain("التعليمات المفتوحة");
     expect(learning).toContain("أمثلة اختيارية");
     expect(learning).toContain("createBehaviorCardDraft");
+    expect(learning).toContain("setBehaviorCardStatus");
+    expect(learning).toContain("cardId: card.id");
+    expect(learning).not.toContain("changeStatus.mutate({ articleId: card.id");
   });
 });
