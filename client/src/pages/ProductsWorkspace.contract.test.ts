@@ -207,6 +207,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("`ربط الكل (${colorReviewProductIds.length})`");
     expect(source).toContain("`تحليل واستخراج الألوان تلقائيًا (${colorReviewProductIds.length})`");
+    expect(source).toContain("اقتراحات ألوان سابقة بانتظار المراجعة والاعتماد");
   });
 
   it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {

@@ -32,6 +32,7 @@ describe("عقود عمليات المنتج والمراجعة", () => {
     expect(routerSource).toContain("video\\/(mp4|webm|quicktime)");
     expect(routerSource).toContain("generateAutomaticColorSuggestion");
     expect(routerSource).toContain("generateAutomaticColorSuggestionsMany");
+    expect(routerSource).toContain("اقتراح ألوان سابق ما زال بانتظار المراجعة");
     expect(routerSource).toContain("assignUnlinkedMediaToColorMany");
     expect(routerSource).toContain("regenerateSizeMatrix: protectedProcedure");
     expect(routerSource).toContain("regenerateProductSizeMatrix");

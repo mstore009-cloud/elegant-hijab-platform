@@ -440,7 +440,7 @@ export const productsRouter = router({
     await assertPermission(ctx.user, "products.edit");
     await requireProductInOperationalStore(ctx, input.productId);
     const generated = await generateAutomaticColorSuggestion({ productId: input.productId, actorUserId: ctx.user.id });
-    if (!generated) throw new TRPCError({ code: "BAD_REQUEST", message: "لا توجد صور جديدة أو غير مسندة تحتاج إلى تحليل." });
+    if (!generated) throw new TRPCError({ code: "BAD_REQUEST", message: "لا توجد صور جديدة للتحليل؛ قد يكون اقتراح ألوان سابق ما زال بانتظار المراجعة." });
     return generated;
   }),
   generateAutomaticColorSuggestionsMany: protectedProcedure.input(z.object({
@@ -455,7 +455,7 @@ export const productsRouter = router({
         await requireProductInOperationalStore(ctx, productId);
         const result = await generateAutomaticColorSuggestion({ productId, actorUserId: ctx.user.id });
         if (result) generated.push(productId);
-        else skipped.push({ productId, reason: "لا توجد صور جديدة أو غير مسندة تحتاج إلى تحليل." });
+        else skipped.push({ productId, reason: "لا توجد صور جديدة للتحليل؛ قد يكون اقتراح ألوان سابق ما زال بانتظار المراجعة." });
       } catch (error) {
         skipped.push({ productId, reason: error instanceof Error ? error.message : "تعذر تحليل ألوان المنتج." });
       }

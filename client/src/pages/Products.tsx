@@ -239,7 +239,8 @@ export default function Products() {
     onMutate: () => { setBulkColorFeedback(null); setBulkColorError(null); },
     onSuccess: async result => {
       await invalidateProducts();
-      setBulkColorFeedback(result.generatedProductIds.length ? `بدأ تحليل الألوان لـ ${result.generatedProductIds.length} منتجات${result.skipped.length ? `، وتم تجاوز ${result.skipped.length}` : ""}.` : "لم توجد صور جديدة تحتاج إلى تحليل.");
+      const pendingReviewCount = result.skipped.filter(item => item.reason.includes("اقتراح ألوان سابق")).length;
+      setBulkColorFeedback(result.generatedProductIds.length ? `بدأ تحليل الألوان لـ ${result.generatedProductIds.length} منتجات${result.skipped.length ? `، وتم تجاوز ${result.skipped.length}` : ""}.` : pendingReviewCount ? `لا يوجد تحليل جديد الآن؛ لدى ${pendingReviewCount} منتجات اقتراحات ألوان سابقة بانتظار المراجعة والاعتماد.` : "لا توجد صور جديدة غير مسندة تحتاج إلى تحليل.");
     },
     onError: error => setBulkColorError(error.message),
   });
