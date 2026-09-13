@@ -42,9 +42,10 @@ export function MetaCatalogWorkspace({ canEdit, onOpenProduct, onOpenSettings }:
     ?? readiness.data?.assets[0]
     ?? null;
   const selectedAssetId = selectedAsset?.id ?? null;
+  const selectedIdsForAction = useMemo(() => selectedIds.filter(productId => (products.data ?? []).some(product => product.id === productId)), [selectedIds, products.data]);
   const selectedInput = useMemo(
-    () => selectedAssetId && selectedIds.length ? { catalogAssetId: selectedAssetId, productIds: selectedIds } : skipToken,
-    [selectedAssetId, selectedIds],
+    () => selectedAssetId && selectedIdsForAction.length ? { catalogAssetId: selectedAssetId, productIds: selectedIdsForAction } : skipToken,
+    [selectedAssetId, selectedIdsForAction],
   );
   const preview = trpc.metaCatalog.preview.useQuery(selectedInput, { enabled: selectedInput !== skipToken });
   const prepare = trpc.metaCatalog.prepareProductsMedia.useMutation({
@@ -73,7 +74,7 @@ export function MetaCatalogWorkspace({ canEdit, onOpenProduct, onOpenSettings }:
       return !normalizedQuery || haystack.includes(normalizedQuery);
     });
   }, [products.data, query]);
-  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedSet = useMemo(() => new Set(selectedIdsForAction), [selectedIdsForAction]);
   const selectedProducts = useMemo(() => (products.data ?? []).filter(product => selectedSet.has(product.id)), [products.data, selectedSet]);
   const reportByProduct = useMemo(() => new Map((preview.data?.productReports ?? []).map(report => [report.productId, report])), [preview.data?.productReports]);
   const exportVerification = exportNow.data?.verification;
@@ -86,14 +87,14 @@ export function MetaCatalogWorkspace({ canEdit, onOpenProduct, onOpenSettings }:
   const toggle = (productId: number) => setSelectedIds(current => current.includes(productId) ? current.filter(id => id !== productId) : [...current, productId]);
   const selectVisibleProducts = () => setSelectedIds(visibleProducts.map(product => product.id));
   const prepareSelection = () => {
-    if (!selectedIds.length) return;
+    if (!selectedIdsForAction.length) return;
     setPrepareResult(null);
-    prepare.mutate({ productIds: selectedIds });
+    prepare.mutate({ productIds: selectedIdsForAction });
   };
   const submitSelected = () => {
-    if (!selectedAssetId || !selectedIds.length || !readyCount || preview.isFetching) return;
+    if (!selectedAssetId || !selectedIdsForAction.length || !readyCount || preview.isFetching) return;
     if (!window.confirm(`سيتم إرسال ${readyCount} منتج جاهز فقط إلى Meta. لن تُرسل المنتجات التي تحتاج إصلاحًا. هل تريد المتابعة؟`)) return;
-    exportNow.mutate({ catalogAssetId: selectedAssetId, productIds: selectedIds });
+    exportNow.mutate({ catalogAssetId: selectedAssetId, productIds: selectedIdsForAction });
   };
 
   if (!readiness.isLoading && !readiness.data?.assets.length) {

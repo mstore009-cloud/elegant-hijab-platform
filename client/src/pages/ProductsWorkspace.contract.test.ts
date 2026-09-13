@@ -184,6 +184,25 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("التالي");
   });
 
+  it("لا يرسل إجراءات الدفعات الجماعية بمعرفات منتجات فارغة أو قديمة", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("const selectedMetaProductIdsInView = useMemo");
+    expect(source).toContain("const workViewProductIds = useMemo");
+    expect(source).toContain("if (selectedMetaProductIdsInView.length) syncProductsNow.mutate");
+    expect(source).toContain("if (workViewProductIds.length) assignUnlinkedMediaToColorMany.mutate");
+    expect(source).toContain("if (workViewProductIds.length) generateAutomaticSuggestionsMany.mutate");
+    expect(source).toContain("!selectedMetaProductIdsInView.length");
+    expect(source).toContain("!workViewProductIds.length");
+  });
+
+  it("ينظف تحديدات Meta القديمة قبل المعاينة أو التجهيز أو التصدير", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/components/MetaCatalogWorkspace.tsx"), "utf8");
+    expect(source).toContain("const selectedIdsForAction = useMemo");
+    expect(source).toContain("selectedAssetId && selectedIdsForAction.length");
+    expect(source).toContain("if (!selectedIdsForAction.length) return");
+    expect(source).toContain("productIds: selectedIdsForAction");
+  });
+
   it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("addDetailMedia");
