@@ -4,8 +4,8 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { assertPermission } from "../access/authorization";
 import { recordAuditEvent } from "../audit/db";
 import { listLLMModels } from "../_core/llm";
-import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, simulateCustomerBotInstruction, updateCustomerBotSettings } from "../customerBot/db";
-import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualityComparison, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, teachCustomerBotFromReviewedRun, updateCustomerBotKnowledge } from "../customerBot/knowledge";
+import { botModes, dismissCustomerBotRun, generateCustomerBotDraft, getCustomerBotSettings, listCustomerBotRuns, simulateCustomerBotInstruction, updateCustomerBotLearningSettings, updateCustomerBotSettings } from "../customerBot/db";
+import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHistoricalKnowledgeCandidates, gapCategories, gapStatuses, getCustomerBotQualityComparison, getCustomerBotQualitySummary, knowledgeKinds, knowledgeStatuses, listCustomerBotKnowledge, listCustomerBotKnowledgeGaps, listCustomerBotKnowledgeSources, listCustomerBotReviewQueue, listCustomerBotUnifiedReviewQueue, resolveCustomerBotKnowledgeGap, reviewCustomerBotRun, reviewOutcomes, setCustomerBotKnowledgeStatus, teachCustomerBotFromReviewedRun, updateCustomerBotKnowledge } from "../customerBot/knowledge";
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 import { archiveCustomerBotOrderDraft, createFinalOrderFromCustomerBotDraft, listCustomerBotOrderDrafts } from "../customerBot/orderDrafts";
 import { createStyleCandidateFromTrainingAsset, listCustomerBotTrainingAssets, uploadCustomerBotTrainingAsset } from "../customerBot/training";
@@ -35,7 +35,7 @@ const settingsInput = z.object({
   humanWaitingTemplate: z.string().trim().max(1000).nullable(),
   productResponseMode: z.enum(["smart", "images", "product_card", "ask_first"]),
   learningEnabled: z.boolean(),
-  learningReviewDays: z.number().int().min(1).max(90),
+  learningReviewDays: z.number().int().min(0).max(3650),
   fastModel: z.string().trim().min(1).max(80),
   escalationModel: z.string().trim().min(1).max(80),
   minimumConfidence: z.number().int().min(1).max(100),
@@ -60,6 +60,12 @@ export const customerBotRouter = router({
     if (!ids.has(input.fastModel) || !ids.has(input.escalationModel)) throw new TRPCError({ code: "BAD_REQUEST", message: "النموذج المختار لم يعد متاحاً في كتالوج المنصة الحي." });
     const settings = await updateCustomerBotSettings({ ...input, storeId: store.id, actorUserId: ctx.user.id });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_settings", entityId: settings.id, action: "bot.settings_updated", summary: `تم تحديث إعدادات البوت: وضع ${settings.mode}، سريع ${settings.fastModel}، وتصعيد ${settings.escalationModel}.` });
+    return settings;
+  }),
+  updateLearningSettings: protectedProcedure.input(z.object({ learningEnabled: z.boolean(), learningReviewDays: z.number().int().min(0).max(3650) })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const settings = await updateCustomerBotLearningSettings({ ...input, storeId: store.id, actorUserId: ctx.user.id });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_settings", entityId: settings.id, action: "bot.learning_settings_updated", summary: `تم تحديث نطاق التعلم إلى ${input.learningReviewDays === 0 ? "كامل السجل" : `${input.learningReviewDays} يوماً`}.` });
     return settings;
   }),
   runs: protectedProcedure.input(z.object({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => listCustomerBotRuns((await requireStore(ctx, "inbox.read")).id, input.conversationId)),
@@ -116,6 +122,7 @@ export const customerBotRouter = router({
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_playground", entityId: input.sessionId, action: "bot.playground_closed", summary: "أُغلقت جلسة الاختبار الداخلية." });
   }),
   learningProposals: protectedProcedure.input(z.object({ status: z.enum(proposalStatuses).optional() }).optional()).query(async ({ ctx, input }) => listLearningProposals((await requireStore(ctx, "bot.manage")).id, input?.status)),
+  unifiedReviewQueue: protectedProcedure.query(async ({ ctx }) => listCustomerBotUnifiedReviewQueue((await requireStore(ctx, "bot.manage")).id)),
   createLearningProposal: protectedProcedure.input(z.object({ sessionId: z.number().int().positive(), sourceMessageId: z.number().int().positive(), category: z.enum(proposalCategories), editedReply: z.string().trim().min(2).max(5000), title: z.string().trim().min(3).max(240).nullable().optional(), body: z.string().trim().min(2).max(12000).nullable().optional() })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.manage");
     const proposal = await createLearningProposal({ storeId: store.id, actorUserId: ctx.user.id, ...input });
@@ -241,7 +248,7 @@ export const customerBotRouter = router({
     const store = await requireStore(ctx, "bot.manage");
     const settings = await getCustomerBotSettings(store.id);
     if (!settings.learningEnabled) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "التعلم المراقب معطل من إعدادات البوت." });
-    const since = new Date(Date.now() - settings.learningReviewDays * 24 * 60 * 60 * 1000);
+    const since = settings.learningReviewDays > 0 && settings.learningReviewDays < 3650 ? new Date(Date.now() - settings.learningReviewDays * 24 * 60 * 60 * 1000) : null;
     const result = await extractHistoricalKnowledgeCandidates({ ...input, storeId: store.id, actorUserId: ctx.user.id, since });
     await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_knowledge", entityId: store.id, action: "bot.historical_candidates_extracted", summary: `تم فحص ${result.scannedMessages} رسالة تاريخية وإنشاء ${result.createdCandidates} مرشح معرفة للمراجعة.` });
     return result;

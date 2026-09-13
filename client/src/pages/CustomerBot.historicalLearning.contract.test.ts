@@ -87,7 +87,7 @@ describe("Customer Bot training center", () => {
   it("adds searchable filters for knowledge and review drafts", () => {
     const source = read("CustomerBotLearning.tsx");
     expect(source).toContain("ابحثي بالعنوان أو النص");
-    expect(source).toContain("ابحثي في عنوان أو نص المسودة");
+    expect(source).toContain("ابحثي في كل المسودات والفجوات");
     expect(source).toContain("عرض {filtered.length} من");
   });
 

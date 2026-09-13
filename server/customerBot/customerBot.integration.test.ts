@@ -129,6 +129,16 @@ describe("بوت العملاء الهجين", () => {
     expect(drafts[0]?.status).toBe("collecting");
   });
 
+  it("يمنع مسودة الطلب إذا كان المنتج أو اللون غير صالحين", async () => {
+    const setupData = await setup("أريد تثبيت الحجاب الزيتي.");
+    const mock = mockReply("أتحقق من اللون المتوفر أولاً.", 93, false, { action: "order_summary", productCode: "BOT-INVALID", colorName: "لون غير موجود", quantity: 1 });
+    await generateCustomerBotDraft({ storeId: setupData.storeId, actorUserId: setupData.owner.id, conversationId: setupData.conversationId, sourceMessageId: setupData.messageId, llm: mock.llm });
+    const drafts = await setupData.db.select().from(customerBotOrderDrafts).where(eq(customerBotOrderDrafts.conversationId, setupData.conversationId));
+    expect(drafts).toHaveLength(0);
+    const [run] = await listCustomerBotRuns(setupData.storeId, setupData.conversationId);
+    expect(run.actionDecisionJson).toContain("لا يوجد منتج حي");
+  });
+
   it("يرسل الرد الواثق عبر بوابة Meta في وضع bot_guarded عندما تكون القناة مفعلة", async () => {
     const setupData = await setup("هل الحجاب الزيتي متوفر؟");
     const providerAccountId = `page-${randomUUID()}`;

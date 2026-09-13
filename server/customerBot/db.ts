@@ -112,6 +112,14 @@ function parseStructuredReply(value: string) {
 }
 
 function applyProductResponsePolicy(action: BotActionDecision, settings: any, facts: BotFacts): BotActionDecision {
+  if (action.type === "order_summary") {
+    const product = action.productCode ? facts.products.find(item => item.productCode === action.productCode) : facts.products[0];
+    if (!product) return { ...action, type: "none", reason: "لا يوجد منتج حي مطابق لملخص الطلب" };
+    const requestedColor = action.colorName?.trim();
+    const color = requestedColor ? product.colors.find(item => item.colorName === requestedColor && item.sizes.some(size => size.available)) : null;
+    if (!requestedColor || !color) return { ...action, type: "none", productCode: product.productCode, reason: "يجب تحديد لون متوفر قبل تجهيز ملخص الطلب" };
+    return { ...action, productCode: product.productCode, colorName: color.colorName, quantity: action.quantity ?? 1 };
+  }
   if (action.type !== "send_product_images" && action.type !== "send_product_card") return action;
   const product = action.productCode ? facts.products.find(item => item.productCode === action.productCode) : facts.products[0];
   if (!product) return { ...action, type: "none", reason: "لا يوجد منتج حي مطابق لقرار الإجراء" };
@@ -278,6 +286,13 @@ export async function updateCustomerBotSettings(input: { storeId: number; actorU
     maxDailyEscalations: input.maxDailyEscalations,
     updatedByUserId: input.actorUserId,
   }).where(eq(customerBotSettings.storeId, input.storeId));
+  return getSettings(db, input.storeId);
+}
+
+export async function updateCustomerBotLearningSettings(input: { storeId: number; actorUserId: number; learningEnabled: boolean; learningReviewDays: number }) {
+  const db = await requireDb();
+  await getSettings(db, input.storeId);
+  await db.update(customerBotSettings).set({ learningEnabled: input.learningEnabled, learningReviewDays: input.learningReviewDays, updatedByUserId: input.actorUserId }).where(eq(customerBotSettings.storeId, input.storeId));
   return getSettings(db, input.storeId);
 }
 

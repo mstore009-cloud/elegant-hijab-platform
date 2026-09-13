@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
-import { customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, customerBotSettings, inboxConversations, inboxMessages, metaOutboundMessages, stores } from "../../drizzle/schema";
+import { customerBotBehaviorCards, customerBotKnowledgeArticles, customerBotKnowledgeGaps, customerBotLearningProposals, customerBotOrderDrafts, customerBotPlaybooks, customerBotRunKnowledgeSources, customerBotRunReviews, customerBotRuns, customerBotSettings, customerBotTestCases, inboxConversations, inboxMessages, metaOutboundMessages, stores } from "../../drizzle/schema";
 import { getDb } from "../db";
 
 export const knowledgeKinds = ["faq", "policy", "style_guidance", "product_guidance"] as const;
@@ -31,6 +31,29 @@ async function scopedArticle(db: any, storeId: number, articleId: number) {
 export async function listCustomerBotKnowledge(storeId: number, status?: KnowledgeStatus) {
   const db = await requireDb();
   return db.select().from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), status ? eq(customerBotKnowledgeArticles.status, status) : undefined)).orderBy(desc(customerBotKnowledgeArticles.updatedAt), desc(customerBotKnowledgeArticles.id));
+}
+
+/** Read model for one review queue; original records remain in their source tables. */
+export async function listCustomerBotUnifiedReviewQueue(storeId: number) {
+  const db = await requireDb();
+  const [articles, behaviorCards, playbooks, proposals, testCases, orderDrafts, gaps] = await Promise.all([
+    db.select({ id: customerBotKnowledgeArticles.id, title: customerBotKnowledgeArticles.title, body: customerBotKnowledgeArticles.body, status: customerBotKnowledgeArticles.status, updatedAt: customerBotKnowledgeArticles.updatedAt }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, storeId), eq(customerBotKnowledgeArticles.status, "draft"))),
+    db.select({ id: customerBotBehaviorCards.id, title: customerBotBehaviorCards.title, body: customerBotBehaviorCards.body, status: customerBotBehaviorCards.status, updatedAt: customerBotBehaviorCards.updatedAt, kind: customerBotBehaviorCards.kind }).from(customerBotBehaviorCards).where(and(eq(customerBotBehaviorCards.storeId, storeId), eq(customerBotBehaviorCards.status, "draft"))),
+    db.select({ id: customerBotPlaybooks.id, title: customerBotPlaybooks.title, body: customerBotPlaybooks.stepsJson, status: customerBotPlaybooks.status, updatedAt: customerBotPlaybooks.updatedAt }).from(customerBotPlaybooks).where(and(eq(customerBotPlaybooks.storeId, storeId), eq(customerBotPlaybooks.status, "draft"))),
+    db.select({ id: customerBotLearningProposals.id, title: customerBotLearningProposals.title, body: customerBotLearningProposals.body, status: customerBotLearningProposals.status, updatedAt: customerBotLearningProposals.updatedAt, category: customerBotLearningProposals.category }).from(customerBotLearningProposals).where(and(eq(customerBotLearningProposals.storeId, storeId), eq(customerBotLearningProposals.status, "draft"))),
+    db.select({ id: customerBotTestCases.id, title: customerBotTestCases.title, body: customerBotTestCases.inputJson, status: customerBotTestCases.status, updatedAt: customerBotTestCases.updatedAt }).from(customerBotTestCases).where(and(eq(customerBotTestCases.storeId, storeId), eq(customerBotTestCases.status, "draft"))),
+    db.select({ id: customerBotOrderDrafts.id, title: customerBotOrderDrafts.summaryText, body: customerBotOrderDrafts.itemsJson, status: customerBotOrderDrafts.status, updatedAt: customerBotOrderDrafts.updatedAt }).from(customerBotOrderDrafts).where(and(eq(customerBotOrderDrafts.storeId, storeId), or(eq(customerBotOrderDrafts.status, "collecting"), eq(customerBotOrderDrafts.status, "awaiting_confirmation"), eq(customerBotOrderDrafts.status, "review_required")))),
+    db.select({ id: customerBotKnowledgeGaps.id, title: customerBotKnowledgeGaps.title, body: customerBotKnowledgeGaps.questionSnapshot, status: customerBotKnowledgeGaps.status, updatedAt: customerBotKnowledgeGaps.updatedAt, category: customerBotKnowledgeGaps.category }).from(customerBotKnowledgeGaps).where(and(eq(customerBotKnowledgeGaps.storeId, storeId), eq(customerBotKnowledgeGaps.status, "open"))),
+  ]);
+  return [
+    ...articles.map(item => ({ sourceType: "knowledge" as const, sourceId: item.id, title: item.title, body: item.body, status: item.status, category: "knowledge", updatedAt: item.updatedAt })),
+    ...behaviorCards.map(item => ({ sourceType: "behavior" as const, sourceId: item.id, title: item.title, body: item.body, status: item.status, category: item.kind, updatedAt: item.updatedAt })),
+    ...playbooks.map(item => ({ sourceType: "playbook" as const, sourceId: item.id, title: item.title, body: item.body, status: item.status, category: "sales_playbook", updatedAt: item.updatedAt })),
+    ...proposals.map(item => ({ sourceType: "proposal" as const, sourceId: item.id, title: item.title, body: item.body, status: item.status, category: item.category, updatedAt: item.updatedAt })),
+    ...testCases.map(item => ({ sourceType: "test_case" as const, sourceId: item.id, title: item.title, body: item.body, status: item.status, category: "test_case", updatedAt: item.updatedAt })),
+    ...orderDrafts.map(item => ({ sourceType: "order_draft" as const, sourceId: item.id, title: item.title || `مسودة طلب #${item.id}`, body: item.body, status: item.status, category: "order_draft", updatedAt: item.updatedAt })),
+    ...gaps.map(item => ({ sourceType: "gap" as const, sourceId: item.id, title: item.title, body: item.body, status: item.status, category: item.category, updatedAt: item.updatedAt })),
+  ].sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
 }
 
 export async function createCustomerBotKnowledge(input: { storeId: number; actorUserId: number; title: string; kind: KnowledgeKind; body: string; source?: "manual" | "review_feedback" | "historical_candidate" }) {
@@ -79,11 +102,16 @@ export async function extractHistoricalKnowledgeCandidates(input: { storeId: num
     occurredAt: inboxMessages.occurredAt,
     channel: inboxConversations.channel,
     subject: inboxConversations.subject,
-  }).from(inboxMessages).innerJoin(inboxConversations, eq(inboxMessages.conversationId, inboxConversations.id)).where(and(eq(inboxConversations.storeId, input.storeId), eq(inboxMessages.source, "historical_sync"), or(eq(inboxMessages.direction, "inbound"), eq(inboxMessages.direction, "outbound")), input.since ? gte(inboxMessages.occurredAt, input.since) : undefined, channelFilter)).orderBy(asc(inboxMessages.conversationId), asc(inboxMessages.occurredAt), asc(inboxMessages.id)).limit(limit * 8);
+    externalMessageId: inboxMessages.externalMessageId,
+  }).from(inboxMessages).innerJoin(inboxConversations, eq(inboxMessages.conversationId, inboxConversations.id)).where(and(eq(inboxConversations.storeId, input.storeId), or(eq(inboxMessages.source, "historical_sync"), eq(inboxMessages.source, "live_webhook")), or(eq(inboxMessages.direction, "inbound"), eq(inboxMessages.direction, "outbound")), input.since ? gte(inboxMessages.occurredAt, input.since) : undefined, channelFilter)).orderBy(asc(inboxMessages.conversationId), asc(inboxMessages.occurredAt), asc(inboxMessages.id)).limit(limit * 8);
+
+  const platformOutbound = await db.select({ externalMessageId: metaOutboundMessages.externalMessageId }).from(metaOutboundMessages).where(eq(metaOutboundMessages.storeId, input.storeId));
+  const platformOutboundIds = new Set(platformOutbound.map(item => item.externalMessageId).filter((value): value is string => Boolean(value)));
+  const staffMessages = messages.filter(message => !message.externalMessageId || !platformOutboundIds.has(message.externalMessageId));
 
   const nextOutbound = new Map<number, typeof messages[number]>();
   const pendingInbound = new Map<number, typeof messages[number]>();
-  for (const message of messages) {
+  for (const message of staffMessages) {
     if (message.direction === "inbound") {
       pendingInbound.set(message.conversationId, message);
       continue;
@@ -93,7 +121,7 @@ export async function extractHistoricalKnowledgeCandidates(input: { storeId: num
     pendingInbound.delete(message.conversationId);
   }
   const pairs = Array.from(nextOutbound.entries()).slice(0, limit);
-  if (!pairs.length) return { scannedMessages: messages.length, candidatePairs: 0, createdCandidates: 0, skippedExisting: 0 };
+  if (!pairs.length) return { scannedMessages: staffMessages.length, candidatePairs: 0, createdCandidates: 0, skippedExisting: 0 };
 
   const existing = await db.select({ body: customerBotKnowledgeArticles.body }).from(customerBotKnowledgeArticles).where(and(eq(customerBotKnowledgeArticles.storeId, input.storeId), eq(customerBotKnowledgeArticles.source, "historical_candidate")));
   const existingBodies = new Set(existing.map(article => article.body));
@@ -111,7 +139,7 @@ export async function extractHistoricalKnowledgeCandidates(input: { storeId: num
     existingBodies.add(body);
     createdCandidates += 1;
   }
-  return { scannedMessages: messages.length, candidatePairs: pairs.length, createdCandidates, skippedExisting };
+  return { scannedMessages: staffMessages.length, candidatePairs: pairs.length, createdCandidates, skippedExisting };
 }
 
 /** Captures a native-channel employee echo as a reviewable draft; it never teaches the bot automatically. */
