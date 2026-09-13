@@ -183,6 +183,14 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("التالي");
   });
 
+  it("يعرض بطاقات مركز العمل بحجم مضغوط مع إبقاء زر فتح الأول", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain('mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5');
+    expect(source).toContain('rounded-xl border p-2 text-right transition');
+    expect(source).toContain('className="mt-1.5 space-y-1.5"');
+    expect(source).toContain("فتح الأول");
+  });
+
   it("يفتح المنتج الأول من نتائج التنبيه حتى عندما يكون workView العام all", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("const alertProductsForView = (view: WorkView)");
