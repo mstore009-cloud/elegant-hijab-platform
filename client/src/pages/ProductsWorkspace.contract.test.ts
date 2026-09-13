@@ -222,6 +222,17 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(thumbnail).toContain("className?: string");
   });
 
+  it("يفتح تفاصيل المنتج كبطاقة منبثقة فوق التخطيط ويحافظ على نسبة الصورة", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    const thumbnail = readFileSync(resolve(process.cwd(), "client/src/components/ProductListThumbnail.tsx"), "utf8");
+    expect(source).toContain('className="fixed inset-0 z-50 overflow-y-auto bg-[#183d35]/45 p-2 sm:p-6"');
+    expect(source).toContain('role="dialog" aria-modal="true"');
+    expect(source).toContain('if (event.key === "Escape") setSelectedProductId(null)');
+    expect(source).toContain('onClick={event => { if (event.target === event.currentTarget) setSelectedProductId(null); }}');
+    expect(source).toContain('max-w-[1100px] overflow-y-auto rounded-3xl');
+    expect(thumbnail).toContain('object-contain');
+  });
+
   it("يفتح المنتج الأول من نتائج التنبيه حتى عندما يكون workView العام all", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("const alertProductsForView = (view: WorkView)");
