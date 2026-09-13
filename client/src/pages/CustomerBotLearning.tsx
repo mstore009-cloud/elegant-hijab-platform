@@ -17,13 +17,9 @@ const statusStyle: Record<string, string> = { draft: "bg-amber-50 text-amber-800
 const statusLabel: Record<string, string> = { draft: "مسودة", approved: "معتمدة", archived: "مؤرشفة", rejected: "مرفوضة" };
 const categoryLabel: Record<string, string> = { dialect_style: "أسلوب الكلام واللهجة", reply_example: "نموذج رد", knowledge: "بطاقة معرفة", sales_playbook: "خطوات البيع", test_case: "اختبار للبوت", guardrail: "حماية وممنوعات", knowledge_gap: "معلومة ناقصة" };
 const tabs = [
-  { id: "cards", label: "بطاقات المعرفة", icon: BookOpenText, hint: "المعلومات الثابتة" },
-  { id: "assistant", label: "مساعد التعليم", icon: WandSparkles, hint: "كتابة أو صوت أو قالب" },
-  { id: "behavior", label: "السلوك واللهجة", icon: Radio, hint: "لهجة وأمثلة وحواجز" },
-  { id: "sales", label: "إجراءات البيع", icon: ShoppingCart, hint: "شرط وخطوات قابلة للمراجعة" },
-  { id: "sources", label: "مصادر التدريب", icon: UploadCloud, hint: "ملفات الفريق" },
-  { id: "drafts", label: "المسودات والمراجعة", icon: FolderOpen, hint: "اعتماد ومراجعة" },
-  { id: "quality", label: "جودة الردود", icon: Gauge, hint: "قياس قبل التفعيل" },
+  { id: "knowledge", label: "المعرفة", icon: BookOpenText, hint: "أدخل أو علّم" },
+  { id: "review", label: "المراجعة", icon: FolderOpen, hint: "اعتماد واحد" },
+  { id: "quality", label: "الجودة", icon: Gauge, hint: "اختبر قبل التفعيل" },
 ] as const;
 type TabId = (typeof tabs)[number]["id"];
 
@@ -31,17 +27,20 @@ export default function CustomerBotLearning() {
   const [, setLocation] = useLocation();
   const search = useSearch();
   const query = search ? (search.startsWith("?") ? search.slice(1) : search) : (typeof window !== "undefined" ? window.location.search.slice(1) : "");
-  const activeTab = (new URLSearchParams(query).get("tab") as TabId | null) ?? "cards";
+  const requestedTab = new URLSearchParams(query).get("tab") ?? "knowledge";
+  const legacyTabMap: Record<string, TabId> = { cards: "knowledge", assistant: "knowledge", behavior: "knowledge", sales: "knowledge", sources: "knowledge", drafts: "review", quality: "quality" };
+  const activeTab = legacyTabMap[requestedTab] ?? (tabs.some(tab => tab.id === requestedTab) ? requestedTab as TabId : "knowledge");
   const profile = trpc.access.myProfile.useQuery();
   const canManage = profile.data?.permissions.includes("bot.manage") ?? false;
   const canApprove = profile.data?.permissions.includes("bot.knowledge.approve") ?? false;
   const queryOptions = { staleTime: 60_000 };
-  const knowledge = trpc.customerBot.knowledge.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "cards" });
-  const behavior = trpc.customerBot.behaviorCards.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "behavior" });
-  const playbooks = trpc.customerBot.playbooks.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "sales" });
-  const assets = trpc.customerBot.trainingAssets.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "sources" });
-  const botSettings = trpc.customerBot.settings.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "sources" });
-  const reviewQueue = trpc.customerBot.unifiedReviewQueue.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "drafts" });
+  const knowledge = trpc.customerBot.knowledge.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "knowledge" });
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const behavior = trpc.customerBot.behaviorCards.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "knowledge" && advancedOpen });
+  const playbooks = trpc.customerBot.playbooks.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "knowledge" && advancedOpen });
+  const assets = trpc.customerBot.trainingAssets.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "knowledge" });
+  const botSettings = trpc.customerBot.settings.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "knowledge" });
+  const reviewQueue = trpc.customerBot.unifiedReviewQueue.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "review" });
   const quality = trpc.customerBot.qualityComparison.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "quality" });
   const testCases = trpc.customerBot.testCases.useQuery(undefined, { ...queryOptions, enabled: canManage && activeTab === "quality" });
   const [open, setOpen] = useState(false);
@@ -60,14 +59,14 @@ export default function CustomerBotLearning() {
   const updateLearningSettings = trpc.customerBot.updateLearningSettings.useMutation({ onSuccess: async () => { await utils.customerBot.settings.invalidate(); toast.success("تم حفظ نطاق التعلم."); }, onError: error => toast.error(error.message) });
   const extractHistorical = trpc.customerBot.extractHistoricalCandidates.useMutation({ onSuccess: result => { void utils.customerBot.knowledge.invalidate(); toast.success(`تم فحص ${result.scannedMessages} رسالة وإنشاء ${result.createdCandidates} مرشح للمراجعة.`); }, onError: error => toast.error(error.message) });
 
-  function navigateTab(tab: TabId) { setLocation(`/customer-bot/learning${tab === "cards" ? "" : `?tab=${tab}`}`); }
+  function navigateTab(tab: TabId) { setLocation(`/customer-bot/learning${tab === "knowledge" ? "" : `?tab=${tab}`}`); }
   async function uploadFile(file: File | null) { if (!file) return; if (file.size > 16 * 1024 * 1024) { toast.error("الحد الأقصى 16 ميغابايت."); return; } const allowed = ["text/plain", "text/markdown", "application/json", "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/ogg", "audio/webm", "audio/mp4", "audio/m4a"]; if (!allowed.includes(file.type)) { toast.error("ارفعي TXT أو MD أو JSON أو ملفاً صوتياً مدعوماً."); return; } const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ""; bytes.forEach(value => { binary += String.fromCharCode(value); }); upload.mutate({ fileName: file.name, mimeType: file.type, base64: btoa(binary) }); }
 
-  const activeTabLoading = activeTab === "cards" ? knowledge.isLoading : activeTab === "behavior" ? behavior.isLoading : activeTab === "sales" ? playbooks.isLoading : activeTab === "sources" ? assets.isLoading || botSettings.isLoading : activeTab === "drafts" ? reviewQueue.isLoading : activeTab === "quality" ? quality.isLoading || testCases.isLoading : false;
+  const activeTabLoading = activeTab === "knowledge" ? knowledge.isLoading || assets.isLoading || botSettings.isLoading : activeTab === "review" ? reviewQueue.isLoading : activeTab === "quality" ? quality.isLoading || testCases.isLoading : false;
   if (profile.isLoading || (canManage && activeTabLoading)) return <div className="p-8 text-sm text-muted-foreground">جارٍ تحميل القسم…</div>;
   if (!canManage) return <div className="p-8 text-center">لا توجد صلاحية لإدارة معرفة البوت.</div>;
   return <main dir="rtl" className="mx-auto max-w-6xl space-y-5 pb-10">
-    <CustomerBotNav title="المعرفة والتعلم" description="أضيفي المعلومة أو صححي الرد، ثم راجعيها من المسودات واعتمديها مرة واحدة. بعد الاعتماد تصبح جزءاً من رد البوت التالي." action={<Button onClick={() => { setOpen(true); navigateTab("cards"); }} className="rounded-xl bg-[#1d5a4d] hover:bg-[#153f36]"><Plus className="ml-2 h-4 w-4" />بطاقة معرفة جديدة</Button>} />
+    <CustomerBotNav title="المعرفة والتعلم" description="مكان واحد لإضافة المعرفة وتعليم الأسلوب واختبار الرد. كل إدخال يذهب إلى المراجعة الموحدة قبل أن يصبح فعالاً." action={<Button onClick={() => { setOpen(true); navigateTab("knowledge"); }} className="rounded-xl bg-[#1d5a4d] hover:bg-[#153f36]"><Plus className="ml-2 h-4 w-4" />إضافة معرفة</Button>} />
     <SafetyNotice />
     <section className="grid gap-3 rounded-2xl border border-[#dfe9e1] bg-[#f5faf6] p-4 text-sm text-[#40584a] sm:grid-cols-3">
       <div><p className="font-bold text-[#1d5a4d]">1. أدخلي أو صححي</p><p className="mt-1 text-xs leading-5 text-[#718077]">بطاقة، أمر، مصدر صوتي، أو تعديل لرد داخل المختبر.</p></div>
@@ -75,15 +74,26 @@ export default function CustomerBotLearning() {
       <div><p className="font-bold text-[#1d5a4d]">3. يصبح التعلم فعالاً</p><p className="mt-1 text-xs leading-5 text-[#718077]">الاعتماد يضيف الأثر إلى سياق البوت؛ السعر والمخزون والطلبات تبقى من البيانات الحية.</p></div>
     </section>
     <nav aria-label="أدوات المعرفة والتعلم" className="grid gap-2 rounded-2xl border border-[#e2e8e3] bg-white p-2 shadow-[0_8px_20px_rgba(41,63,53,0.04)] sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">{tabs.map(tab => { const Icon = tab.icon; const active = activeTab === tab.id; return <Button key={tab.id} type="button" variant={active ? "default" : "ghost"} onClick={() => navigateTab(tab.id)} className={`h-auto justify-start rounded-xl px-3 py-3 text-right ${active ? "bg-[#1d5a4d] text-white hover:bg-[#153f36]" : "text-[#52675a] hover:bg-[#f3f8f4]"}`}><Icon className="ml-2 h-4 w-4 shrink-0" /><span><span className="block text-xs font-bold">{tab.label}</span><span className={`mt-0.5 block text-[10px] ${active ? "text-white/75" : "text-[#849189]"}`}>{tab.hint}</span></span></Button>; })}</nav>
-    {activeTab === "cards" ? <KnowledgePanel knowledge={knowledge.data ?? []} canApprove={canApprove} changeStatus={changeStatus} /> : null}
-    {activeTab === "assistant" ? <CustomerBotCommandAssistant embedded canManageOverride={canManage} /> : null}
-    {activeTab === "behavior" ? <BehaviorPanel behavior={behavior.data ?? []} canApprove={canApprove} changeStatus={changeBehaviorStatus} /> : null}
-    {activeTab === "sales" ? <SalesPlaybookPanel playbooks={playbooks.data ?? []} canApprove={canApprove} changeStatus={changePlaybookStatus} /> : null}
-    {activeTab === "sources" ? <SourcesPanel assets={assets.data ?? []} settings={botSettings.data} upload={upload} createStyle={createStyle} updateLearningSettings={updateLearningSettings} extractHistorical={extractHistorical} uploadFile={uploadFile} /> : null}
-    {activeTab === "drafts" ? <DraftsPanel items={reviewQueue.data ?? []} canApprove={canApprove} changeKnowledgeStatus={changeStatus} changeBehaviorStatus={changeBehaviorStatus} changePlaybookStatus={changePlaybookStatus} changeProposalStatus={changeProposalStatus} changeTestCaseStatus={changeTestCaseStatus} /> : null}
+    {activeTab === "knowledge" ? <KnowledgeHome knowledge={knowledge.data ?? []} behavior={behavior.data ?? []} playbooks={playbooks.data ?? []} assets={assets.data ?? []} settings={botSettings.data} upload={upload} createStyle={createStyle} updateLearningSettings={updateLearningSettings} extractHistorical={extractHistorical} uploadFile={uploadFile} onNewKnowledge={() => setOpen(true)} advancedOpen={advancedOpen} onAdvancedOpen={() => setAdvancedOpen(true)} canApprove={canApprove} changeKnowledgeStatus={changeStatus} changeBehaviorStatus={changeBehaviorStatus} changePlaybookStatus={changePlaybookStatus} /> : null}
+    {activeTab === "review" ? <DraftsPanel items={reviewQueue.data ?? []} canApprove={canApprove} changeKnowledgeStatus={changeStatus} changeBehaviorStatus={changeBehaviorStatus} changePlaybookStatus={changePlaybookStatus} changeProposalStatus={changeProposalStatus} changeTestCaseStatus={changeTestCaseStatus} /> : null}
     {activeTab === "quality" ? <QualityPanel quality={quality.data} testCases={testCases.data ?? []} isLoading={quality.isLoading || testCases.isLoading} /> : null}
     <Dialog open={open} onOpenChange={setOpen}><DialogContent dir="rtl"><DialogHeader><DialogTitle>بطاقة معرفة مسودة</DialogTitle></DialogHeader><div className="space-y-4"><div><Label>العنوان</Label><Input value={title} onChange={event => setTitle(event.target.value)} className="mt-2" /></div><div><Label>نوع البطاقة</Label><Select value={kind} onValueChange={value => setKind(value as typeof kind)}><SelectTrigger className="mt-2"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="style_guidance">إرشاد أسلوب</SelectItem><SelectItem value="policy">سياسة ثابتة</SelectItem><SelectItem value="faq">إجابة شائعة</SelectItem><SelectItem value="product_guidance">إرشاد منتج</SelectItem></SelectContent></Select><p className="mt-1 text-[11px] text-[#7d8a81]">هذه البطاقة البسيطة لا تعرض تصنيفات إجراءات البيع والاختبارات؛ استخدمي التبويب المخصص لها.</p></div><div><Label>النص</Label><Textarea value={body} onChange={event => setBody(event.target.value)} className="mt-2 min-h-36" placeholder="اكتبي سياسة أو معلومة ثابتة… لا تضعي سعراً أو مخزوناً أو حالة طلب." /></div></div><DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>إلغاء</Button><Button disabled={!title.trim() || !body.trim() || create.isPending} onClick={() => create.mutate({ title, kind, body })} className="bg-[#1d5a4d] hover:bg-[#153f36]">حفظ مسودة</Button></DialogFooter></DialogContent></Dialog>
   </main>;
+}
+
+function KnowledgeHome({ knowledge, behavior, playbooks, assets, settings, upload, createStyle, updateLearningSettings, extractHistorical, uploadFile, onNewKnowledge, advancedOpen, onAdvancedOpen, canApprove, changeKnowledgeStatus, changeBehaviorStatus, changePlaybookStatus }: { knowledge: any[]; behavior: any[]; playbooks: any[]; assets: any[]; settings: any; upload: any; createStyle: any; updateLearningSettings: any; extractHistorical: any; uploadFile: (file: File | null) => Promise<void>; onNewKnowledge: () => void; advancedOpen: boolean; onAdvancedOpen: () => void; canApprove: boolean; changeKnowledgeStatus: any; changeBehaviorStatus: any; changePlaybookStatus: any }) {
+  const [, setLocation] = useLocation();
+  const [tool, setTool] = useState<"home" | "cards" | "assistant" | "behavior" | "sales" | "sources">("home");
+  const actions = [
+    { id: "cards", title: "بطاقة معرفة", text: "سياسة أو معلومة ثابتة", icon: BookOpenText, action: onNewKnowledge },
+    { id: "assistant", title: "مساعد التعليم", text: "اكتبي أو سجلي أمراً", icon: WandSparkles },
+    { id: "behavior", title: "أسلوب ولهجة", text: "تعليمات وأمثلة وحواجز", icon: Radio },
+    { id: "sales", title: "إجراء بيع", text: "شرط وخطوات آمنة", icon: ShoppingCart },
+    { id: "sources", title: "محادثات وملفات", text: "مصادر تصنع مرشحات", icon: UploadCloud },
+  ];
+  function choose(id: typeof tool, action?: () => void) { action?.(); setTool(id); if (id !== "cards") onAdvancedOpen(); }
+  if (tool === "cards") return <KnowledgePanel knowledge={knowledge} canApprove={canApprove} changeStatus={changeKnowledgeStatus} />;
+  return <div className="space-y-5"><section className="rounded-2xl border border-[#e2e8e3] bg-white p-5 shadow-[0_10px_24px_rgba(41,63,53,0.05)]"><div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="text-lg font-bold text-[#1d5a4d]">أين تريدين إضافة المعرفة؟</h2><p className="mt-1 text-sm leading-6 text-[#74817a]">اختاري طريقة واحدة. النظام يحفظها كمسودة، ثم تراجعين كل شيء من «المراجعة» قبل تفعيل البوت.</p></div><Button variant="outline" className="rounded-xl" onClick={() => setLocation("/customer-bot/learning?tab=review")}>مراجعة {knowledge.filter(item => item.status === "draft").length} مسودة</Button></div><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{actions.map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => choose(item.id as typeof tool, item.action)} className="group rounded-xl border border-[#e7ece8] bg-[#fbfdfb] p-4 text-right transition hover:-translate-y-0.5 hover:border-[#b8d0c0] hover:bg-[#f3f8f4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d5a4d]"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#e8f2ec] text-[#1d5a4d]"><Icon className="h-4 w-4" /></span><span className="mt-3 block text-sm font-bold text-[#354b40]">{item.title}</span><span className="mt-1 block text-xs leading-5 text-[#7b8981]">{item.text}</span></button>; })}</div></section><section className="grid gap-4 lg:grid-cols-3"><div className="rounded-2xl border border-[#e2e8e3] bg-[#f5faf6] p-5"><p className="text-xs font-bold text-[#6e816f]">المعرفة الحالية</p><p className="mt-2 text-3xl font-bold text-[#1d5a4d]">{knowledge.filter(item => item.status === "approved").length}</p><p className="mt-1 text-xs text-[#74817a]">بطاقات معتمدة تدخل سياق البوت</p><Button variant="link" className="mt-2 h-auto p-0 text-xs text-[#1d5a4d]" onClick={() => setTool("cards")}>عرض البطاقات</Button></div><div className="rounded-2xl border border-[#e2e8e3] bg-[#fffaf2] p-5"><p className="text-xs font-bold text-[#8b6a35]">التعلم من المحادثات</p><p className="mt-2 text-3xl font-bold text-[#765e3c]">{assets.length}</p><p className="mt-1 text-xs text-[#8b7657]">ملفات مرفوعة، والرسائل التاريخية تُلخّص للمراجعة</p><Button variant="link" className="mt-2 h-auto p-0 text-xs text-[#765e3c]" onClick={() => choose("sources")}>إدارة المصادر</Button></div><div className="rounded-2xl border border-[#e2e8e3] bg-[#f5f8fb] p-5"><p className="text-xs font-bold text-[#5d7590]">الاختبار الآمن</p><p className="mt-2 text-sm font-bold text-[#405d76]">مختبر المحادثة لا يرسل شيئاً</p><p className="mt-1 text-xs leading-5 text-[#718397]">استخدميه لاقتراح رد، ثم احفظي التصحيح كمصدر تعليمي.</p><Button variant="link" className="mt-2 h-auto p-0 text-xs text-[#406a95]" onClick={() => setLocation("/customer-bot/playground")}>فتح المختبر</Button></div></section>{tool !== "home" ? <section className="relative"><Button variant="ghost" className="mb-2 rounded-xl text-xs text-[#6d7a72]" onClick={() => setTool("home")}>← العودة إلى طرق الإدخال</Button>{tool === "assistant" ? <CustomerBotCommandAssistant embedded canManageOverride /> : null}{tool === "behavior" ? <BehaviorPanel behavior={behavior} canApprove={canApprove} changeStatus={changeBehaviorStatus} /> : null}{tool === "sales" ? <SalesPlaybookPanel playbooks={playbooks} canApprove={canApprove} changeStatus={changePlaybookStatus} /> : null}{tool === "sources" ? <SourcesPanel assets={assets} settings={settings} upload={upload} createStyle={createStyle} updateLearningSettings={updateLearningSettings} extractHistorical={extractHistorical} uploadFile={uploadFile} /> : null}</section> : null}</div>;
 }
 
 function KnowledgePanel({ knowledge, canApprove, changeStatus }: { knowledge: any[]; canApprove: boolean; changeStatus: any }) {

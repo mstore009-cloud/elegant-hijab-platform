@@ -61,7 +61,7 @@ describe("Customer Bot training center", () => {
     const nav = read("../components/customerBot/CustomerBotNav.tsx");
     const library = read("../components/customerBot/TrainingCommandLibrary.tsx");
     expect(learning).toContain("مساعد التعليم");
-    expect(learning).toContain("بطاقة معرفة جديدة");
+    expect(learning).toContain("إضافة معرفة");
     expect(learning).toContain("assistant");
     expect(nav).not.toContain('path: "/customer-bot/commands"');
     expect(library).toContain("طريقة الكلام");
@@ -115,11 +115,11 @@ describe("Customer Bot training center", () => {
   it("lazy-loads the active learning tab instead of blocking on every section", () => {
     const learning = read("CustomerBotLearning.tsx");
     const assistant = read("CustomerBotCommandAssistant.tsx");
-    expect(learning).toContain('activeTab === "cards"');
-    expect(learning).toContain('activeTab === "behavior"');
+    expect(learning).toContain('activeTab === "knowledge"');
+    expect(learning).toContain('activeTab === "review"');
+    expect(learning).toContain("advancedOpen");
     expect(learning).toContain('activeTab === "quality"');
     expect(learning).toContain("staleTime: 60_000");
-    expect(learning).toContain("canManageOverride={canManage}");
     expect(assistant).toContain("canManageOverride");
     expect(assistant).toContain("enabled: canManageOverride === undefined");
   });
@@ -129,7 +129,7 @@ describe("Customer Bot training center", () => {
     expect(learning).toContain("useSearch");
     expect(learning).toContain("activeTab");
     expect(learning).toContain("navigateTab");
-    expect(learning).toContain('navigateTab("cards")');
+    expect(learning).toContain('navigateTab("knowledge")');
     expect(learning).toContain("tabs.map");
   });
 
