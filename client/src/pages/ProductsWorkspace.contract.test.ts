@@ -187,12 +187,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
   it("لا يرسل إجراءات الدفعات الجماعية بمعرفات منتجات فارغة أو قديمة", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("const selectedMetaProductIdsInView = useMemo");
-    expect(source).toContain("const workViewProductIds = useMemo");
+    expect(source).toContain("const colorReviewProductIds = useMemo");
     expect(source).toContain("if (selectedMetaProductIdsInView.length) syncProductsNow.mutate");
-    expect(source).toContain("if (workViewProductIds.length) assignUnlinkedMediaToColorMany.mutate");
-    expect(source).toContain("if (workViewProductIds.length) generateAutomaticSuggestionsMany.mutate");
+    expect(source).toContain("if (colorReviewProductIds.length) assignUnlinkedMediaToColorMany.mutate");
+    expect(source).toContain("if (colorReviewProductIds.length) generateAutomaticSuggestionsMany.mutate");
     expect(source).toContain("!selectedMetaProductIdsInView.length");
-    expect(source).toContain("!workViewProductIds.length");
+    expect(source).toContain("!colorReviewProductIds.length");
   });
 
   it("ينظف تحديدات Meta القديمة قبل المعاينة أو التجهيز أو التصدير", () => {
@@ -201,6 +201,12 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("selectedAssetId && selectedIdsForAction.length");
     expect(source).toContain("if (!selectedIdsForAction.length) return");
     expect(source).toContain("productIds: selectedIdsForAction");
+  });
+
+  it("يعرض عدد المنتجات الفعلي في إجراءات مراجعة الألوان الجماعية", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("`ربط الكل (${colorReviewProductIds.length})`");
+    expect(source).toContain("`تحليل واستخراج الألوان تلقائيًا (${colorReviewProductIds.length})`");
   });
 
   it("يدعم رفع وسائط إضافية من التفاصيل وربط الصور بلون قائم", () => {
