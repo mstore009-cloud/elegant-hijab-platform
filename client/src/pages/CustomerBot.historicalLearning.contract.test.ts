@@ -37,7 +37,7 @@ describe("Customer Bot training center", () => {
 
   it("supports editing a selected command and archiving it without touching saved proposals", () => {
     const source = read("CustomerBotCommandAssistant.tsx");
-    const playground = read("../../server/customerBot/playground.ts");
+    const playground = read("../../../server/customerBot/playground.ts");
     expect(source).toContain("customerBot.updateTextCommand.useMutation");
     expect(source).toContain("تعديل الأمر");
     expect(source).toContain("customerBot.archiveCommand.useMutation");
