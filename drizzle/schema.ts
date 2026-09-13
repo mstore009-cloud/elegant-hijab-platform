@@ -1317,7 +1317,7 @@ export const customerBotCommandRequests = mysqlTable(
     transcript: text("transcript"),
     classificationJson: text("classificationJson"),
     proposedChangeJson: text("proposedChangeJson"),
-    status: mysqlEnum("status", ["transcribed", "needs_clarification", "previewed", "saved_draft", "cancelled", "failed"]).default("previewed").notNull(),
+    status: mysqlEnum("status", ["transcribed", "needs_clarification", "previewed", "saved_draft", "cancelled", "archived", "failed"]).default("previewed").notNull(),
     errorSummary: varchar("errorSummary", { length: 500 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

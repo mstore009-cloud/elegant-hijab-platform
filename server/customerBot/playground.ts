@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, like, or } from "drizzle-orm";
+import { and, desc, eq, inArray, like, ne, or } from "drizzle-orm";
 import {
   customerBotBehaviorCards,
   customerBotCommandRequests,
@@ -23,7 +23,7 @@ export const playgroundModes = ["live_read_only", "conversation_context", "new_t
 export const playgroundChannels = ["whatsapp", "instagram", "messenger", "internal"] as const;
 export const proposalCategories = ["dialect_style", "reply_example", "knowledge", "sales_playbook", "test_case", "guardrail", "knowledge_gap"] as const;
 export const proposalStatuses = ["draft", "approved", "rejected", "archived"] as const;
-export const commandStatuses = ["transcribed", "needs_clarification", "previewed", "saved_draft", "cancelled", "failed"] as const;
+export const commandStatuses = ["transcribed", "needs_clarification", "previewed", "saved_draft", "cancelled", "archived", "failed"] as const;
 
 type ProposalCategory = (typeof proposalCategories)[number];
 type PlaygroundChannel = (typeof playgroundChannels)[number];
@@ -289,6 +289,18 @@ export async function createTextCommandRequest(input: { storeId: number; actorUs
   return { command, classification, usage };
 }
 
+export async function updateTextCommandRequest(input: { storeId: number; commandId: number; text: string }) {
+  const text = input.text.trim().slice(0, 12000);
+  if (text.length < 3) throw new Error("اكتبي أمراً واضحاً للمساعد أولاً.");
+  const db = await requireDb();
+  const [command] = await db.select().from(customerBotCommandRequests).where(and(eq(customerBotCommandRequests.id, input.commandId), eq(customerBotCommandRequests.storeId, input.storeId))).limit(1);
+  if (!command) throw new Error("أمر المساعد غير موجود في المتجر الحالي.");
+  const { classification, usage } = await classifyCommand(input.storeId, text);
+  await db.update(customerBotCommandRequests).set({ originalText: text, transcript: text, classificationJson: JSON.stringify(classification), proposedChangeJson: JSON.stringify({ category: classification.destination, title: classification.title, body: classification.body }), status: classification.destination === "clarification" ? "needs_clarification" : "previewed", errorSummary: null }).where(eq(customerBotCommandRequests.id, command.id));
+  const [updated] = await db.select().from(customerBotCommandRequests).where(eq(customerBotCommandRequests.id, command.id)).limit(1);
+  return { command: updated, classification, usage };
+}
+
 function publicUrl(path: string) { try { return new URL(path, new URL(ENV.metaRedirectUri).origin).toString(); } catch { throw new Error("لا يتوفر النطاق العام اللازم لتحويل التسجيل الصوتي إلى نص."); } }
 
 export async function createAudioCommandRequest(input: { storeId: number; actorUserId: number; fileName: string; mimeType: string; base64: string }) {
@@ -313,9 +325,18 @@ export async function createAudioCommandRequest(input: { storeId: number; actorU
   return { command, classification, usage };
 }
 
-export async function listCommandRequests(storeId: number) {
+export async function listCommandRequests(storeId: number, includeArchived = false) {
   const db = await requireDb();
-  return db.select().from(customerBotCommandRequests).where(eq(customerBotCommandRequests.storeId, storeId)).orderBy(desc(customerBotCommandRequests.updatedAt)).limit(50);
+  const filters = includeArchived ? eq(customerBotCommandRequests.storeId, storeId) : and(eq(customerBotCommandRequests.storeId, storeId), ne(customerBotCommandRequests.status, "archived"));
+  return db.select().from(customerBotCommandRequests).where(filters).orderBy(desc(customerBotCommandRequests.updatedAt)).limit(50);
+}
+
+export async function archiveCommandRequest(input: { storeId: number; commandId: number }) {
+  const db = await requireDb();
+  const [command] = await db.select().from(customerBotCommandRequests).where(and(eq(customerBotCommandRequests.id, input.commandId), eq(customerBotCommandRequests.storeId, input.storeId))).limit(1);
+  if (!command) throw new Error("أمر المساعد غير موجود في المتجر الحالي.");
+  await db.update(customerBotCommandRequests).set({ status: "archived" }).where(eq(customerBotCommandRequests.id, command.id));
+  return { ...command, status: "archived" as const };
 }
 
 export async function saveCommandAsProposal(input: { storeId: number; actorUserId: number; commandId: number; category: ProposalCategory; title: string; body: string }) {

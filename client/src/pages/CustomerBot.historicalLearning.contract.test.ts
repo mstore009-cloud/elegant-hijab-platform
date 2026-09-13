@@ -35,6 +35,17 @@ describe("Customer Bot training center", () => {
     expect(source).toContain("لا يُشغّل المساعد القنوات");
   });
 
+  it("supports editing a selected command and archiving it without touching saved proposals", () => {
+    const source = read("CustomerBotCommandAssistant.tsx");
+    const playground = read("../../server/customerBot/playground.ts");
+    expect(source).toContain("customerBot.updateTextCommand.useMutation");
+    expect(source).toContain("تعديل الأمر");
+    expect(source).toContain("customerBot.archiveCommand.useMutation");
+    expect(playground).toContain("updateTextCommandRequest");
+    expect(playground).toContain("archiveCommandRequest");
+    expect(playground).toContain('status: "archived"');
+  });
+
   it("keeps command guidance inside the learning center with practical templates", () => {
     const learning = read("CustomerBotLearning.tsx");
     const nav = read("../components/customerBot/CustomerBotNav.tsx");

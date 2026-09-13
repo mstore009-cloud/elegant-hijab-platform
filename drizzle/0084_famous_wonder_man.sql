@@ -1,0 +1,1 @@
+ALTER TABLE `customer_bot_command_requests` MODIFY COLUMN `status` enum('transcribed','needs_clarification','previewed','saved_draft','cancelled','archived','failed') NOT NULL DEFAULT 'previewed';
