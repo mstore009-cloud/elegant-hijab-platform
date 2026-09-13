@@ -14,6 +14,7 @@ describe("متصفح أقسام المنتجات", () => {
     expect(browserSource).toContain("toggleCategory");
     expect(browserSource).toContain("matchingTotal");
     expect(browserSource).toContain("onSelectCategory");
+    expect(browserSource).toContain("const displayCategory = (category: ProductCategoryNode) => <TreeNode key={category.id}");
   });
 
   it("يوفر إدارة القسم وإسناد المنتج المختار بلا كشف مصدر OneDrive التقني", () => {

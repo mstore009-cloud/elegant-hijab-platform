@@ -83,7 +83,7 @@ export function ProductCategoryBrowser({
     if (next.has(categoryId)) next.delete(categoryId); else next.add(categoryId);
     return next;
   });
-  const displayCategory = (category: ProductCategoryNode) => <TreeNode
+  const displayCategory = (category: ProductCategoryNode) => <TreeNode key={category.id}
     category={category}
     children={childrenByParent.get(category.id) ?? []}
     childrenByParent={childrenByParent}
