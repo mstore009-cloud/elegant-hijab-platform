@@ -370,6 +370,17 @@ export async function listBehaviorCards(storeId: number) {
   return db.select().from(customerBotBehaviorCards).where(eq(customerBotBehaviorCards.storeId, storeId)).orderBy(desc(customerBotBehaviorCards.updatedAt)).limit(100);
 }
 
+export async function createBehaviorCardDraft(input: { storeId: number; actorUserId: number; title: string; kind: "welcome" | "dialect" | "tone" | "reply_example" | "guardrail"; body: string; examples?: string; channels?: string[] }) {
+  const db = await requireDb();
+  const title = input.title.trim().slice(0, 240);
+  const body = input.body.trim().slice(0, 12000);
+  if (title.length < 3) throw new Error("اكتبي عنواناً واضحاً لبطاقة الأسلوب.");
+  if (body.length < 12) throw new Error("اكتبي تعليمات كافية ليستفيد منها البوت.");
+  const result = await db.insert(customerBotBehaviorCards).values({ storeId: input.storeId, title, kind: input.kind, body, examplesJson: input.examples?.trim() ? JSON.stringify({ preferred: input.examples.trim().slice(0, 6000) }) : null, channelsJson: input.channels?.length ? JSON.stringify(input.channels.slice(0, 3)) : null, status: "draft", createdByUserId: input.actorUserId });
+  const [card] = await db.select().from(customerBotBehaviorCards).where(eq(customerBotBehaviorCards.id, Number(result[0].insertId))).limit(1);
+  return card;
+}
+
 export async function listPlaybooks(storeId: number) {
   const db = await requireDb();
   return db.select().from(customerBotPlaybooks).where(eq(customerBotPlaybooks.storeId, storeId)).orderBy(desc(customerBotPlaybooks.updatedAt)).limit(100);

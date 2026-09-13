@@ -132,4 +132,15 @@ describe("Customer Bot training center", () => {
     expect(learning).toContain('navigateTab("cards")');
     expect(learning).toContain("tabs.map");
   });
+
+  it("keeps tone and dialect as open learning cards, not operational switches", () => {
+    const settings = read("CustomerBotSettings.tsx");
+    const learning = read("CustomerBotLearning.tsx");
+    expect(settings).not.toContain("<Label>اللهجة</Label>");
+    expect(settings).not.toContain("<Label>النبرة</Label>");
+    expect(learning).toContain("إضافة تعليمات الأسلوب واللهجة");
+    expect(learning).toContain("التعليمات المفتوحة");
+    expect(learning).toContain("أمثلة اختيارية");
+    expect(learning).toContain("createBehaviorCardDraft");
+  });
 });

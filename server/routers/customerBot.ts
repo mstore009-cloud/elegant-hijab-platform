@@ -9,7 +9,7 @@ import { createCustomerBotKnowledge, createCustomerBotKnowledgeGap, extractHisto
 import { analyzeCustomerMessageImage } from "../customerBot/imageAnalysis";
 import { archiveCustomerBotOrderDraft, createFinalOrderFromCustomerBotDraft, listCustomerBotOrderDrafts } from "../customerBot/orderDrafts";
 import { createStyleCandidateFromTrainingAsset, listCustomerBotTrainingAssets, uploadCustomerBotTrainingAsset } from "../customerBot/training";
-import { archiveCommandRequest, createAudioCommandRequest, createLearningProposal, createPlaybookDraft, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, improveCommandRequest, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, runTestCaseBatch, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus, updateTextCommandRequest } from "../customerBot/playground";
+import { archiveCommandRequest, createAudioCommandRequest, createBehaviorCardDraft, createLearningProposal, createPlaybookDraft, createPlaygroundSession, createTextCommandRequest, closePlaygroundSession, getPlaygroundSession, improveCommandRequest, listBehaviorCards, listCommandRequests, listLearningProposals, listPlaybooks, listPlaygroundSessions, listTestCases, playgroundChannels, playgroundModes, proposalCategories, proposalStatuses, runTestCaseBatch, saveCommandAsProposal, sendPlaygroundMessage, setBehaviorCardStatus, setLearningProposalStatus, setPlaybookStatus, setTestCaseStatus, updateTextCommandRequest } from "../customerBot/playground";
 
 async function requireStore(ctx: { user: NonNullable<any>; operationalStore: { id: number } | null }, permission: "inbox.read" | "inbox.reply" | "bot.manage" | "bot.knowledge.approve") {
   if (!ctx.operationalStore) throw new TRPCError({ code: "FORBIDDEN", message: "لا يوجد متجر تشغيلي مخصص للحساب الحالي." });
@@ -129,6 +129,12 @@ export const customerBotRouter = router({
     return result;
   }),
   behaviorCards: protectedProcedure.query(async ({ ctx }) => listBehaviorCards((await requireStore(ctx, "bot.manage")).id)),
+  createBehaviorCardDraft: protectedProcedure.input(z.object({ title: z.string().trim().min(3).max(240), kind: z.enum(["welcome", "dialect", "tone", "reply_example", "guardrail"]), body: z.string().trim().min(12).max(12000), examples: z.string().trim().max(6000).optional(), channels: z.array(z.string().trim().min(1).max(40)).max(3).optional() })).mutation(async ({ ctx, input }) => {
+    const store = await requireStore(ctx, "bot.manage");
+    const card = await createBehaviorCardDraft({ storeId: store.id, actorUserId: ctx.user.id, ...input });
+    await recordAuditEvent({ storeId: store.id, actorUserId: ctx.user.id, entityType: "customer_bot_behavior_card", entityId: card.id, action: "bot.behavior_card_draft_created", summary: "أُنشئت بطاقة لهجة أو أسلوب كمسودة للمراجعة." });
+    return card;
+  }),
   playbooks: protectedProcedure.query(async ({ ctx }) => listPlaybooks((await requireStore(ctx, "bot.manage")).id)),
   createPlaybookDraft: protectedProcedure.input(z.object({ title: z.string().trim().min(3).max(240), trigger: z.string().trim().min(3).max(2000), steps: z.array(z.string().trim().min(1).max(2000)).min(1).max(12), guardrails: z.array(z.string().trim().min(1).max(1000)).max(12) })).mutation(async ({ ctx, input }) => {
     const store = await requireStore(ctx, "bot.manage");
