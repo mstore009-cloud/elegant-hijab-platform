@@ -210,6 +210,18 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("فتح الأول");
   });
 
+  it("يعرض المنتجات كبطاقات متعددة الأعمدة بجانب شجرة الأقسام", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    const browser = readFileSync(resolve(process.cwd(), "client/src/components/ProductCategoryBrowser.tsx"), "utf8");
+    const thumbnail = readFileSync(resolve(process.cwd(), "client/src/components/ProductListThumbnail.tsx"), "utf8");
+    expect(source).toContain('grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4');
+    expect(source).toContain('className="h-40 w-full"');
+    expect(source).toContain('rounded-2xl border px-3 py-3 text-right transition');
+    expect(browser).toContain("children?: ReactNode");
+    expect(browser).toContain("{children}</div>");
+    expect(thumbnail).toContain("className?: string");
+  });
+
   it("يفتح المنتج الأول من نتائج التنبيه حتى عندما يكون workView العام all", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("const alertProductsForView = (view: WorkView)");

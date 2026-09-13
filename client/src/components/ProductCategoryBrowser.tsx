@@ -2,6 +2,7 @@ import { ProductCategoryManager } from "@/components/ProductCategoryManager";
 import { Input } from "@/components/ui/input";
 import { ChevronDown, ChevronLeft, FolderTree, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 
 export type ProductCategoryNode = {
   id: number;
@@ -50,7 +51,7 @@ function TreeNode({
 
 export function ProductCategoryBrowser({
   total, matchingTotal, categories, categoryCounts, uncategorizedCount, selectedCategoryId,
-  onSelectCategory, search, onSearchChange, canCreate, canEdit, selectedProductId, currentCategoryId, onUpdated,
+  onSelectCategory, search, onSearchChange, canCreate, canEdit, selectedProductId, currentCategoryId, onUpdated, children,
 }: {
   total: number;
   matchingTotal: number;
@@ -66,6 +67,7 @@ export function ProductCategoryBrowser({
   selectedProductId?: number | null;
   currentCategoryId?: number | null;
   onUpdated?: () => Promise<void> | void;
+  children?: ReactNode;
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set(categories.filter(category => category.parentId === null).map(category => category.id)));
   const childrenByParent = useMemo(() => {
@@ -109,7 +111,7 @@ export function ProductCategoryBrowser({
           <button type="button" onClick={() => onSelectCategory(-1)} aria-pressed={selectedCategoryId === -1} className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-right text-xs font-bold transition ${selectedCategoryId === -1 ? "bg-[#fff2df] text-[#805b24]" : "text-[#806f56] hover:bg-[#fffaf1]"}`}><span>غير مصنف</span><span className="rounded-full bg-[#f6eee0] px-1.5 py-0.5 text-[10px]">{uncategorizedCount}</span></button>
         </div>
       </aside>
-      <div className="min-w-0 rounded-xl border border-[#e5eee8] bg-[#f8fbf9] p-3"><div className="flex flex-wrap items-center gap-2 text-xs"><span className="font-bold text-[#38594d]">مسار التصفح:</span><span className="rounded-full bg-[#e4f3ea] px-2.5 py-1 font-bold text-[#285f4e]">{selectedCategoryId === null ? "كل المنتجات" : selectedCategoryId === -1 ? "غير مصنف" : categories.find(category => category.id === selectedCategoryId)?.displayPath ?? "القسم المحدد"}</span>{(selectedCategoryId !== null || search.trim()) && <span className="text-[11px] text-[#728078]">{matchingTotal} نتيجة مطابقة</span>}</div><p className="mt-2 text-[11px] leading-5 text-[#718078]">اختر قسمًا رئيسيًا لعرض منتجاته وفروعه، أو افتح السهم للوصول إلى قسم فرعي محدد. الفلاتر التشغيلية والتنبيهات تبقى منفصلة عن شجرة الأقسام.</p></div>
+      <div className="min-w-0"><div className="rounded-xl border border-[#e5eee8] bg-[#f8fbf9] p-3"><div className="flex flex-wrap items-center gap-2 text-xs"><span className="font-bold text-[#38594d]">مسار التصفح:</span><span className="rounded-full bg-[#e4f3ea] px-2.5 py-1 font-bold text-[#285f4e]">{selectedCategoryId === null ? "كل المنتجات" : selectedCategoryId === -1 ? "غير مصنف" : categories.find(category => category.id === selectedCategoryId)?.displayPath ?? "القسم المحدد"}</span>{(selectedCategoryId !== null || search.trim()) && <span className="text-[11px] text-[#728078]">{matchingTotal} نتيجة مطابقة</span>}</div><p className="mt-2 text-[11px] leading-5 text-[#718078]">اختر قسمًا رئيسيًا لعرض منتجاته وفروعه، أو افتح السهم للوصول إلى قسم فرعي محدد. الفلاتر التشغيلية والتنبيهات تبقى منفصلة عن شجرة الأقسام.</p></div>{children}</div>
     </div>
   </div>;
 }
