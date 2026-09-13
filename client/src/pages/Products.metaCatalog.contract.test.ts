@@ -9,7 +9,7 @@ describe("Products Meta Catalog export contract", () => {
     expect(source).toContain("MetaCatalogEnrichmentPanel");
     expect(source).toContain("مساحة تجهيز ومزامنة المنتجات مع Meta");
     expect(source).toContain("onOpenProduct={productId");
-    expect(source).toContain("اختر المنتجات النشطة أولًا");
+    expect(source).not.toContain("اختر المنتجات النشطة أولًا");
     expect(source).toContain("مزامنة Meta");
   });
 

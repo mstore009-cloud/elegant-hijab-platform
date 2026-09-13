@@ -99,7 +99,7 @@ export function ProductCategoryBrowser({
 
   return <div className="border-b border-[#eee9df] bg-[#fcfbf8] px-4 py-3 sm:px-5">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div className="relative min-w-[220px] flex-1 sm:max-w-xs"><Search className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8a968f]" /><Input value={search} onChange={event => onSearchChange(event.target.value)} placeholder="ابحث بالاسم أو الكود" aria-label="البحث في المنتجات" className="h-8 rounded-lg border-[#ded8cd] pr-8 text-xs" /></div>
+      <div className="relative min-w-[220px] flex-1 sm:max-w-xs"><Search className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8a968f]" /><Input value={search} onChange={event => onSearchChange(event.target.value)}  aria-label="البحث في المنتجات" className="h-8 rounded-lg border-[#ded8cd] pr-8 text-xs" /></div>
       <ProductCategoryManager canCreate={canCreate} canEdit={canEdit} selectedProductId={selectedProductId} currentCategoryId={currentCategoryId} onUpdated={onUpdated} />
     </div>
     <div className="mt-3 grid gap-3 md:grid-cols-[minmax(210px,260px)_minmax(0,1fr)]">
@@ -111,7 +111,7 @@ export function ProductCategoryBrowser({
           <button type="button" onClick={() => onSelectCategory(-1)} aria-pressed={selectedCategoryId === -1} className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-right text-xs font-bold transition ${selectedCategoryId === -1 ? "bg-[#fff2df] text-[#805b24]" : "text-[#806f56] hover:bg-[#fffaf1]"}`}><span>غير مصنف</span><span className="rounded-full bg-[#f6eee0] px-1.5 py-0.5 text-[10px]">{uncategorizedCount}</span></button>
         </div>
       </aside>
-      <div className="min-w-0"><div className="rounded-xl border border-[#e5eee8] bg-[#f8fbf9] p-3"><div className="flex flex-wrap items-center gap-2 text-xs"><span className="font-bold text-[#38594d]">مسار التصفح:</span><span className="rounded-full bg-[#e4f3ea] px-2.5 py-1 font-bold text-[#285f4e]">{selectedCategoryId === null ? "كل المنتجات" : selectedCategoryId === -1 ? "غير مصنف" : categories.find(category => category.id === selectedCategoryId)?.displayPath ?? "القسم المحدد"}</span>{(selectedCategoryId !== null || search.trim()) && <span className="text-[11px] text-[#728078]">{matchingTotal} نتيجة مطابقة</span>}</div><p className="mt-2 text-[11px] leading-5 text-[#718078]">اختر قسمًا رئيسيًا لعرض منتجاته وفروعه، أو افتح السهم للوصول إلى قسم فرعي محدد. الفلاتر التشغيلية والتنبيهات تبقى منفصلة عن شجرة الأقسام.</p></div>{children}</div>
+      <div className="min-w-0"><div className="rounded-xl border border-[#e5eee8] bg-[#f8fbf9] p-3"><div className="flex flex-wrap items-center gap-2 text-xs"><span className="font-bold text-[#38594d]">مسار التصفح:</span><span className="rounded-full bg-[#e4f3ea] px-2.5 py-1 font-bold text-[#285f4e]">{selectedCategoryId === null ? "كل المنتجات" : selectedCategoryId === -1 ? "غير مصنف" : categories.find(category => category.id === selectedCategoryId)?.displayPath ?? "القسم المحدد"}</span>{(selectedCategoryId !== null || search.trim()) && <span className="text-[11px] text-[#728078]">{matchingTotal} نتيجة مطابقة</span>}</div></div>{children}</div>
     </div>
   </div>;
 }

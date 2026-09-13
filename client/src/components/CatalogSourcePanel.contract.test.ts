@@ -21,8 +21,8 @@ describe("عقد لوحة مصدر OneDrive داخل المنتجات", () => {
     expect(source).toContain("تغيير الجذر");
     expect(source).toContain("تعمل كل 10 دقائق");
     expect(source).toContain("صيغة ملف");
-    expect(source).toContain("MATERIAL: قطن تركي");
-    expect(source).toContain("الخامة: قطن تركي");
+    expect(source).not.toContain("MATERIAL: قطن تركي");
+    expect(source).toContain("الخامة:");
     expect(source).toContain("الخامة غير مكتوبة في product.txt");
     expect(source).toContain('cronExpression: "0 */10 * * * *"');
     expect(source).toContain("trpc.integrations.createSelectedCatalogDrafts.useMutation");

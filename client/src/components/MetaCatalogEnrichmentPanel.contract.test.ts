@@ -9,7 +9,7 @@ describe("MetaCatalogEnrichmentPanel contract", () => {
     expect(source).toContain("الدينار العراقي (IQD)");
     expect(source).toContain("الدولار الأميركي (USD)");
     expect(source).toContain("Facebook Product Category");
-    expect(source).toContain("Taxonomy الرسمية");
+    expect(source).not.toContain("Taxonomy الرسمية");
     expect(source).toContain("<MetaCatalogWorkspace");
     expect(source).toContain("إعدادات التصنيف المتقدمة");
     expect(source).toContain("تخصيص قسم من OneDrive");

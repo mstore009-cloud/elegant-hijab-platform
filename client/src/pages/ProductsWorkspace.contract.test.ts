@@ -27,7 +27,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("trpc.products.create.useMutation");
     expect(source).toContain("إضافة منتج يدويًا");
     expect(source).toContain("حفظ كمسودة");
-    expect(source).toContain("تنشيط وتفعيل");
+    expect(source).toContain("تنشيط المنتج");
     expect(source).toContain('status: "draft"');
   });
 
@@ -42,10 +42,10 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("createSubcategories");
     expect(source).toContain("القسم الرئيسي");
     expect(source).toContain("القسم الفرعي");
-    expect(source).toContain("سيُحفظ المنتج داخل:");
+    expect(source).not.toContain("سيُحفظ المنتج داخل:");
     expect(browser).toContain("شجرة أقسام المنتجات");
     expect(browser).toContain("غير مصنف");
-    expect(browser).toContain("اختر قسمًا رئيسيًا لعرض منتجاته وفروعه");
+    expect(browser).not.toContain("اختر قسمًا رئيسيًا لعرض منتجاته وفروعه");
     expect(browser).toContain("childrenByParent");
   });
 
@@ -77,7 +77,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("تفعيل القياسات");
     expect(source).toContain("sizeLabels: createHasSizes ? sizes : []");
     expect(source).toContain("const nextSizes = draftHasSizes ?");
-    expect(source).toContain("عند الإيقاف تُلغى مصفوفة القياسات وجميع امتيازاتها");
+    expect(source).not.toContain("عند الإيقاف تُلغى مصفوفة القياسات وجميع امتيازاتها");
     expect(source).toContain("{productSizes.length > 0 && <p><span className=\"text-[#74817a]\">القياسات:");
     expect(source).toContain("sizeLabels={productSizes}");
     expect(source).toContain('sizes_cleared: "إزالة القياسات ودمج الألوان"');
@@ -90,7 +90,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("sizeTemplateProducts");
     expect(source).toContain("copySizesFromProduct");
     expect(source).toContain("نسخ قياسات من منتج آخر");
-    expect(source).toContain("سيتم نسخ أسماء القياسات فقط");
+    expect(source).not.toContain("سيتم نسخ أسماء القياسات فقط");
     expect(source).toContain("draftHasSizes && productSizes.length > 0");
   });
 
@@ -184,7 +184,7 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("setEditOpen(false)");
     expect(source).toContain('surface !== "archived"');
     expect(source).toContain("workViewCounts.metaStale");
-    expect(source).toContain("النتائج أدناه تخص هذا التنبيه فقط");
+    expect(source).not.toContain("النتائج أدناه تخص هذا التنبيه فقط");
     expect(source).toContain("const workProducts = (products.data ?? []).filter(product => product.status !== \"archived\")");
     expect(source).toContain("mediaReview: workProducts.filter(product => workViewMatches(product, \"media_review\")).length");
     expect(source).toContain("colorReview: workProducts.filter(product => workViewMatches(product, \"color_review\")).length");
@@ -259,7 +259,10 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
 
   it("يبقي بطاقة الألوان بسيطة مثل بقية بطاقات التنبيهات", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
-    expect(source).toContain('["color_review", "ألوان تحتاج مراجعة", workViewCounts.colorReview, "راجع التحليل"]');
+    expect(source).toContain('["color_review", "ألوان تحتاج مراجعة", workViewCounts.colorReview]');
+    expect(source).not.toContain("راجع التحليل");
+    expect(source).not.toContain("راجع الوسائط");
+    expect(source).not.toContain("حدّث الكتالوج");
     expect(source).toContain("const first = alertProductsForView(view)[0]");
     expect(source).not.toContain("bulkColorName");
     expect(source).not.toContain("bulkColorFeedback");
@@ -269,17 +272,17 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("addDetailMedia");
     expect(source).toContain("detail-upload-color");
-    expect(source).toContain("اسحب الوسائط هنا أو اختر ملفات");
+    expect(source).toContain("إضافة وسائط");
     expect(source).toContain("uploadManualMedia.mutateAsync");
     expect(source).toContain("assignMediaColor.mutateAsync");
-    expect(source).toContain("فيديو MP4/WebM");
+    expect(source).toContain('accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime"');
   });
 
   it("يوضح الحفظ كمسودة ويوجه إلى الحقل الناقص مع شريط حفظ ثابت", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("حفظ كمسودة");
-    expect(source).toContain("لن يتغير وضع النشر");
-    expect(source).toContain("الحفظ هنا لا ينشر المنتج");
+    expect(source).not.toContain("لن يتغير وضع النشر");
+    expect(source).not.toContain("الحفظ هنا لا ينشر المنتج");
     expect(source).toContain("data-completion-field=\"price\"");
     expect(source).toContain("data-completion-field=\"inventory\"");
     expect(source).toContain("readinessReasonLabel");
