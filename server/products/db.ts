@@ -187,6 +187,7 @@ export async function listPublicProducts(storeId: number) {
       category: products.category,
       description: products.description,
       sellingPrice: products.sellingPrice,
+      sizeLabels: products.sizeLabels,
     })
     .from(products)
     .where(and(eq(products.storeId, storeId), eq(products.status, "active")))

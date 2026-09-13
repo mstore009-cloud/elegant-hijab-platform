@@ -9,6 +9,10 @@ describe("واجهة المتجر العامة", () => {
     expect(source).toContain("StoreProductEnhancements");
     expect(source).not.toContain("createRoot");
     expect(source).toContain("اختاري اللون");
+    expect(source).toContain("اختاري القياس");
+    expect(source).toContain("line.sizeLabel ? ` · قياس ${line.sizeLabel}` : \"\"");
+    expect(source).toContain("sizes.length > 0 && activeSize ? ` (قياس ${activeSize})` : \"\"");
+    expect(source).toContain("sizeLabel: sizeLabel || undefined");
     expect(source).toContain("أضف ");
     expect(source).toContain("تم ومتابعة الطلب");
     expect(source).toContain("سلتك");
