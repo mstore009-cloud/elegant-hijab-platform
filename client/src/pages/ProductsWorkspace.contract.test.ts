@@ -31,6 +31,24 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain('status: "draft"');
   });
 
+  it("يعرض شجرة الأقسام ويختار الرئيسي ثم الفرعي في الإدخال اليدوي", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    const browser = readFileSync(resolve(process.cwd(), "client/src/components/ProductCategoryBrowser.tsx"), "utf8");
+    expect(source).toContain("selectedCategoryId");
+    expect(source).toContain("categoryCounts");
+    expect(source).toContain("selectedCategoryIds");
+    expect(source).toContain("categoryId: createCategoryId === \"none\" ? undefined : Number(createCategoryId)");
+    expect(source).toContain("createPrimaryCategoryId");
+    expect(source).toContain("createSubcategories");
+    expect(source).toContain("القسم الرئيسي");
+    expect(source).toContain("القسم الفرعي");
+    expect(source).toContain("سيُحفظ المنتج داخل:");
+    expect(browser).toContain("شجرة أقسام المنتجات");
+    expect(browser).toContain("غير مصنف");
+    expect(browser).toContain("اختر قسمًا رئيسيًا لعرض منتجاته وفروعه");
+    expect(browser).toContain("childrenByParent");
+  });
+
   it("يعرض مصفوفة اللون والقياس ويحفظ كل متغير عبر saveInventory عند وجود قياسات", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("مصفوفة المخزون: اللون × القياس");

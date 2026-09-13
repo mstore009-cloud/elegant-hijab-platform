@@ -5,11 +5,15 @@ const browserSource = readFileSync(new URL("./ProductCategoryBrowser.tsx", impor
 const managerSource = readFileSync(new URL("./ProductCategoryManager.tsx", import.meta.url), "utf8");
 
 describe("متصفح أقسام المنتجات", () => {
-  it("يبقي كل الأقسام بداية واضحة ويكشف التصنيفات الفرعية فقط عند اختيار قسم", () => {
+  it("يعرض شجرة أقسام قابلة للطي مع المسار والعدادات", () => {
     expect(browserSource).toContain("كل المنتجات");
-    expect(browserSource).toContain("كل {displayName(selectedPrimaryCategory)}");
+    expect(browserSource).toContain("شجرة أقسام المنتجات");
+    expect(browserSource).toContain("غير مصنف");
+    expect(browserSource).toContain("childrenByParent");
+    expect(browserSource).toContain("expandedIds");
+    expect(browserSource).toContain("toggleCategory");
     expect(browserSource).toContain("matchingTotal");
-    expect(browserSource).toContain("onSelectPrimary");
+    expect(browserSource).toContain("onSelectCategory");
   });
 
   it("يوفر إدارة القسم وإسناد المنتج المختار بلا كشف مصدر OneDrive التقني", () => {
