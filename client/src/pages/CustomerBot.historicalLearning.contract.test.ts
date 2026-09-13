@@ -102,4 +102,13 @@ describe("Customer Bot training center", () => {
     expect(assistant).toContain("canManageOverride");
     expect(assistant).toContain("enabled: canManageOverride === undefined");
   });
+
+  it("synchronizes the active learning tab reactively via useSearch without requiring page refresh", () => {
+    const learning = read("CustomerBotLearning.tsx");
+    expect(learning).toContain("useSearch");
+    expect(learning).toContain("activeTab");
+    expect(learning).toContain("navigateTab");
+    expect(learning).toContain('navigateTab("cards")');
+    expect(learning).toContain("tabs.map");
+  });
 });
