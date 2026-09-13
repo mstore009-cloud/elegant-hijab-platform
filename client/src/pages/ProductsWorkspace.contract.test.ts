@@ -184,6 +184,13 @@ describe("واجهة المنتجات النشطة ومسودات العمل", (
     expect(source).toContain("التالي");
   });
 
+  it("يفتح المنتج الأول من نتائج التنبيه حتى عندما يكون workView العام all", () => {
+    const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
+    expect(source).toContain("const alertProductsForView = (view: WorkView)");
+    expect(source).toContain("const first = alertProductsForView(view)[0]");
+    expect(source).toContain("setSelectedProductId(first.id)");
+  });
+
   it("لا يرسل إجراءات الدفعات الجماعية بمعرفات منتجات فارغة أو قديمة", () => {
     const source = readFileSync(resolve(process.cwd(), "client/src/pages/Products.tsx"), "utf8");
     expect(source).toContain("const selectedMetaProductIdsInView = useMemo");
